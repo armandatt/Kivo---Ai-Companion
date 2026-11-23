@@ -538,6 +538,7 @@ Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the 
 - **A new MCP tool must be added to `connect/usage-class.ts`** (read or write, from what its handler does); the test fails otherwise, and an unlisted tool is a write, refused after Free's lifetime allowance. MCP calls are admitted before the tool runs (`admitMcpCall` in `lib/connect/mcp.ts`).
 - **A new upload path must call `admitStorage`** before storing bytes. Nothing stored is ever deleted or hidden because of an allowance.
 - **Account deletion removes every usage record** keyed by the account or its learner: the ledger tables, rate-limit windows, `AiUsageDay` and `AiUsageEvent` (`deleteAccountUsage`, `deleteUsageDaysIn`, `deleteUsageEventsIn`), each usage-ledger table checked to exist first.
+- **Plan and usage page** (`docs/PLAN_AND_USAGE.md`): every figure comes from `GET /api/billing` (`usageViewFor`, `planCatalog`, `nextOffer` in `billing/offer.ts`); `apps/web/components/billing/usage-model.ts` only words it. A refusal or page names a plan only if `nextOffer`/`upgradeLine` says it is on sale now; never hard-code "upgrade to Plus".
 - **Accounting writes never wake the scheduler** (`runWithoutWriteSignal`) and a fault in accounting admits the request.
 
 ## Kivo Connect (MCP for ChatGPT, Claude)

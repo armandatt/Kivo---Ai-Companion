@@ -16,6 +16,8 @@ import type { ConnectLearner } from "@repo/api/connect/learner"
 //@ts-ignore
 import { admitMcpCall, type McpCallAccounted } from "@repo/api/billing/accounting/mcp"
 //@ts-ignore
+import { upgradeLine } from "@repo/api/billing/offer"
+//@ts-ignore
 import { admitStorage, incomingBytes } from "@repo/api/billing/accounting/storage"
 //@ts-ignore
 import { NOTE_IMAGE_BYTES_MAX } from "@repo/api/nova/product/note-images"
@@ -122,10 +124,12 @@ export async function serveMcp(req: Request, learner: ConnectLearner | Blocked, 
 function refusedCall(gate: McpCallAccounted) {
   const a = gate.allowance
   const renews = a.readOnlyResetsAt ? new Date(a.readOnlyResetsAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null
+  // Only a plan that can be bought now is named (billing/offer.ts).
+  const next = upgradeLine(a.tier, "mcp")
   const message = gate.refusal === "mcp_lifetime_exhausted"
-    ? `This Kivo account (Free) has used its ${a.lifetimeLimit?.toLocaleString("en-US")} ChatGPT and Claude tool calls, so changes from here are paused. Reading still works: ${Math.max(0, (a.readOnlyLimit ?? 0) - (a.readOnlyUsed ?? 0))} read calls left this month${renews ? `, renewing on ${renews}` : ""}. Upgrading to Plus removes the limit. Nothing in Kivo was changed.`
+    ? `This Kivo account (Free) has used its ${a.lifetimeLimit?.toLocaleString("en-US")} ChatGPT and Claude tool calls, so changes from here are paused. Reading still works: ${Math.max(0, (a.readOnlyLimit ?? 0) - (a.readOnlyUsed ?? 0))} read calls left this month${renews ? `, renewing on ${renews}` : ""}.${next} Nothing in Kivo was changed.`
     : gate.refusal === "mcp_read_only_allowance_exhausted"
-      ? `This Kivo account (Free) has used this month's ${a.readOnlyLimit} read calls${renews ? `; they renew on ${renews}` : ""}. Upgrading to Plus removes the limit. Everything is still in Kivo.`
+      ? `This Kivo account (Free) has used this month's ${a.readOnlyLimit} read calls${renews ? `; they renew on ${renews}, and reading works again then` : ""}.${next} Everything is still in Kivo.`
       : `Too many Kivo requests at once. Wait ${gate.retryAfterSeconds ?? 60} seconds and try again.`
   const structured = { ok: false, error: gate.refusal, message, mcpAllowance: a, ...(gate.retryAfterSeconds ? { retryAfterSeconds: gate.retryAfterSeconds } : {}) }
   return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }

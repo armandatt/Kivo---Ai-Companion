@@ -3,6 +3,9 @@ import { NextResponse } from "next/server"
 import { saveNoteImage, NOTE_IMAGE_BODY_MAX, NOTE_IMAGE_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/note-images"
 //@ts-ignore
 import { admitStorage, type StorageRefusal } from "@repo/api/billing/accounting/storage"
+//@ts-ignore
+import { upgradeLine } from "@repo/api/billing/offer"
+import { PLAN_URL } from "../../../../../lib/billing/metered"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
 import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
 
@@ -41,6 +44,7 @@ export async function POST(req: Request) {
 // already stored stays readable and exportable.
 function storageRefused(r: StorageRefusal) {
   const mb = (b: number) => b >= 1_000_000_000 ? `${(b / 1_000_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1_000_000)} MB`
-  const next = r.tier === "free" ? " Plus has 2 GB." : r.tier === "plus" ? " Pro has 15 GB." : ""
-  return NextResponse.json({ ok: false, error: "storage_allowance_exhausted", code: r.code, message: `Your images use ${mb(r.usedBytes)} of ${mb(r.limitBytes)}, so this one can't be added.${next} Everything you've stored is still here.`, usedBytes: r.usedBytes, limitBytes: r.limitBytes, tier: r.tier }, { status: 413, headers: { "cache-control": "no-store" } })
+  // Only a plan that can be bought now is named (billing/offer.ts).
+  const next = upgradeLine(r.tier, "storage")
+  return NextResponse.json({ ok: false, error: "storage_allowance_exhausted", code: r.code, message: `Your images use ${mb(r.usedBytes)} of ${mb(r.limitBytes)}, so new uploads are paused.${next} Everything you've stored is still here and still opens.`, usedBytes: r.usedBytes, limitBytes: r.limitBytes, tier: r.tier, planUrl: PLAN_URL }, { status: 413, headers: { "cache-control": "no-store" } })
 }

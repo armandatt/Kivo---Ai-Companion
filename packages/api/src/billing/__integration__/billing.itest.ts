@@ -301,3 +301,33 @@ test("a Telegram learner has their linked account's plan; an unlinked chat is Fr
   assert.equal(lonely.plan, "free");
   assert.equal(lonely.usageKey, `learner:tg_unlinked_${STAMP}`);
 });
+
+test("the plan page's offer: only a plan on sale, from the server's own table; a trial row or a checkout visit changes nothing", async () => {
+  const { DEFAULT_ALLOWANCES } = await import("../accounting/rules.js");
+  const sale = { POLAR_SERVER: "sandbox", POLAR_ACCESS_TOKEN: "t", POLAR_WEBHOOK_SECRET: "s", NEXT_PUBLIC_APP_URL: "https://app.test", POLAR_PRODUCT_PRO_MONTHLY: "prod_monthly" };
+  const u = await account();
+  await prisma.billingTrial.create({ data: { userId: u.id, planKey: "pro_monthly", startedAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 6 * 86_400_000) } });
+
+  const free = await billingView(u.id, new Date(), sale);
+  assert.equal(free.tier, "free", "a trial row grants nothing");
+  assert.deepEqual(free.catalog, DEFAULT_ALLOWANCES);
+  assert.equal(free.nextOffer?.plan, "pro_monthly", "Plus is not on sale, so Free is offered Pro");
+  assert.deepEqual(free.nextOffer?.allowance, DEFAULT_ALLOWANCES.pro);
+  assert.ok(!free.purchasable.includes("plus_monthly"));
+
+  const plusOn = await billingView(u.id, new Date(), { ...sale, POLAR_PRODUCT_PLUS_MONTHLY: "prod_plus", BILLING_PLUS_ENABLED: "true" });
+  assert.equal(plusOn.nextOffer?.plan, "plus_monthly");
+
+  assert.equal((await billingView(u.id, new Date(), {})).nextOffer, null, "no provider: nothing is offered");
+
+  // Back from checkout with no webhook yet: still Free, still offered Pro.
+  const ok = await startCheckout({ userId: u.id, plan: "pro_monthly", ip: null, provider });
+  assert.ok(ok.ok);
+  assert.equal((await billingView(u.id, new Date(), sale)).tier, "free");
+
+  // Pro from a verified webhook: nothing above it to offer.
+  await deliver("subscription.active", subscriptionRecord(u.id, { modified_at: "2026-11-23T00:00:00Z" }));
+  const pro = await billingView(u.id, new Date(), sale);
+  assert.equal(pro.tier, "pro");
+  assert.equal(pro.nextOffer, null);
+});

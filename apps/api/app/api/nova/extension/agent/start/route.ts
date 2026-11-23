@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { metered } from "../../../../../../lib/billing/metered"
+import { metered, PLAN_URL } from "../../../../../../lib/billing/metered"
+//@ts-ignore
+import { upgradeLine } from "@repo/api/billing/offer"
 //@ts-ignore
 import { agentContext } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
@@ -76,8 +78,9 @@ async function handle(req: Request): Promise<NextResponse> {
 function taskRefused(r: TaskRefusal): NextResponse {
   if (r.code === "browser_allowance_exhausted") {
     const on = r.resetsAt ? new Date(r.resetsAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null
-    const next = r.tier === "free" ? " Plus has 40 a month." : r.tier === "plus" ? " Pro has 120 a month." : ""
-    return NextResponse.json({ success: false, error: "browser_allowance_exhausted", code: r.code, message: `You've used this month's ${r.limit} browser tasks.${on ? ` They renew on ${on}.` : ""}${next}`, used: r.used, limit: r.limit, resetsAt: r.resetsAt, tier: r.tier }, { status: 429, headers: { "cache-control": "no-store" } })
+    // Only a plan that can be bought now is named (billing/offer.ts).
+    const next = upgradeLine(r.tier, "browser")
+    return NextResponse.json({ success: false, error: "browser_allowance_exhausted", code: r.code, message: `You've used this month's ${r.limit} browser tasks.${on ? ` They renew on ${on}.` : ""}${next} A task that has already started always finishes.`, used: r.used, limit: r.limit, resetsAt: r.resetsAt, tier: r.tier, planUrl: PLAN_URL }, { status: 429, headers: { "cache-control": "no-store" } })
   }
   if (r.code === "browser_too_many_open") {
     return NextResponse.json({ success: false, error: "rate_limited", code: r.code, message: `Nova is already running ${r.limit} tasks for you. Let one finish, then ask again.` }, { status: 429, headers: { "cache-control": "no-store" } })

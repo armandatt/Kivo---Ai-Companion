@@ -11,6 +11,7 @@ import { appUrl, planForProduct, providerConfig, purchasable, trialDays, type Pr
 import { entitlementForUser } from "./entitlements";
 import { usageToday } from "./usage";
 import { usageViewFor } from "./accounting/summary";
+import { nextOffer, planCatalog } from "./offer";
 import { accountingMode, forgetTier } from "./accounting/targets";
 import { decideSync, type ProviderSubscription } from "./subscription-sync";
 import { InvalidSignatureError, type BillingProvider } from "./provider";
@@ -47,6 +48,7 @@ export async function billingView(userId: string, now = new Date(), env = proces
   // fault there leaves the page with the daily figure only.
   const allowances = accountingMode() === "off" ? null : await usageViewFor(userId, now).catch(err => { console.error(`[billing] usage view failed: ${(err as Error).name}`); return null; });
   const cfg = providerConfig(env);
+  const sellable = cfg.ok ? PAID_PLANS.filter(p => purchasable(p, cfg.config, env)) : [];
   return {
     plan:    ent.plan,
     tier:    ent.tier,
@@ -66,8 +68,13 @@ export async function billingView(userId: string, now = new Date(), env = proces
     usage: { today: usage.requests, limit: ent.allowance.dailyRequests },
     allowances,
     // Plans that can be bought now. With no provider configured, none.
-    purchasable: cfg.ok ? PAID_PLANS.filter(p => purchasable(p, cfg.config, env)) : [],
+    purchasable: sellable,
     providerReady: cfg.ok,
+    // Every tier's allowances (the accounting rules' table, overrides
+    // included) and the nearest plan above this one that is on sale now
+    // (billing/offer.ts): what the page compares, never copied into it.
+    catalog: planCatalog(env),
+    nextOffer: nextOffer(ent.tier, env, sellable),
   };
 }
 
