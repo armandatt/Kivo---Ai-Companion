@@ -37,7 +37,7 @@ function Actions() {
     {said && <span role="status" className="text-xs text-foreground/70" data-trash-said>{said}</span>}
     <PageAction href="/notes/new">New note</PageAction>
     {/* On a phone, the map comes first: these are in the navigation. */}
-    <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Saved pages</Link>
+    <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Browser Extension</Link>
     <Link href="/knowledge" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Topic list</Link>
   </>
 }

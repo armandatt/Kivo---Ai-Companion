@@ -2,7 +2,10 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import type { ReactNode } from "react"
 import { KivoMark, KivoWordmark } from "@/components/brand/kivo-brand"
-import { LEGAL_CONTACT } from "@/components/legal/to-confirm"
+import { CONTACT_EMAIL } from "@/lib/site-links"
+import { CopyField } from "@/components/connect/copy-field"
+import { MCP_CLIENTS, MCP_PERMISSIONS, MCP_TOOLS, MCP_URL } from "@/components/connect/mcp-clients"
+import { DEFAULT_ALLOWANCES } from "@repo/api/billing/accounting/rules"
 
 // Public documentation for Kivo Connect (the MCP server at /api/mcp): what it
 // does, how to connect Claude or ChatGPT, what each permission allows, and how
@@ -16,13 +19,11 @@ export const metadata: Metadata = {
   description: "Connect Claude or ChatGPT to your Kivo notes and Knowledge Map: setup, permissions, tools and privacy.",
 }
 
-const MCP_URL = "https://www.thekivo.in/api/mcp"
-
 const SECTIONS = [
   { id: "what", title: "What it does" },
   { id: "before", title: "Before you connect" },
-  { id: "claude", title: "Connect Claude" },
-  { id: "chatgpt", title: "Connect ChatGPT" },
+  { id: "connect", title: "Connect your assistant" },
+  { id: "check", title: "Check it works" },
   { id: "permissions", title: "Permissions" },
   { id: "tools", title: "Tools" },
   { id: "approval", title: "Changes that need your approval" },
@@ -32,50 +33,6 @@ const SECTIONS = [
   { id: "disconnect", title: "Disconnect" },
   { id: "help", title: "Troubleshooting" },
   { id: "support", title: "Support" },
-]
-
-const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "write" | "approval"]> }> = [
-  { group: "Your workspace", items: [
-    ["get_my_profile", "Which Kivo account is connected and what it may do", "read"],
-    ["list_workspaces", "Your workspaces and top-level subjects", "read"],
-    ["get_workspace_context", "One workspace: its subjects, topics and recent notes", "read"],
-    ["get_workspace_structure", "The subject and topic outline of a workspace", "read"],
-    ["get_dashboard_summary", "Counts and recent activity across your knowledge", "read"],
-    ["summarize_workspace", "A summary of a workspace's material", "read"],
-  ] },
-  { group: "Notes", items: [
-    ["search_notes", "Find notes by words in their title or text", "read"],
-    ["get_note", "Read one note, and look at its images when asked", "read"],
-    ["list_recent_notes", "Notes you changed most recently", "read"],
-    ["create_note", "Create a note, with screenshots or images if given, optionally filed under a subject or topic", "write"],
-    ["update_note", "Add text or images to a note, at the end or under a heading (at once), or rename it (needs approval)", "write"],
-    ["link_notes", "Link a note to another note or a topic", "write"],
-    ["move_note", "Refile a note under another subject or topic", "approval"],
-    ["delete_note", "Delete a note", "approval"],
-  ] },
-  { group: "Knowledge Map", items: [
-    ["get_knowledge_map", "Your subjects, topics and how they connect", "read"],
-    ["search_knowledge_nodes", "Find a subject or topic on the map", "read"],
-    ["get_node_connections", "What a subject or topic connects to", "read"],
-    ["add_knowledge_node", "Add a subject or topics", "write"],
-    ["update_knowledge_node", "Describe a topic (at once), or rename a subject or topic (needs approval)", "write"],
-    ["connect_knowledge_nodes", "Connect two items on the map", "write"],
-    ["build_knowledge_map", "Build or extend a map from an outline (preview first)", "write"],
-  ] },
-  { group: "Understanding your knowledge", items: [
-    ["global_search", "Search notes and the map together", "read"],
-    ["find_related_content", "Notes and topics related to one item", "read"],
-    ["analyze_knowledge", "How your material is structured, and where it is thin", "read"],
-    ["recommend_connections", "Links that may be missing between notes and topics", "read"],
-    ["find_knowledge_gaps", "Topics with little or no material", "read"],
-    ["organize_workspace", "A proposed reorganisation (nothing is changed)", "read"],
-  ] },
-  { group: "Saving and reviewed changes", items: [
-    ["capture_knowledge", "Save ideas from the conversation as notes, skipping duplicates and adding to existing notes (preview first)", "write"],
-    ["preview_knowledge_changes", "Show exactly what a set of changes would do", "read"],
-    ["execute_knowledge_changes", "Apply a previewed set of changes once you have approved it in Kivo", "approval"],
-    ["check_approval", "See whether you approved or declined a change, and its result", "read"],
-  ] },
 ]
 
 const KIND_LABEL = { read: "Reads", write: "Changes", approval: "Needs approval" } as const
@@ -114,10 +71,7 @@ export default function KivoConnectDocs() {
           Kivo Connect lets Claude and ChatGPT work with your Kivo knowledge base, with your permission: search and read your notes,
           explore your Knowledge Map, spot gaps and missing links, and save what you learn in a conversation as organised notes.
         </p>
-        <div className="mt-6 rounded-xl border border-white/8 bg-card/60 p-4 text-sm">
-          <p className="text-subtle">Server address</p>
-          <p className="mt-1 break-all font-mono text-foreground">{MCP_URL}</p>
-        </div>
+        <div className="mt-6"><CopyField label="Server address" value={MCP_URL} /></div>
 
         <nav aria-label="On this page" className="mt-8 rounded-xl border border-white/8 bg-card/60 p-4">
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-subtle">On this page</p>
@@ -147,39 +101,41 @@ export default function KivoConnectDocs() {
             </ul>
           </Section>
 
-          <Section id="claude" title="Connect Claude">
-            <ol>
-              <li>In Claude, open <strong>Settings › Connectors</strong>. If Kivo is listed in the directory, choose it. Otherwise choose <strong>Add custom connector</strong>, name it Kivo and paste <code>{MCP_URL}</code>.</li>
-              <li>Select <strong>Connect</strong>. A Kivo page opens; sign in if asked.</li>
-              <li>Kivo shows which assistant is asking and what it may do. Select <strong>Allow</strong>.</li>
-              <li>Back in Claude, enable Kivo in a conversation (the tools menu) and ask something about your notes.</li>
-            </ol>
+          <Section id="connect" title="Connect your assistant">
+            <p>Every assistant connects the same way on Kivo&apos;s side: it sends you to Kivo to sign in, Kivo shows what it may do, and you choose Allow. There is no API key and nothing to install.</p>
+            <CopyField label="Server address" value={MCP_URL} />
+            {MCP_CLIENTS.map(c => (
+              <div key={c.id} id={c.id} className="scroll-mt-24 pt-2">
+                <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-foreground">
+                  {c.name}
+                  {c.status === "untested" && <span className="rounded-full border border-white/12 px-2 py-px text-[11px] font-normal text-subtle">Not tested by Kivo</span>}
+                </h3>
+                {c.intro && <p className="mt-1">{c.intro}</p>}
+                <ol className="mt-2">{c.steps.map(step => <li key={step}>{step}</li>)}</ol>
+                {c.note && <p className="mt-2 text-sm text-subtle">{c.note}</p>}
+              </div>
+            ))}
           </Section>
 
-          <Section id="chatgpt" title="Connect ChatGPT">
+          <Section id="check" title="Check it works">
             <ol>
-              <li>In ChatGPT settings, turn on developer mode for connectors (under Apps / Connectors), then create a connector.</li>
-              <li>Paste <code>{MCP_URL}</code> as the MCP server URL and choose OAuth for authentication.</li>
-              <li>Connect, sign in to Kivo if asked, and select <strong>Allow</strong>.</li>
+              <li>Ask your assistant: <strong>&ldquo;Which Kivo account is connected?&rdquo;</strong> It calls <code>get_my_profile</code> and answers with your name and what it may do.</li>
+              <li>Ask something about your own material, for example &ldquo;What subjects do I have in Kivo?&rdquo;.</li>
+              <li>In Kivo, open <strong>Settings › AI assistants</strong>: the assistant is listed with the permissions you allowed and when it was last used.</li>
             </ol>
-            <p>Menu names in both assistants change from time to time; the steps on Kivo&apos;s side stay the same.</p>
+            <p>If the assistant says it has no Kivo tools, turn the connector on for that conversation, or connect again.</p>
           </Section>
 
           <Section id="permissions" title="Permissions">
             <p>When you connect, the assistant asks for some of these. Kivo&apos;s consent page lists the ones requested, and the assistant only gets the tools those permissions cover.</p>
             <ul>
-              <li><strong>profile:read</strong>: your name and which account is connected.</li>
-              <li><strong>workspace:read</strong>: your workspaces, subjects and topics.</li>
-              <li><strong>notes:read</strong>: read and search your notes.</li>
-              <li><strong>notes:write</strong>: create, add to, link, move and delete notes.</li>
-              <li><strong>knowledge:read</strong>: read your Knowledge Map.</li>
-              <li><strong>knowledge:write</strong>: add, describe and connect subjects and topics.</li>
+              {MCP_PERMISSIONS.map(([scope, what]) => <li key={scope}><strong>{scope}</strong>: {what}.</li>)}
             </ul>
           </Section>
 
           <Section id="tools" title="Tools">
-            <p>31 tools. &ldquo;Reads&rdquo; never change anything and need no approval. &ldquo;Changes&rdquo; write to your Kivo; your assistant may ask you before running them. &ldquo;Needs approval&rdquo; tools change nothing until you approve the exact change in Kivo (below), so you can let your assistant use Kivo&apos;s tools without asking each time and still decide every delete, move and rename.</p>
-            {TOOLS.map(g => (
+            <p>{MCP_TOOLS.reduce((n, g) => n + g.items.length, 0)} tools. &ldquo;Reads&rdquo; never change anything and need no approval. &ldquo;Changes&rdquo; write to your Kivo; your assistant may ask you before running them. &ldquo;Needs approval&rdquo; tools change nothing until you approve the exact change in Kivo (below), so you can let your assistant use Kivo&apos;s tools without asking each time and still decide every delete, move and rename.</p>
+            {MCP_TOOLS.map(g => (
               <div key={g.group}>
                 <h3 className="mt-6 text-base font-semibold text-foreground">{g.group}</h3>
                 <ul className="mt-2 !list-none !pl-0">
@@ -220,6 +176,7 @@ export default function KivoConnectDocs() {
               <li>Images: PNG, JPEG or WebP, up to 2.5 MB each and 6 per request. An assistant can send an image&apos;s data, a public https address, or (in ChatGPT) a file you attached. Claude cannot pass an image you pasted into the chat to a tool: open the note in Kivo and paste it there.</li>
               <li>When reading, an assistant gets up to 3 of a note&apos;s images per request and asks again for more.</li>
               <li>Up to 120 tool calls a minute per connection.</li>
+              <li>On Free, ChatGPT and Claude can make {(DEFAULT_ALLOWANCES.free.mcpLifetime ?? 0).toLocaleString("en-US")} tool calls in total. After that, changes from an assistant pause and reading continues, up to {DEFAULT_ALLOWANCES.free.mcpReadOnly} read calls a month, starting again each month. Plus and Pro have no fixed number (fair use). Your usage is on <strong>Settings › Plan and billing</strong>.</li>
             </ul>
           </Section>
 
@@ -244,12 +201,15 @@ export default function KivoConnectDocs() {
               <li><strong>The first call is slow</strong>: the server may be waking up. Try again after a few seconds.</li>
               <li><strong>&ldquo;approval_required&rdquo;</strong>: open the approval link the assistant gave you and approve or decline the change in Kivo.</li>
               <li><strong>&ldquo;declined&rdquo;</strong>: you declined that change. Nothing was done; ask again if you change your mind.</li>
+              <li><strong>&ldquo;mcp_lifetime_exhausted&rdquo; or &ldquo;mcp_read_only_allowance_exhausted&rdquo;</strong>: this Free account has used its calls (see Limits). Reading continues within the month&apos;s reads; nothing in Kivo was changed.</li>
+              <li><strong>Too many requests at once</strong>: wait a minute and try again.</li>
+              <li><strong>The assistant can&apos;t find Kivo&apos;s tools</strong>: turn the connector on for the conversation, check that the address is exactly the one above, then connect again.</li>
               <li><strong>Asked to sign in again</strong>: the connection was disconnected or expired after 30 days without use. Connect again.</li>
             </ul>
           </Section>
 
           <Section id="support" title="Support">
-            <p>Questions, problems or a security report about Kivo Connect: email <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. Include which assistant you use and, if you have one, the time the problem happened.</p>
+            <p>Questions, problems or a security report about Kivo Connect: email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>. Include which assistant you use and, if you have one, the time the problem happened.</p>
           </Section>
         </div>
       </main>
