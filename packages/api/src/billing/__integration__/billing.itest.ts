@@ -265,6 +265,7 @@ test("checkout: only Kivo's enabled plans, the server's product, the signed-in a
   assert.equal(body.external_customer_id, u.id);
   assert.equal(body.customer_email, u.email);
   assert.equal(body.allow_trial, false);
+  assert.equal(body.currency, "usd", "Pro is sold in US dollars whatever prices the product also holds");
   assert.match(String(body.success_url), /\/settings\/billing\?checkout=success$/);
   // Visiting the success page grants nothing: only the webhook does.
   assert.equal((await entitlementForUser(u.id)).plan, "free");
