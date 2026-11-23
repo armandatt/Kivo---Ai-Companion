@@ -1,6 +1,6 @@
 # Proposed revision: Terms of Service "Plans and payment" (and one Privacy Policy addition)
 
-Status: **proposal, not published.** The owner approves the wording, any legal review, and the date. Nothing in `apps/web/app/(legal)/` has been changed.
+Status: **adopted 2026-11-23** (Terms and Privacy versions 2026-11-23; previous pair 2026-11-14 accepted during the deploy, to be emptied once API and web are both live). One change from the proposal: the allowance sentence promises notice before a reduction applies, not timing to the billing period, because the code does not enforce that timing.
 
 ## Versions
 
