@@ -1,6 +1,6 @@
 'use client'
 
-// The Saved Pages page's own pieces: the header with the connection
+// The Browser Extension page's own pieces: the header with the connection
 // status and the one action that matters now, the three setup steps (shown
 // until a browser is connected), the connected browsers, and help.
 //
@@ -55,7 +55,7 @@ export function ExtensionHeader({ connection }: { connection: ExtensionConnectio
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5" data-extension-intro={connected ? 'connected' : 'install'}>
       <div className="min-w-0 max-w-xl">
-        <h1 className="text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">Saved Pages</h1>
+        <h1 className="text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">Browser Extension</h1>
         <p className="mt-2 text-[15px] text-foreground/65">Pages you save from the web, and the Kivo browser extension that saves them.</p>
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
@@ -149,7 +149,7 @@ const FAQ: Array<{ q: string; a: ReactNode }> = [
     : <>The store link will be here soon. Meanwhile, the Save to Kivo bookmark and pasting a link save any page.</> },
   { q: 'How do I connect it?', a: 'Press Get a code here, or Get a code from Nova in the extension. Type the code into the extension. It works once, for ten minutes.' },
   { q: 'How do I save an article or a video?', a: 'Open it, click the extension and press Save to Nova. To keep one passage, select it first and press Save selection. A YouTube video is saved as a video, with its thumbnail.' },
-  { q: 'Where do saved pages go?', a: 'Into Saved pages on this page. A page filed under a subject also appears on your Knowledge Map, and beside its topic in Focus.' },
+  { q: 'Where do saved pages go?', a: 'Into the Saved pages list on this page. A page filed under a subject also appears on your Knowledge Map, and beside its topic in Focus.' },
   { q: 'It won’t connect.', a: 'Codes last ten minutes and work once, so get a new one and type it exactly. A browser also disconnects after thirty days unused, or if you disconnect it here.' },
   { q: 'A page didn’t save.', a: 'Chrome keeps extensions out of its own pages (settings, New Tab, the Web Store). About twenty saves a minute is the limit. You can always paste the link into Save a link.' },
   { q: 'Do I need a Kivo account?', a: 'Yes, and you’re signed in to it. The account that makes the code is the one the browser saves to.' },

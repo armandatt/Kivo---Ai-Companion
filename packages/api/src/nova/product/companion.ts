@@ -37,8 +37,9 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/notes",   label: "Notes" },
   // What was captured and not yet organised into a note (capture-drafts.ts).
   { path: "/notes/drafts", label: "Drafts" },
-  // The pages saved from the browser, with connecting the extension on the same page.
-  { path: "/saved",   label: "Saved Pages" },
+  // The browser extension: connecting it, and the pages saved with it (the
+  // route stays /saved, so old links keep working).
+  { path: "/saved",   label: "Browser Extension" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/progress", label: "Progress" },
