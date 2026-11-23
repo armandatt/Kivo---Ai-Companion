@@ -10,6 +10,8 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { entitlementForLearner } from "@repo/api/billing/entitlements"
 //@ts-ignore
+import { upgradeLine } from "@repo/api/billing/offer"
+//@ts-ignore
 import { recordTokens, withAiAllowance } from "@repo/api/billing/usage"
 //@ts-ignore
 import { meterLlmUsage, startInteraction, type UsageFeature, type UsageSurface } from "@repo/api/services/llm-usage"
@@ -21,20 +23,24 @@ export interface MeteredUse { feature: UsageFeature; surface?: UsageSurface }
 // the exhausted allowance, the tier and when it renews.
 type Refusal = { plan: "free" | "pro"; credits?: { code: string; tier: "free" | "plus" | "pro"; used: number; limit: number; resetsAt: string | null } }
 
+// Where a page sends someone who wants to see their plan and allowances.
+export const PLAN_URL = "/settings/billing"
+
 const renewal = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null
 
 export function allowanceUsed(refusal: Refusal | "free" | "pro") {
   const r: Refusal = typeof refusal === "string" ? { plan: refusal } : refusal
   if (r.credits) {
     const on = renewal(r.credits.resetsAt)
-    const next = r.credits.tier === "free" ? " or upgrade to Plus for 1,000 a month" : r.credits.tier === "plus" ? " or upgrade to Pro for 3,500 a month" : ""
-    const message = `You've used this month's ${r.credits.limit.toLocaleString("en-US")} Nova credits.${on ? ` They renew on ${on}` : " They renew next month"}${next}. Everything you made is still here.`
-    return NextResponse.json({ ok: false, success: false, error: "allowance_used", code: r.credits.code, message, plan: r.plan, tier: r.credits.tier, used: r.credits.used, limit: r.credits.limit, resetsAt: r.credits.resetsAt }, { status: 429 })
+    // Only a plan that can be bought now is named (billing/offer.ts).
+    const next = upgradeLine(r.credits.tier, "nova")
+    const message = `You've used this month's ${r.credits.limit.toLocaleString("en-US")} Nova credits.${on ? ` They renew on ${on}.` : " They renew next month."}${next} Everything you made is still here.`
+    return NextResponse.json({ ok: false, success: false, error: "allowance_used", code: r.credits.code, message, plan: r.plan, tier: r.credits.tier, used: r.credits.used, limit: r.credits.limit, resetsAt: r.credits.resetsAt, planUrl: PLAN_URL }, { status: 429 })
   }
   const message = r.plan === "free"
-    ? "You've used today's Nova allowance on Free. It resets tomorrow, or try Pro for much more."
+    ? `You've used today's Nova allowance on Free. It resets tomorrow.${upgradeLine("free", "nova").replace(/ a month\.$/, " Nova credits a month.")}`
     : "You've used today's Nova allowance. It resets tomorrow."
-  return NextResponse.json({ ok: false, success: false, error: "allowance_used", message, plan: r.plan }, { status: 429 })
+  return NextResponse.json({ ok: false, success: false, error: "allowance_used", message, plan: r.plan, planUrl: PLAN_URL }, { status: 429 })
 }
 
 export async function metered<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<{ ok: true; value: T } | { ok: false; response: NextResponse }> {

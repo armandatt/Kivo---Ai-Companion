@@ -2,9 +2,10 @@
 
 import { Button } from "@/components/ui/button"
 import { AuthAwareLink } from "@/components/auth-aware-link"
-import { Check, Lightning } from "@phosphor-icons/react/dist/ssr"
+import { Check } from "@phosphor-icons/react/dist/ssr"
 import { Reveal } from "@/components/landing/frame"
 import { PLANS, formatPrice, intervalLabel, type PlanDefinition } from "@repo/api/billing/plans"
+import { DEFAULT_ALLOWANCES } from "@repo/api/billing/accounting/rules"
 
 // The three plans, side by side, from the one plan list (packages/api billing
 // plans), so this page cannot promise what checkout does not sell. A plan
@@ -46,14 +47,6 @@ export function Pricing() {
                 boxShadow: highlighted ? "0 0 60px -20px var(--color-keppel-700)" : "var(--bento-shadow)",
               }}
             >
-              {highlighted && (
-                <div
-                  className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] text-xs font-semibold rounded-full flex items-center gap-1"
-                >
-                  <Lightning weight="fill" className="h-3 w-3" />
-                  Most popular
-                </div>
-              )}
 
               <div className="p-6 lg:p-8">
                 <div className="flex items-center gap-3 mb-1">
@@ -103,10 +96,57 @@ export function Pricing() {
           ))}
         </Reveal>
 
+        <Compare />
+
         <p className="text-center text-sm text-[var(--color-baltic-sea-500)] mt-10">
           Free needs no card · Plus in Indian rupees, Pro in US dollars · Your notes stay yours on every plan
         </p>
       </div>
     </section>
+  )
+}
+
+// The plans side by side, from the allowance table the accounting uses
+// (billing/accounting/rules.ts), so the page and the limits cannot disagree.
+// Fair use is written as fair use: no plan is unlimited.
+const size = (b: number) => b >= 1_000_000_000 ? `${(b / 1_000_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1_000_000)} MB`
+const T = DEFAULT_ALLOWANCES
+const ROWS: Array<{ name: string; note?: string; free: string; plus: string; pro: string }> = [
+  { name: "Nova credits a month", note: "A usual request is about one credit; bigger jobs use more", free: T.free.novaCredits.toLocaleString("en-US"), plus: T.plus.novaCredits.toLocaleString("en-US"), pro: T.pro.novaCredits.toLocaleString("en-US") },
+  { name: "Browser-agent tasks a month", note: "One task however many steps it takes", free: String(T.free.browserTasks), plus: String(T.plus.browserTasks), pro: String(T.pro.browserTasks) },
+  { name: "Images and attachments", free: size(T.free.storageBytes), plus: size(T.plus.storageBytes), pro: size(T.pro.storageBytes) },
+  { name: "ChatGPT and Claude", note: "Fair use still limits very heavy or automated use", free: `${(T.free.mcpLifetime ?? 0).toLocaleString("en-US")} calls, then ${T.free.mcpReadOnly ?? 0} reads a month`, plus: "Fair use", pro: "Fair use" },
+  { name: "Progress and Learning DNA", free: "Included in full", plus: "Included in full", pro: "Included in full" },
+  { name: "Notes, Knowledge Maps, planner and focus", free: "Included", plus: "Included", pro: "Included" },
+]
+
+function Compare() {
+  return (
+    <div className="mt-14 overflow-x-auto rounded-2xl border border-[var(--color-baltic-sea-800)] bg-[var(--color-baltic-sea-950)]">
+      <table className="w-full min-w-[560px] text-sm">
+        <caption className="sr-only">What each plan includes</caption>
+        <thead>
+          <tr className="border-b border-[var(--color-baltic-sea-800)] text-left text-[var(--color-baltic-sea-400)]">
+            <th scope="col" className="px-5 py-3 font-medium">Compare plans</th>
+            <th scope="col" className="px-5 py-3 font-medium">Free</th>
+            <th scope="col" className="px-5 py-3 font-medium">Plus{PLANS.plus_monthly.enabled ? "" : " · soon"}</th>
+            <th scope="col" className="px-5 py-3 font-medium">Pro</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-baltic-sea-900)]">
+          {ROWS.map(r => (
+            <tr key={r.name}>
+              <th scope="row" className="px-5 py-3 text-left font-normal text-[var(--color-baltic-sea-200)]">
+                {r.name}
+                {r.note && <span className="block text-xs text-[var(--color-baltic-sea-500)]">{r.note}</span>}
+              </th>
+              <td className="px-5 py-3 tabular-nums text-[var(--color-baltic-sea-300)]">{r.free}</td>
+              <td className="px-5 py-3 tabular-nums text-[var(--color-baltic-sea-300)]">{r.plus}</td>
+              <td className="px-5 py-3 tabular-nums text-[var(--color-baltic-sea-100)]">{r.pro}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

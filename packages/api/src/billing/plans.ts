@@ -47,7 +47,7 @@ const FREE_FEATURES = [
 export const PLANS: Record<PlanKey, PlanDefinition> = {
   free: {
     key: "free", name: "Free", tier: "free", priceMinor: 0, currency: "USD", interval: null, trialDays: 0, enabled: true,
-    tagline: "Everything you need to plan, study and keep notes.",
+    tagline: "For getting your learning organised: plans, notes, maps and focus.",
     features: FREE_FEATURES,
   },
   // Sold in rupees, once its Polar product is configured and the INR route
@@ -58,7 +58,7 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
   plus_monthly: {
     key: "plus_monthly", name: "Plus", tier: "plus", priceMinor: 29_900, currency: "INR", interval: "month", trialDays: 0,
     get enabled() { return process.env.NEXT_PUBLIC_BILLING_PLUS_ENABLED === "true" || process.env.BILLING_PLUS_ENABLED === "true"; },
-    tagline: "For connecting Kivo to ChatGPT and Claude, with Nova most days.",
+    tagline: "For using Kivo regularly, with more Nova and browser-agent capacity.",
     features: [
       "Everything in Free",
       "1,000 Nova credits a month",
@@ -69,7 +69,7 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
   },
   pro_monthly: {
     key: "pro_monthly", name: "Pro", tier: "pro", priceMinor: 1_000, currency: "USD", interval: "month", trialDays: 0, enabled: true,
-    tagline: "For students who lean on Nova every day.",
+    tagline: "For intensive learning and heavier AI workflows.",
     features: [
       "Everything in Plus",
       "3,500 Nova credits a month",
