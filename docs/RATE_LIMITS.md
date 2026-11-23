@@ -88,6 +88,7 @@ What holds a slot:
 | `.kivo` import | `portable.import` | the request | when it ends |
 | `.kivo` resume | `portable.import` | `job:<id>` | when it ends |
 | MCP writes | `mcp.write` | the request | when it ends |
+| Build with Nova jobs | `builder.jobs` | the turn | when the background job ends, or when no job starts; expires after 10 min |
 
 ## Policies
 
@@ -157,6 +158,7 @@ The limits sit at 2× or more of the busiest real account.
 | `portable.import` | import | user 6/1 min†; global 60/1 min | account 1, all 3, slot 15 min | closed | † enforced, rest shadow | An import writes through the map's writers in stages. One per account at once; a stopped one resumes under the same job. |
 | `day.flow` | write | user 60/1 min | – | open | enforced (was before) | Changes to Today's flow: drags, ticks, times. |
 | `workspaces.create` | write | user 10/1 min | – | open | enforced (was before) | A workspace made from a template writes many rows. |
+| `builder.jobs` | ai | – (×plan) | account 2, all 20, slot 10 min (×plan) | closed | shadow → staged | Build with Nova jobs running at once per account. A job runs after its request returns; its slot is given back when it ends, or after ten minutes if the process died. |
 | `builder.edit` | write | user 60/1 min | – | open | enforced (was before) | Edits to a Build with Nova plan before it is applied. |
 | `builder.approve` | write | user 10/1 min | – | open | enforced (was before) | Applying a plan writes many rows. |
 | `billing.checkout` | billing | user 10/1 h | – | open | shadow → staged | Each checkout is a call to the payment provider. Open on an outage: never stop someone paying. |
@@ -267,5 +269,4 @@ These stay per process and are only hints:
   - Its message rate (`checkRateLimit`, by messages in the conversation log) and its per-chat budgets stay as they were.
   - Only the account-wide `ai.account` was added there.
   - Telegram's webhook has only a global ceiling, since every chat comes from Telegram's own addresses.
-- **Running-task ceilings:** Build with Nova jobs have a rate (`builder.turn`, `ai.account`) but no running-job ceiling of their own.
 - **Read-only mode** refuses every POST in a write category, including harmless POSTs that only read (for example the export preview).

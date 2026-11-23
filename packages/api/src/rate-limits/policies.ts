@@ -208,6 +208,9 @@ const LIST: Policy[] = [
   // ── Ordinary writes with their own former limits ──
   { id: "day.flow",          category: "write", failure: "open", legacy: true, user: [per(60, MINUTE)], why: "Changes to Today's flow: drags, ticks, times." },
   { id: "workspaces.create", category: "write", failure: "open", legacy: true, user: [per(10, MINUTE)], why: "A workspace made from a template writes many rows." },
+  { id: "builder.jobs", category: "ai", failure: "closed", planScaled: true,
+    concurrency: { user: 2, global: 20, ttlMs: 10 * MINUTE },
+    why: "Build with Nova jobs running at once per account. A job runs after its request returns; its slot is given back when it ends, or after ten minutes if the process died." },
   { id: "builder.edit",      category: "write", failure: "open", legacy: true, user: [per(60, MINUTE)], why: "Edits to a Build with Nova plan before it is applied." },
   { id: "builder.approve",   category: "write", failure: "open", legacy: true, user: [per(10, MINUTE)], why: "Applying a plan writes many rows." },
 
