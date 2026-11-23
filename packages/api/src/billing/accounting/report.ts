@@ -10,7 +10,7 @@
 import { createHash } from "crypto";
 import { prisma } from "@repo/db/client";
 import { requestsBySubject } from "../usage";
-import { costByFeature } from "../usage-events";
+import { costByFeature, costByFeatureSurface, interactionsInRange } from "../usage-events";
 import { allowanceVersion, browserTaskCostTargetMicros, creditRateVersion } from "./rules";
 
 const label = (accountKey: string) => `${accountKey.split(":")[0]}#${createHash("sha256").update(accountKey).digest("hex").slice(0, 8)}`;
@@ -81,8 +81,55 @@ export async function shadowReport(from: Date, to: Date) {
     SELECT COALESCE(SUM("costMicros"),0)::bigint AS cost FROM "UsageLedger"
     WHERE product IN ('nova_credits','browser_tasks','kivo_funded','system') AND entry <> 'reserve' AND "createdAt" >= ${from} AND "createdAt" < ${to}`;
 
+  // Every usage event's interaction should have reached the ledger: as a Nova
+  // reservation's interaction, a settlement's detail, or a record's key.
+  const interactions = await interactionsInRange(from, to);
+  const settled = new Set<string>();
+  const refs = await prisma.$queryRaw<Array<{ ref: string | null }>>`
+    SELECT ref FROM "UsageReservation" WHERE product = 'nova_credits' AND "createdAt" >= ${new Date(from.getTime() - 3_600_000)} AND "createdAt" < ${to}`;
+  for (const r of refs) if (r.ref) settled.add(r.ref);
+  const marks = await prisma.$queryRaw<Array<{ idempotencyKey: string; detail: string | null }>>`
+    SELECT "idempotencyKey", detail FROM "UsageLedger" WHERE "createdAt" >= ${from} AND "createdAt" < ${new Date(to.getTime() + 3_600_000)}
+      AND product IN ('nova_credits','browser_tasks','kivo_funded','system')`;
+  for (const m of marks) {
+    if (m.detail?.startsWith("interaction:")) settled.add(m.detail.slice(12));
+    const k = m.idempotencyKey.split("|").slice(2, -1).join("|");
+    if (k.startsWith("interaction:")) settled.add(k.slice(12));
+    const step = k.match(/:cost:(.+):\d+$/) ?? k.match(/^(.+):\d+$/);
+    if (step) settled.add(step[1]!);
+  }
+  const missing = interactions.filter(i => !settled.has(i.interactionId));
+  const missingByFeature: Record<string, number> = {};
+  for (const m of missing) missingByFeature[`${m.feature}/${m.surface}`] = (missingByFeature[`${m.feature}/${m.surface}`] ?? 0) + 1;
+
+  // A reservation settled twice would be a duplicate charge or refund.
+  const duplicates = await prisma.$queryRaw<Array<{ n: bigint }>>`
+    SELECT COUNT(*) AS n FROM (SELECT "reservationId" FROM "UsageLedger" WHERE entry IN ('commit','refund') AND "reservationId" IS NOT NULL
+      AND "createdAt" >= ${from} AND "createdAt" < ${to} GROUP BY "reservationId" HAVING COUNT(*) > 1) d`;
+
+  // Free's monthly read-only MCP calls, this month.
+  const readOnly = (await prisma.$queryRaw<Array<{ committedUnits: bigint }>>`
+    SELECT "committedUnits" FROM "UsageBalance" WHERE product = 'mcp_read_only' AND "periodStart" <= ${to} AND "periodEnd" > ${new Date(to.getTime() - 1)}`).map(r => num(r.committedUnits));
+
+  const novaBySurface = (await costByFeatureSurface(from, to)).map(r => ({ ...r, costUsd: r.costMicros / 1e6 }));
+  const coverageRatio = eventCost > 0 ? num(ledgerCost?.cost) / eventCost : 1;
+  const staleOpen = open.reduce((a, o) => a + num(o.stale), 0);
+
   return {
     range: { from: from.toISOString(), to: to.toISOString() },
+    // Pass/fail at a glance (the gate in docs/USAGE_ACCOUNTING.md reads these).
+    checks: {
+      coverageAtLeast99pct: coverageRatio >= 0.99,
+      coverageRatio: Math.round(coverageRatio * 10_000) / 10_000,
+      interactions: interactions.length,
+      interactionsWithoutSettlement: missing.length,
+      duplicateSettlements: num(duplicates[0]?.n),
+      staleReservations: staleOpen,
+      browserTasksOverCostTarget: taskCosts.filter(c => c > browserTaskCostTargetMicros()).length,
+    },
+    missingSettlements: { byFeature: missingByFeature, sample: missing.slice(0, 20).map(m => ({ feature: m.feature, surface: m.surface, costUsd: m.costMicros / 1e6 })) },
+    novaCostBySurface: novaBySurface,
+    mcpReadOnlyThisMonth: { accounts: readOnly.length, p50: pct(readOnly, 0.5), max: pct(readOnly, 1), atLimit: readOnly.filter(x => x >= 100).length },
     versions: { credits: creditRateVersion(), allowances: allowanceVersion() },
     nova: {
       accounts: byAccount.length,

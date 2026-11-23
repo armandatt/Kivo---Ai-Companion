@@ -3,7 +3,7 @@
 // provider's webhooks. The account is always the signed-in user, passed in by
 // the route from the session; no id from a request body is ever used to
 // decide whose plan something is. Pro is granted only by a verified provider
-// event (or Kivo's own trial), never by a visit to a success page.
+// event, never by a visit to a success page, and never by a trial.
 
 import { prisma } from "@repo/db/client";
 import { PLANS, PAID_PLANS, type PlanKey } from "./plans";
@@ -71,29 +71,11 @@ export async function billingView(userId: string, now = new Date(), env = proces
   };
 }
 
-// ── Kivo's free trial ──
-// Once per account. Two requests at once make one trial: the second meets
-// the first's row (the account id is the key) and gets it back.
-export async function startTrial(userId: string, now = new Date(), env = process.env): Promise<Result<{ endsAt: string; created: boolean }>> {
-  const days = trialDays(env);
-  if (days === 0) return fail("not_eligible", "There is no free trial right now.");
-  const [trial, sub] = await Promise.all([
-    prisma.billingTrial.findUnique({ where: { userId } }),
-    prisma.billingSubscription.findUnique({ where: { userId }, select: { id: true } }),
-  ]);
-  if (trial) return { ok: true, endsAt: trial.endsAt.toISOString(), created: false };
-  if (sub) return fail("not_eligible", "The free trial is for new accounts. You can upgrade to Pro instead.");
-  try {
-    const made = await prisma.billingTrial.create({
-      data: { userId, planKey: "pro_monthly", startedAt: now, endsAt: new Date(now.getTime() + days * DAY) },
-    });
-    forgetTier(`user:${userId}`);
-    return { ok: true, endsAt: made.endsAt.toISOString(), created: true };
-  } catch (err) {
-    if (!isUniqueViolation(err)) throw err;
-    const existing = await prisma.billingTrial.findUniqueOrThrow({ where: { userId } });
-    return { ok: true, endsAt: existing.endsAt.toISOString(), created: false };
-  }
+// ── Kivo's free trial: retired ──
+// There is no free trial of a paid plan (2026-11-23). The route stays for
+// older pages and always refuses; existing trial rows are kept, grant nothing.
+export async function startTrial(_userId: string, _now = new Date(), _env = process.env): Promise<Result<{ endsAt: string; created: boolean }>> {
+  return fail("not_eligible", "Kivo has no free trial of paid plans. Everything on Free stays free.");
 }
 
 // ── Checkout ──

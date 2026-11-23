@@ -8,8 +8,9 @@ import { PLANS, formatPrice, intervalLabel, type PlanKey } from '@repo/api/billi
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 
-// The account's plan: what it has, until when, how much of today's Nova it
-// has used, and the ways to change it. Everything shown comes from
+// The account's plan: what it has, until when, what it has used, and the
+// ways to change it. There is no free trial: paid plans come only from a
+// verified payment. Everything shown comes from
 // /api/billing, which reads the server's records; this page never decides
 // that someone has Pro. After checkout it waits for the provider's own word.
 
@@ -28,7 +29,7 @@ type View = {
   ok: true
   plan: 'free' | 'pro'
   tier?: 'free' | 'plus' | 'pro'
-  source: 'subscription' | 'grace' | 'trial' | 'free'
+  source: 'subscription' | 'grace' | 'free'
   planKey: PlanKey | null
   until: string | null
   subscription: { planKey: PlanKey; status: string; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean; canceledAt: string | null } | null
@@ -55,19 +56,15 @@ async function post(path: string, body: unknown = {}): Promise<{ ok: boolean; ur
 }
 
 // One plain sentence for where the account stands.
-const TIER_NAME = { free: 'Free', plus: 'Plus', pro: 'Pro' } as const
 
 function standing(v: View): { title: string; detail: string; tone: 'good' | 'warn' | 'plain' } {
   const s = v.subscription
   const paid = s ? (PLANS[s.planKey]?.name ?? 'Pro') : 'Pro'
-  const trialName = TIER_NAME[v.tier ?? 'pro']
   if (v.source === 'grace') return { title: `${paid}, payment due`, detail: `Your last payment didn't go through. ${paid} stays on until ${day(v.until)} while you update your payment method.`, tone: 'warn' }
   if (v.source === 'subscription' && s) {
     if (s.cancelAtPeriodEnd || s.status === 'canceled') return { title: `${paid}, ending`, detail: `You cancelled. ${paid} stays on until ${day(s.currentPeriodEnd)}, then you're on Free. Nothing you made is lost.`, tone: 'warn' }
     return { title: PLANS[s.planKey]?.name ?? 'Pro', detail: s.currentPeriodEnd ? `Renews on ${day(s.currentPeriodEnd)}.` : 'Active.', tone: 'good' }
   }
-  if (v.source === 'trial' && v.trial) return { title: `${trialName} trial`, detail: `Your free trial ends on ${day(v.trial.endsAt)}. No card on file, so nothing is charged; you move to Free unless you upgrade.`, tone: 'good' }
-  if (v.trial && !v.trial.active) return { title: 'Free', detail: `Your trial ended on ${day(v.trial.endsAt)}. Everything you made is still here.`, tone: 'plain' }
   if (s && (s.status === 'revoked' || s.status === 'canceled')) return { title: 'Free', detail: `Your ${paid} subscription has ended. Everything you made is still here.`, tone: 'plain' }
   return { title: 'Free', detail: v.allowances?.mode === 'enforce' ? 'Plan, study, keep notes and talk to Nova, within a monthly allowance.' : 'Plan, study, keep notes and talk to Nova, within a daily allowance.', tone: 'plain' }
 }
@@ -190,17 +187,6 @@ export function BillingPage() {
 
       {error && <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/5 px-4 py-3 text-sm text-red-200">{error}</p>}
 
-      {!subscribed && view.trialEligible && view.trialDays > 0 && (
-        <section className={cn(CARD, 'flex flex-wrap items-center justify-between gap-4 border-keppel-400/25')}>
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-foreground">Try {TIER_NAME[view.tier === 'free' || !view.tier ? 'pro' : view.tier]} free for {view.trialDays} days</p>
-            <p className="mt-1 max-w-prose text-sm leading-relaxed text-foreground/60">No card needed and nothing is charged. When it ends you&apos;re back on Free, with everything you made still here.</p>
-          </div>
-          <button type="button" onClick={() => void go('trial', '/api/billing/trial')} disabled={busy !== null} className={cn(BUTTON_PRIMARY, 'shrink-0')} data-start-trial>
-            {busy === 'trial' ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Start free trial
-          </button>
-        </section>
-      )}
 
       {!subscribed && (
         <section aria-labelledby="upgrade" className="space-y-3">

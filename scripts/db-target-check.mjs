@@ -12,6 +12,10 @@
 // Before a production push: compare the endpoint id with the one in Render's
 // DATABASE_URL (Render → Environment; read the host only) and the timeline
 // with the production branch in the Neon console. They must match.
+//
+// Production on 2026-11-22: endpoint ep-late-band-a46…, us-east-1, neondb,
+// timeline 85822520788960fbd593c81a08be8707. Before the push the five usage
+// objects print false; after it, true.
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -31,7 +35,7 @@ const raw = pick(which);
 if (!raw) { console.error(`No DIRECT_URL or DATABASE_URL in ${envFile}`); process.exit(1); }
 const u = new URL(raw);
 const endpoint = (u.hostname.match(/ep-[a-z0-9-]+?(?=-pooler|\.)/) || [u.hostname.split(".")[0]])[0];
-const out = { envFile, variable: which, endpoint: endpoint.slice(0, 16) + "…", pooled: u.hostname.includes("-pooler"), region: u.hostname.split(".")[1] ?? "?", database: u.pathname.slice(1) };
+const out = { envFile, variable: which, endpoint: endpoint.slice(0, 16) + "…", pooled: u.hostname.includes("-pooler"), region: u.hostname.split(".").find(p => /^[a-z]{2}-[a-z]+-\d+$/.test(p)) ?? "?", database: u.pathname.slice(1) };
 
 const c = new Client({ connectionString: raw, options: "-c default_transaction_read_only=on" });
 await c.connect();

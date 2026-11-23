@@ -62,10 +62,10 @@ describe("tiers", () => {
     expect(deriveAccess({ subscription: sub("pro_monthly", { status: "canceled", cancelAtPeriodEnd: true }), trial: null, now: at(21), graceDays: 3 }).tier).toBe("free");
     expect(deriveAccess({ subscription: sub("pro_monthly", { status: "revoked", endedAt: at(12) }), trial: null, now: at(13), graceDays: 3 }).tier).toBe("free");
   });
-  it("keep Kivo's trial as Pro unless configured to Plus", () => {
-    expect(deriveAccess({ subscription: null, trial, now: at(3), graceDays: 3 })).toMatchObject({ tier: "pro", plan: "pro", source: "trial" });
-    expect(deriveAccess({ subscription: null, trial, now: at(3), graceDays: 3, trialTier: "plus" })).toMatchObject({ tier: "plus", source: "trial" });
+  it("give a trial nothing: everyone is Free without a verified payment", () => {
+    expect(deriveAccess({ subscription: null, trial, now: at(3), graceDays: 3 })).toMatchObject({ tier: "free", plan: "free", source: "free" });
     expect(deriveAccess({ subscription: null, trial, now: at(9), graceDays: 3 }).tier).toBe("free");
+    expect(deriveAccess({ subscription: null, trial: null, now: at(3), graceDays: 3 }).tier).toBe("free");
   });
   it("map every plan, Plus in rupees and Pro in dollars, never converted", () => {
     expect(tierOfPlan("plus_monthly")).toBe("plus");

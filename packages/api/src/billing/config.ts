@@ -9,9 +9,9 @@
 //   POLAR_PRODUCT_PRO_MONTHLY   the provider's product id for each plan
 //   POLAR_PRODUCT_PRO_ANNUAL
 //   POLAR_PRODUCT_PLUS_MONTHLY  Plus (₹299/month); unset: Plus cannot be bought
-//   BILLING_TRIAL_TIER          "plus" or "pro": what Kivo's trial grants (default "pro", as before)
+//   BILLING_PLUS_ENABLED        "true" to sell Plus (with its product id; NEXT_PUBLIC_BILLING_PLUS_ENABLED on the web)
 //   BILLING_ANNUAL_ENABLED      "true" to sell the yearly plan (off by default)
-//   BILLING_TRIAL_DAYS          days of Kivo's free trial (default: the plan's)
+//   (BILLING_TRIAL_DAYS, BILLING_TRIAL_TIER: retired 2026-11-23; there is no free trial)
 //   BILLING_GRACE_DAYS          days a past-due subscription keeps Pro (default 3)
 //   NEXT_PUBLIC_APP_URL         where checkout and the portal send people back
 //
@@ -34,7 +34,7 @@ export interface ProviderConfig {
 }
 
 // The provider's settings, or why there are none. Checkout and the portal are
-// unavailable without them; the rest of billing (Free, trials) still works.
+// unavailable without them; the rest of billing (Free) still works.
 export function providerConfig(env: Env = process.env): { ok: true; config: ProviderConfig } | { ok: false; missing: string[] } {
   const missing: string[] = [];
   const server = env.POLAR_SERVER?.trim();
@@ -62,7 +62,9 @@ export function appUrl(env: Env = process.env): string {
 // needs BILLING_ANNUAL_ENABLED) and given a product id.
 export function purchasable(plan: PlanKey, config: Pick<ProviderConfig, "products">, env: Env = process.env): boolean {
   if (!PAID_PLANS.includes(plan)) return false;
-  const enabled = plan === "pro_annual" ? env.BILLING_ANNUAL_ENABLED === "true" : PLANS[plan].enabled;
+  const enabled = plan === "pro_annual" ? env.BILLING_ANNUAL_ENABLED === "true"
+    : plan === "plus_monthly" ? env.BILLING_PLUS_ENABLED === "true"
+    : PLANS[plan].enabled;
   return enabled && Boolean(config.products[plan]);
 }
 
@@ -72,15 +74,10 @@ export function planForProduct(productId: string, config: Pick<ProviderConfig, "
   return null;
 }
 
-export function trialDays(env: Env = process.env): number {
-  const n = Number(env.BILLING_TRIAL_DAYS);
-  return Number.isInteger(n) && n >= 0 && n <= 30 ? n : PLANS.pro_monthly.trialDays;
-}
-
-// What Kivo's no-card trial grants. The existing behaviour is Pro; the
-// monetisation brief proposes Plus, which is the owner's call (BILLING_TRIAL_TIER).
-export function trialTier(env: Env = process.env): "plus" | "pro" {
-  return env.BILLING_TRIAL_TIER?.trim() === "plus" ? "plus" : "pro";
+// Kivo offers no free trial of a paid plan (owner decision, 2026-11-23):
+// always 0, whatever the environment says, so no trial can be started.
+export function trialDays(_env: Env = process.env): number {
+  return 0;
 }
 
 export function graceDays(env: Env = process.env): number {

@@ -13,7 +13,7 @@
 import { prisma } from "@repo/db/client";
 import { deriveAccess, trialEligible, type Access } from "./access";
 import { allowanceFor, type Allowance } from "./limits";
-import { graceDays, trialTier } from "./config";
+import { graceDays } from "./config";
 import { webAccountOf } from "../nova/product/learner-key";
 
 export interface Entitlement extends Access {
@@ -22,7 +22,7 @@ export interface Entitlement extends Access {
   usageKey:  string;
   // The day of the month a paid plan's allowances renew (its subscription's
   // current period start, UTC; annual plans renew monthly on it). null:
-  // calendar months (Free, trial).
+  // calendar months (Free).
   anchorDay: number | null;
 }
 
@@ -37,7 +37,7 @@ async function billingRows(userId: string) {
   const [subscription, trial] = await Promise.all([
     prisma.billingSubscription.findUnique({
       where: { userId },
-      select: { planKey: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, cancelAtPeriodEnd: true, endedAt: true },
+      select: { planKey: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, cancelAtPeriodEnd: true, endedAt: true, pastDueAt: true, providerModifiedAt: true },
     }),
     prisma.billingTrial.findUnique({ where: { userId }, select: { startedAt: true, endsAt: true } }),
   ]);
@@ -46,7 +46,7 @@ async function billingRows(userId: string) {
 
 export async function entitlementForUser(userId: string, now = new Date()): Promise<Entitlement & { trialEligible: boolean }> {
   const rows = await billingRows(userId);
-  const access = deriveAccess({ ...rows, now, graceDays: graceDays(), trialTier: trialTier() });
+  const access = deriveAccess({ ...rows, now, graceDays: graceDays() });
   const paid = access.source === "subscription" || access.source === "grace";
   const start = paid ? rows.subscription?.currentPeriodStart ?? null : null;
   return { ...access, allowance: allowanceFor(access.plan), usageKey: `user:${userId}`, anchorDay: start ? start.getUTCDate() : null, trialEligible: trialEligible(rows) };

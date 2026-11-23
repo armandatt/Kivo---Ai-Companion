@@ -152,3 +152,9 @@ export async function requestsBySubject(fromDay: string, toDay: string): Promise
   const rows = await prisma.aiUsageDay.groupBy({ by: ["subjectKey"], where: { day: { gte: fromDay, lte: toDay } }, _sum: { requests: true } });
   return new Map(rows.map(r => [r.subjectKey, r._sum.requests ?? 0]));
 }
+
+// An account's daily meter rows go with it (services/accountDeletion.service.ts).
+export async function deleteUsageDaysIn(tx: Pick<typeof prisma, "aiUsageDay">, subjectKeys: string[]): Promise<void> {
+  if (subjectKeys.length === 0) return;
+  await tx.aiUsageDay.deleteMany({ where: { subjectKey: { in: subjectKeys } } });
+}

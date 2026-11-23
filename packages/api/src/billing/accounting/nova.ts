@@ -158,10 +158,10 @@ async function settleNova(end: InteractionEnd, calls: Priced[], reservationId: s
   if (reservationId) {
     if (end.failed || ok.length === 0) {
       const reason = end.failed ? (calls.length > 0 ? "work_failed_after_model_call" : "work_failed_before_model_call") : calls.length > 0 ? "model_call_failed" : "no_model_call";
-      await refund(reservationId, { reason, costMicros: cost, now });
+      await refund(reservationId, { reason, costMicros: cost, now, detail: `interaction:${end.context.interactionId}` });
     } else {
       const feature = ok[0]!.event.context.feature;
-      await commit(reservationId, { units: credits(reserveEstimate(feature)), costMicros: cost, reason: ok.length < calls.length ? "committed_partial" : "committed", rateVersion: rate, now });
+      await commit(reservationId, { units: credits(reserveEstimate(feature)), costMicros: cost, reason: ok.length < calls.length ? "committed_partial" : "committed", rateVersion: rate, now, detail: `interaction:${end.context.interactionId}` });
     }
     return;
   }

@@ -3,8 +3,8 @@
 // page's pricing, the account's billing page and checkout all read it, so
 // none of them can say something the others do not.
 //
-// These are launch settings, not commercial constants: the price, the trial
-// and whether a plan can be bought are read here, and the provider's product
+// These are launch settings, not commercial constants: the price and whether
+// a plan can be bought are read here (there is no free trial: trialDays is 0), and the provider's product
 // ids live server-side (billing config), never in this file. A plan that is
 // not `enabled` is shown as coming and cannot be bought.
 
@@ -23,7 +23,7 @@ export interface PlanDefinition {
   // Each plan is sold in one currency only; no conversion is shown anywhere.
   currency:    Currency;
   interval:    BillingInterval | null;
-  // Days of Pro an eligible new account gets before paying; 0 for none.
+  // Free days before paying. 0 on every plan: Kivo offers no free trial.
   trialDays:   number;
   enabled:     boolean;
   tagline:     string;
@@ -50,10 +50,14 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
     tagline: "Everything you need to plan, study and keep notes.",
     features: FREE_FEATURES,
   },
-  // Sold in rupees. Purchasable only once its Polar product is configured
-  // (POLAR_PRODUCT_PLUS_MONTHLY) and the INR route has been verified.
+  // Sold in rupees, once its Polar product is configured and the INR route
+  // verified: the API sells it only with BILLING_PLUS_ENABLED=true and
+  // POLAR_PRODUCT_PLUS_MONTHLY (config.ts purchasable), and the web pages show
+  // it as on sale only with NEXT_PUBLIC_BILLING_PLUS_ENABLED=true; until then
+  // it is shown as coming.
   plus_monthly: {
-    key: "plus_monthly", name: "Plus", tier: "plus", priceMinor: 29_900, currency: "INR", interval: "month", trialDays: 0, enabled: true,
+    key: "plus_monthly", name: "Plus", tier: "plus", priceMinor: 29_900, currency: "INR", interval: "month", trialDays: 0,
+    get enabled() { return process.env.NEXT_PUBLIC_BILLING_PLUS_ENABLED === "true" || process.env.BILLING_PLUS_ENABLED === "true"; },
     tagline: "For connecting Kivo to ChatGPT and Claude, with Nova most days.",
     features: [
       "Everything in Free",
@@ -64,20 +68,19 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
     ],
   },
   pro_monthly: {
-    key: "pro_monthly", name: "Pro", tier: "pro", priceMinor: 1_000, currency: "USD", interval: "month", trialDays: 7, enabled: true,
+    key: "pro_monthly", name: "Pro", tier: "pro", priceMinor: 1_000, currency: "USD", interval: "month", trialDays: 0, enabled: true,
     tagline: "For students who lean on Nova every day.",
     features: [
       "Everything in Plus",
       "3,500 Nova credits a month",
       "120 browser-agent tasks a month",
       "15 GB for images and attachments",
-      "Seven days free to start, with no card needed",
     ],
   },
   // Not on sale, and its price is not shown while it is not (components/pricing.tsx).
   // When sold, it grants Pro's monthly allowances month by month, never a year at once.
   pro_annual: {
-    key: "pro_annual", name: "Pro yearly", tier: "pro", priceMinor: 7_500, currency: "USD", interval: "year", trialDays: 7, enabled: false,
+    key: "pro_annual", name: "Pro yearly", tier: "pro", priceMinor: 7_500, currency: "USD", interval: "year", trialDays: 0, enabled: false,
     tagline: "Pro for the whole year, for less.",
     features: [
       "Everything in Pro",

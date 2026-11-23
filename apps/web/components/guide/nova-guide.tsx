@@ -187,7 +187,7 @@ const TOPICS: Topic[] = [
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
   { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install screenshot select area region ask existing note' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
-  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade dollars' },
+  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free plus pro price billing upgrade dollars' },
   { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme password reset email verified profile terms' },
   { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems troubleshooting not applied stale disconnected planner missing' },
 ]
@@ -759,7 +759,7 @@ export function NovaGuide() {
             </div>
           </Section>
 
-          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Pro is for when you lean on Nova every day.">
+          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Plus and Pro add more of Nova, the browser agent and the ChatGPT and Claude connector.">
             <Grid>
               {[PLANS.free, PLANS.plus_monthly, pro].map(plan => (
                 <div key={plan.key} className={`${CARD} p-6 ${plan.key === pro.key ? 'border-keppel-400/30' : ''}`}>
@@ -774,7 +774,7 @@ export function NovaGuide() {
                 </div>
               ))}
             </Grid>
-            <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a trial or a subscription ends.</p>
+            <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a subscription ends. There is no free trial of Plus or Pro: every account starts on Free.</p>
           </Section>
 
           <Section topic={topic('privacy')} hidden={hide('privacy')} lead="What Kivo keeps, and how you stay in charge of it.">

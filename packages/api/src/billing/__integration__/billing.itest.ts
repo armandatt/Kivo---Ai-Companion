@@ -1,7 +1,7 @@
 /**
  * Billing — real Postgres integration test.
  *
- * What it proves: trials start once however many requests race; the daily
+ * What it proves: no trial can be started and a trial row grants nothing; the daily
  * allowance holds under concurrent requests; webhooks are verified by the
  * real Polar SDK, forged ones refused, repeats applied once, and late or
  * out-of-order deliveries cannot undo newer state; a refund is read from the
@@ -90,26 +90,20 @@ const deliver = (type: string, data: Record<string, unknown>, opts?: Parameters<
 
 // ── Trials ──
 
-test("the trial starts once, however many requests race, and gives Pro until it ends", async () => {
+test("no trial can be started, however many requests race; a trial row already on record grants nothing", async () => {
   const u = await account();
   const now = new Date();
   const results = await Promise.all(Array.from({ length: 8 }, () => startTrial(u.id, now)));
-  assert.ok(results.every(r => r.ok));
-  assert.equal(results.filter(r => r.ok && r.created).length, 1);
-  assert.equal(await prisma.billingTrial.count({ where: { userId: u.id } }), 1);
-  const ends = results[0]!.ok ? results[0]!.endsAt : "";
-  assert.ok(results.every(r => r.ok && r.endsAt === ends), "every caller sees the same trial");
-
+  assert.ok(results.every(r => !r.ok && r.error === "not_eligible"));
+  assert.equal(await prisma.billingTrial.count({ where: { userId: u.id } }), 0, "nothing is written");
+  // A trial row from before the decision (kept for history) is Free.
+  await prisma.billingTrial.create({ data: { userId: u.id, planKey: "pro_monthly", startedAt: new Date(now.getTime() - 86_400_000), endsAt: new Date(now.getTime() + 6 * 86_400_000) } });
   const ent = await entitlementForUser(u.id, now);
-  assert.equal(ent.plan, "pro"); assert.equal(ent.source, "trial"); assert.equal(ent.trialEligible, false);
-  // After it ends: Free, and a second trial is refused.
-  const later = new Date(now.getTime() + 8 * 86_400_000);
-  assert.equal((await entitlementForUser(u.id, later)).plan, "free");
-  const again = await startTrial(u.id, later);
-  assert.ok(again.ok && !again.created, "the same, ended trial comes back; no new one");
+  assert.deepEqual([ent.plan, ent.tier, ent.source, ent.trialEligible], ["free", "free", "free", false]);
+  assert.equal(await prisma.billingTrial.count({ where: { userId: u.id } }), 1, "the historical row is kept");
 });
 
-test("an account that has subscribed is not offered a trial", async () => {
+test("an account that has subscribed is not offered a trial either", async () => {
   const u = await account();
   assert.equal((await deliver("subscription.active", subscriptionRecord(u.id))).status, 200);
   const t = await startTrial(u.id);

@@ -54,7 +54,7 @@ export async function tierOf(accountKey: string, now = new Date()): Promise<Tier
   return (await planOf(accountKey, now)).tier;
 }
 
-// A plan change (a webhook, a trial started) is seen at once on this instance.
+// A plan change (a verified webhook) is seen at once on this instance.
 export function forgetTier(accountKey?: string): void {
   if (accountKey) cache.delete(accountKey); else cache.clear();
 }

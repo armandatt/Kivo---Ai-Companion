@@ -26,7 +26,6 @@ process.env.AI_USAGE_EVENTS_DISABLED = "";
 process.env.USAGE_ACCOUNTING = "enforce";
 delete process.env.USAGE_ENFORCE;
 delete process.env.USAGE_ALLOWANCES;
-delete process.env.BILLING_TRIAL_TIER;
 const ROOMY = JSON.stringify({ browserStartsPer10Min: 10_000, browserOpenTasks: 10_000, mcpCallsPerMinute: 100_000, mcpCallsPerDay: 100_000, mcpItemsPerDay: 100_000, novaJobsPerMinute: 10_000 });
 process.env.USAGE_FAIR_USE = ROOMY;
 
@@ -62,6 +61,7 @@ beforeEach(() => { process.env.USAGE_FAIR_USE = ROOMY; delete process.env.USAGE_
 after(async () => {
   await llm.flushLlmCalls();
   await prisma.$transaction(tx => ledger.deleteAccountUsage(tx, users.map(key)));
+  await prisma.aiUsageEvent.deleteMany({ where: { subjectKey: { in: users.map(key) } } });
   await prisma.$executeRawUnsafe(`DELETE FROM "RateLimitWindow" WHERE key LIKE '%${STAMP}%' OR ${users.map(u => `key LIKE '%${u}%'`).join(" OR ") || "false"}`);
   await prisma.billingWebhookEvent.deleteMany({ where: { id: { startsWith: `evt_${STAMP}_` } } });
   await prisma.messengerUser.deleteMany({ where: { platformChatId: { in: users.map(u => `web:${u}`) } } });
@@ -90,16 +90,14 @@ async function ask(userId: string, cost: { input: number } = { input: 5_000 }, w
 
 // ── Nova credits ─────────────────────────────────────────────────────────────
 
-test("Nova: Free, Plus and Pro allowances are 150, 1,000 and 3,500 a month; a trial keeps Pro by default", async () => {
+test("Nova: Free, Plus and Pro allowances are 150, 1,000 and 3,500 a month; a trial is Free", async () => {
   const free = await account();
   const plus = await account(); await prisma.billingSubscription.create({ data: subRow(plus, "plus_monthly") });
   const pro = await account(); await prisma.billingSubscription.create({ data: subRow(pro, "pro_monthly") });
   const trial = await account(); await prisma.billingTrial.create({ data: { userId: trial, planKey: "pro_monthly", startedAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 6 * 86_400_000) } });
-  for (const [id, limit] of [[free, 150], [plus, 1_000], [pro, 3_500], [trial, 3_500]] as const) {
+  for (const [id, limit] of [[free, 150], [plus, 1_000], [pro, 3_500], [trial, 150]] as const) {
     assert.equal((await targetFor(key(id), "nova_credits")).limit, limit);
   }
-  process.env.BILLING_TRIAL_TIER = "plus"; forgetTier();
-  try { assert.equal((await targetFor(key(trial), "nova_credits")).limit, 1_000, "configurable to Plus"); } finally { delete process.env.BILLING_TRIAL_TIER; }
 });
 
 test("Nova: a request is charged its measured cost in credits; a costlier one more", async () => {
@@ -463,9 +461,10 @@ test("Polar: upgrade to Pro and downgrade to Plus move the tier, a late event ch
 test("Polar: failed payment keeps the tier through the 3-day grace, then Free; cancellation keeps it to the period end; revocation and refund end it", async () => {
   const a = await account();
   await deliver("subscription.active", record(a));
-  await deliver("subscription.updated", record(a, { status: "past_due", current_period_end: new Date(Date.now() - 86_400_000).toISOString() }));
+  // The provider marks it past due as the payment fails (its modified time is then).
+  await deliver("subscription.updated", record(a, { status: "past_due", current_period_end: new Date(Date.now() - 86_400_000).toISOString(), modified_at: new Date().toISOString() }));
   assert.equal(await tierNow(a), "plus", "in grace");
-  await deliver("subscription.updated", record(a, { status: "past_due", current_period_end: new Date(Date.now() - 5 * 86_400_000).toISOString() }));
+  await deliver("subscription.updated", record(a, { status: "past_due", current_period_end: new Date(Date.now() - 5 * 86_400_000).toISOString(), modified_at: new Date(Date.now() + 1_000).toISOString() }));
   assert.equal(await tierNow(a), "free", "grace over");
 
   const b = await account();
@@ -493,6 +492,57 @@ test("Polar: an annual plan renews its allowances monthly on the subscription's 
   assert.ok(days >= 28 && days <= 31, "a month's allowance");
 });
 
+// ── Everyone starts on Free (owner decision, 2026-11-23) ─────────────────────
+
+test("Free unless paid: new, trial and expired-trial accounts are Free; a verified payment gives Plus or Pro", async () => {
+  const fresh = await account();
+  assert.equal(await tierNow(fresh), "free", "a new account");
+  const onTrial = await account();
+  await prisma.billingTrial.create({ data: { userId: onTrial, planKey: "pro_monthly", startedAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 6 * 86_400_000) } });
+  assert.equal(await tierNow(onTrial), "free", "a trial row in progress");
+  const expired = await account();
+  await prisma.billingTrial.create({ data: { userId: expired, planKey: "pro_monthly", startedAt: new Date(Date.now() - 20 * 86_400_000), endsAt: new Date(Date.now() - 13 * 86_400_000) } });
+  assert.equal(await tierNow(expired), "free", "an expired trial");
+
+  const toPlus = await account();
+  assert.equal(await tierNow(toPlus), "free");
+  await deliver("subscription.active", record(toPlus));
+  assert.equal(await tierNow(toPlus), "plus", "after a verified Plus payment");
+  const toPro = await account();
+  await deliver("subscription.active", record(toPro, { product_id: "prod_pro", currency: "usd" }));
+  assert.equal(await tierNow(toPro), "pro", "after a verified Pro payment");
+});
+
+test("Cancelled Plus and Pro are kept to the end of the paid period, then Free", async () => {
+  for (const product of ["prod_plus", "prod_pro"]) {
+    const id = await account();
+    const end = new Date(Date.now() + 5 * 86_400_000);
+    await deliver("subscription.active", record(id, { product_id: product, current_period_end: end.toISOString() }));
+    await deliver("subscription.canceled", record(id, { product_id: product, status: "canceled", cancel_at_period_end: true, canceled_at: new Date().toISOString(), current_period_end: end.toISOString() }));
+    assert.equal(await tierNow(id), product === "prod_plus" ? "plus" : "pro", "paid to the period end");
+    // The period has passed (no renewal): Free.
+    await prisma.billingSubscription.update({ where: { userId: id }, data: { currentPeriodEnd: new Date(Date.now() - 60_000) } });
+    assert.equal(await tierNow(id), "free");
+  }
+});
+
+test("A failed payment grants no new paid period: a first payment that failed is Free; a renewal that failed keeps only the short grace", async () => {
+  const first = await account();
+  await deliver("subscription.created", record(first, { status: "incomplete" }));
+  assert.equal(await tierNow(first), "free");
+  const renewal = await account();
+  await deliver("subscription.active", record(renewal));
+  // The provider moved the period on a month, then the charge failed.
+  await deliver("subscription.updated", record(renewal, { status: "past_due", current_period_end: new Date(Date.now() + 30 * 86_400_000).toISOString(), modified_at: new Date(Date.now() - 4 * 86_400_000).toISOString() }));
+  assert.equal(await tierNow(renewal), "free", "grace counts from the failure: 4 days ago is past the 3-day grace");
+  const recent = await account();
+  await deliver("subscription.active", record(recent));
+  await deliver("subscription.updated", record(recent, { status: "past_due", current_period_end: new Date(Date.now() + 30 * 86_400_000).toISOString(), modified_at: new Date().toISOString() }));
+  const ent = await entitlementForUser(recent);
+  assert.equal(ent.source, "grace");
+  assert.ok(ent.until!.getTime() <= Date.now() + 3 * 86_400_000 + 60_000, "never the month the period end would give");
+});
+
 test("Existing Pro subscribers keep Pro, and their usage history is untouched", async () => {
   const id = await account();
   await prisma.billingSubscription.create({ data: subRow(id, "pro_monthly") });
@@ -503,4 +553,25 @@ test("Existing Pro subscribers keep Pro, and their usage history is untouched", 
   assert.equal((await targetFor(key(id), "browser_tasks")).limit, 120);
   assert.equal((await prisma.aiUsageDay.findFirst({ where: { subjectKey: key(id) } }))?.requests, 42);
   await prisma.aiUsageDay.deleteMany({ where: { subjectKey: key(id) } });
+});
+
+test("Shadow report: every interaction is matched to its settlement, none settled twice, and the checks say so", async () => {
+  await llm.flushLlmCalls();
+  const t0 = new Date();
+  const id = await account();
+  const ent = await entitlementForUser(id);
+  await withAiAllowance(ent, async () => { llm.emitLlmCall(call(5_000)); return 1; }, new Date(), { feature: "today_copilot", surface: "web" });
+  await llm.startInteraction({ feature: "scheduled_nova_message", surface: "telegram", usageKey: key(id), isBackground: true }, async () => { llm.emitLlmCall(call(2_000)); });
+  // A Build with Nova job: credits reserved before the job, adopted by it.
+  await prisma.messengerUser.upsert({ where: { platform_platformChatId: { platform: "web", platformChatId: `web:${id}` } }, create: { platform: "web", platformChatId: `web:${id}`, persona: "nova" }, update: {} });
+  const turn = await reserveNovaFor(`web:${id}`, { feature: "build_with_nova", idempotencyKey: `builder-turn:${STAMP}:report` });
+  const { adoptReservation } = await import("../accounting/nova.js");
+  await llm.startInteraction({ feature: "build_with_nova", surface: "web", usageKey: key(id) }, async () => { adoptReservation(turn.reservationId); llm.emitLlmCall(call(30_000)); });
+  await llm.flushLlmCalls();
+  const report = await shadowReport(t0, new Date(Date.now() + 60_000));
+  assert.equal(report.checks.interactions, 3);
+  assert.equal(report.checks.duplicateSettlements, 0);
+  assert.equal(report.checks.interactionsWithoutSettlement, 0, JSON.stringify(report.missingSettlements));
+  assert.ok(report.checks.coverageRatio > 0);
+  assert.ok(report.novaCostBySurface.some(r => r.feature === "today_copilot" && r.surface === "web"));
 });

@@ -121,7 +121,7 @@ export function limitFor(tier: Tier, product: Product): number | null {
 
 // ── The tier ──
 // The entitlement's tier (billing/access.ts: the plan behind a subscription,
-// or the trial's tier, configurable).
+// only; there is no trial of a paid tier).
 export function tierFor(access: { tier: Tier }): Tier {
   return access.tier;
 }

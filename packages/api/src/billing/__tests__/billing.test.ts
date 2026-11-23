@@ -18,9 +18,10 @@ describe("who has Pro", () => {
     expect(access(null)).toEqual({ plan: "free", tier: "free", source: "free", planKey: null, until: null });
   });
 
-  it("active and trialing subscriptions are Pro until the period ends", () => {
-    expect(access(sub())).toMatchObject({ plan: "pro", source: "subscription", planKey: "pro_monthly", until: at(20) });
-    expect(access(sub({ status: "trialing" }))).toMatchObject({ plan: "pro", source: "subscription" });
+  it("an active subscription is its plan's tier until the period ends; the provider's trial grants nothing", () => {
+    expect(access(sub())).toMatchObject({ plan: "pro", tier: "pro", source: "subscription", planKey: "pro_monthly", until: at(20) });
+    expect(access(sub({ planKey: "plus_monthly" }))).toMatchObject({ tier: "plus", source: "subscription" });
+    expect(access(sub({ status: "trialing" }))).toMatchObject({ plan: "free", tier: "free", source: "free" });
   });
 
   it("an active period that ended without a renewal event keeps Pro only for the grace, then Free", () => {
@@ -44,6 +45,16 @@ describe("who has Pro", () => {
     expect(access(sub({ status: "unpaid", currentPeriodEnd: at(-1) })).source).toBe("grace");
   });
 
+  it("a failed payment never buys a free period: the grace counts from the failure, not a period end already moved forward", () => {
+    // The provider rolled the period on to the next month, then the charge failed.
+    const rolled = sub({ status: "past_due", currentPeriodEnd: at(28), providerModifiedAt: at(-1) });
+    expect(access(rolled)).toMatchObject({ tier: "pro", source: "grace", until: at(2) });
+    expect(access(sub({ status: "past_due", currentPeriodEnd: at(28), providerModifiedAt: at(-4) })).tier).toBe("free");
+    expect(access(sub({ status: "unpaid", currentPeriodEnd: at(28), pastDueAt: at(-3.5), providerModifiedAt: at(0) })).tier).toBe("free");
+    // A first payment that failed is never paid access.
+    expect(access(sub({ status: "incomplete", currentPeriodEnd: at(30) })).tier).toBe("free");
+  });
+
   it("revoked, incomplete, paused, ended or an unknown plan are Free", () => {
     for (const status of ["revoked", "incomplete", "incomplete_expired", "paused", "something_new"]) {
       expect(access(sub({ status })).plan).toBe("free");
@@ -53,21 +64,19 @@ describe("who has Pro", () => {
     expect(access(sub({ planKey: "enterprise" })).plan).toBe("free");
   });
 
-  it("Kivo's trial is Pro until it ends, not before it starts, and not after", () => {
-    const trial = { startedAt: at(-2), endsAt: at(5) };
-    expect(access(null, trial)).toMatchObject({ plan: "pro", source: "trial", until: at(5) });
-    expect(access(null, { startedAt: at(-8), endsAt: at(-1) }).plan).toBe("free");
-    expect(access(null, { startedAt: at(1), endsAt: at(8) }).plan).toBe("free");
+  it("Kivo's trial grants nothing: a running, an ended or a future trial is Free", () => {
+    expect(access(null, { startedAt: at(-2), endsAt: at(5) })).toEqual({ plan: "free", tier: "free", source: "free", planKey: null, until: null });
+    expect(access(null, { startedAt: at(-8), endsAt: at(-1) }).tier).toBe("free");
+    expect(access(null, { startedAt: at(1), endsAt: at(8) }).tier).toBe("free");
   });
 
-  it("a subscription outranks a trial; an ended one gives way to a running trial", () => {
-    expect(access(sub(), { startedAt: at(-1), endsAt: at(6) }).source).toBe("subscription");
-    expect(access(sub({ status: "revoked" }), { startedAt: at(-1), endsAt: at(6) }).source).toBe("trial");
+  it("a paid subscription is the only source of a paid tier, with or without a trial row", () => {
+    expect(access(sub(), { startedAt: at(-1), endsAt: at(6) })).toMatchObject({ tier: "pro", source: "subscription" });
+    expect(access(sub({ status: "revoked" }), { startedAt: at(-1), endsAt: at(6) }).tier).toBe("free");
   });
 
-  it("the trial is offered once, and never to an account that has subscribed", () => {
-    expect(trialEligible({ subscription: null, trial: null })).toBe(true);
-    expect(trialEligible({ subscription: null, trial: { startedAt: at(-30), endsAt: at(-23) } })).toBe(false);
+  it("no account is offered a trial", () => {
+    expect(trialEligible({ subscription: null, trial: null })).toBe(false);
     expect(trialEligible({ subscription: sub({ status: "revoked" }), trial: null })).toBe(false);
   });
 });
@@ -148,6 +157,10 @@ describe("which plans can be bought", () => {
     expect(purchasable("pro_annual", cfg, env)).toBe(false);
     expect(purchasable("pro_annual", cfg, { ...env, BILLING_ANNUAL_ENABLED: "true" })).toBe(true);
     expect(purchasable("free", cfg, env)).toBe(false);
+    // Plus: never on sale without both its switch and its product id.
+    expect(purchasable("plus_monthly", { products: { ...cfg.products, plus_monthly: "prod_plus" } }, env)).toBe(false);
+    expect(purchasable("plus_monthly", cfg, { ...env, BILLING_PLUS_ENABLED: "true" })).toBe(false);
+    expect(purchasable("plus_monthly", { products: { ...cfg.products, plus_monthly: "prod_plus" } }, { ...env, BILLING_PLUS_ENABLED: "true" })).toBe(true);
     expect(purchasable("pro_monthly", { products: {} }, env)).toBe(false);
   });
 
@@ -157,10 +170,10 @@ describe("which plans can be bought", () => {
     expect(planForProduct("prod_someone_else", cfg)).toBeNull();
   });
 
-  it("trial and grace days are bounded", () => {
-    expect(trialDays({})).toBe(7);
-    expect(trialDays({ BILLING_TRIAL_DAYS: "14" })).toBe(14);
-    expect(trialDays({ BILLING_TRIAL_DAYS: "999" })).toBe(7);
+  it("there are no trial days whatever the environment says; grace days are bounded", () => {
+    expect(trialDays({})).toBe(0);
+    expect(trialDays({ BILLING_TRIAL_DAYS: "14" })).toBe(0);
+    expect(Object.values(PLANS).every(p => p.trialDays === 0)).toBe(true);
     expect(graceDays({})).toBe(3);
     expect(graceDays({ BILLING_GRACE_DAYS: "-1" })).toBe(3);
   });

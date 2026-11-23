@@ -86,3 +86,29 @@ export async function costByFeature(from: Date, to: Date): Promise<Array<{ featu
     FROM "AiUsageEvent" WHERE "createdAt" >= ${from} AND "createdAt" < ${to} GROUP BY feature ORDER BY cost DESC`;
   return rows.map(r => ({ feature: r.feature, subjects: Number(r.subjects), calls: Number(r.calls), interactions: Number(r.interactions), costMicros: Number(r.cost ?? 0) }));
 }
+
+// Each interaction in a range with its feature, surface and cost, for the
+// shadow report's check that every one reached the usage ledger (internal;
+// learner-attributed only, capped).
+export async function interactionsInRange(from: Date, to: Date, cap = 50_000): Promise<Array<{ interactionId: string; feature: string; surface: string; costMicros: number }>> {
+  const rows = await prisma.$queryRaw<Array<{ interactionId: string; feature: string; surface: string; cost: bigint | null }>>`
+    SELECT "interactionId", MIN(feature) AS feature, MIN(surface) AS surface, COALESCE(SUM("estimatedCostMicros"), 0)::bigint AS cost
+    FROM "AiUsageEvent" WHERE "createdAt" >= ${from} AND "createdAt" < ${to} GROUP BY "interactionId" LIMIT ${cap}`;
+  return rows.map(r => ({ interactionId: r.interactionId, feature: r.feature, surface: r.surface, costMicros: Number(r.cost ?? 0) }));
+}
+
+// Model cost by feature and surface over a range (internal).
+export async function costByFeatureSurface(from: Date, to: Date): Promise<Array<{ feature: string; surface: string; calls: number; interactions: number; costMicros: number }>> {
+  const rows = await prisma.$queryRaw<Array<{ feature: string; surface: string; calls: bigint; interactions: bigint; cost: bigint | null }>>`
+    SELECT feature, surface, COUNT(*) AS calls, COUNT(DISTINCT "interactionId") AS interactions, COALESCE(SUM("estimatedCostMicros"), 0)::bigint AS cost
+    FROM "AiUsageEvent" WHERE "createdAt" >= ${from} AND "createdAt" < ${to} GROUP BY 1, 2 ORDER BY cost DESC`;
+  return rows.map(r => ({ feature: r.feature, surface: r.surface, calls: Number(r.calls), interactions: Number(r.interactions), costMicros: Number(r.cost ?? 0) }));
+}
+
+// An account's usage events go with it (services/accountDeletion.service.ts,
+// in its transaction): those counted under its meter keys, and those made for
+// its learner (attributedKey), whoever's meter counted them.
+export async function deleteUsageEventsIn(tx: Pick<typeof prisma, "aiUsageEvent">, subjectKeys: string[], learners: string[]): Promise<void> {
+  if (subjectKeys.length === 0 && learners.length === 0) return;
+  await tx.aiUsageEvent.deleteMany({ where: { OR: [{ subjectKey: { in: subjectKeys } }, { attributedKey: { in: learners } }] } });
+}

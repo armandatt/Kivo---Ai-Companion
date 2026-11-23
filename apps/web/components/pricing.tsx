@@ -12,7 +12,7 @@ import { PLANS, formatPrice, intervalLabel, type PlanDefinition } from "@repo/ap
 const CARDS: Array<{ plan: PlanDefinition; mark: string; highlighted: boolean; cta: string; href: string }> = [
   { plan: PLANS.free,         mark: "🥚", highlighted: false, cta: "Start free",              href: "/signup" },
   { plan: PLANS.plus_monthly, mark: "🐣", highlighted: false, cta: "Choose Plus",             href: "/signup?plan=plus_monthly" },
-  { plan: PLANS.pro_monthly,  mark: "🐉", highlighted: true,  cta: "Start 7-day free trial",  href: "/signup?plan=pro_monthly" },
+  { plan: PLANS.pro_monthly,  mark: "🐉", highlighted: true,  cta: "Choose Pro",              href: "/signup?plan=pro_monthly" },
 ]
 
 export function Pricing() {
@@ -104,7 +104,7 @@ export function Pricing() {
         </Reveal>
 
         <p className="text-center text-sm text-[var(--color-baltic-sea-500)] mt-10">
-          No card needed for the trial · Prices in US dollars · Your notes stay yours on every plan
+          Free needs no card · Plus in Indian rupees, Pro in US dollars · Your notes stay yours on every plan
         </p>
       </div>
     </section>
