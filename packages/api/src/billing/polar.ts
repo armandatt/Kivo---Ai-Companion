@@ -8,6 +8,7 @@
 
 import { createPolar, webhooks } from "@polar-sh/sdk/2026-10";
 import type { ProviderConfig } from "./config";
+import { PLANS } from "./plans";
 import { InvalidSignatureError, type BillingProvider, type CheckoutRequest, type VerifiedEvent } from "./provider";
 import type { ProviderSubscription } from "./subscription-sync";
 
@@ -26,7 +27,11 @@ export function polarProvider(config: ProviderConfig, client: PolarClient = crea
         customer_ip_address:  req.ip,
         success_url:          req.successUrl,
         return_url:           req.returnUrl,
-        // Kivo runs its own no-card trial; the provider's trial is off.
+        // Each plan is sold in one currency (plans.ts). A product can hold
+        // prices in several; without this Polar picks one by the buyer's
+        // location, so an Indian buyer of Pro would pay the INR price.
+        currency:             PLANS[req.plan].currency.toLowerCase() as "usd" | "inr",
+        // There is no free trial of a paid plan; the provider's trial is off.
         allow_trial:          false,
         metadata:             { kivo_user_id: req.user.id, kivo_plan: req.plan },
       });
