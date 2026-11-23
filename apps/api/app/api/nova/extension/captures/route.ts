@@ -2,8 +2,9 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { resolveEventLearner } from "@repo/api/nova/product/learning-events"
 //@ts-ignore
-import { captureToDraft, currentDraft, CAPTURES_PER_MINUTE } from "@repo/api/nova/product/capture-drafts"
-import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { captureToDraft, currentDraft } from "@repo/api/nova/product/capture-drafts"
+import { eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,13 +14,13 @@ export const dynamic = "force-dynamic"
 // GET  /api/nova/extension/captures    the draft a capture would join, and how many are open
 // POST /api/nova/extension/captures    { key, url, title, text?, context?, newDraft? }
 // The learner is the credential's own. Rules: product/capture-drafts.ts.
-async function learnerOf(req: Request): Promise<{ profileId: string; connectionId: string } | NextResponse> {
+async function learnerOf(req: Request): Promise<{ profileId: string; connectionId: string; platformChatId: string } | NextResponse> {
   const caller = await resolveExtensionCaller(req)
   if (caller.kind === "unauthenticated") return eventFail(401, "unauthenticated", "Connect Nova again.")
   if (caller.kind !== "learner") return eventFail(409, caller.kind, "Finish connecting Nova on the web first.")
   const learner = await resolveEventLearner(caller.platformChatId)
   if (learner.status !== "ready") return eventFail(409, learner.status, "Finish the short setup on Nova first.")
-  return { profileId: learner.profileId, connectionId: caller.connectionId }
+  return { profileId: learner.profileId, connectionId: caller.connectionId, platformChatId: caller.platformChatId }
 }
 
 export async function GET(req: Request) {
@@ -46,7 +47,8 @@ async function handlePOST(req: Request): Promise<NextResponse> {
   try {
     const who = await learnerOf(req)
     if (who instanceof NextResponse) return who
-    if (!allowAttempt(`capture:${who.profileId}`, CAPTURES_PER_MINUTE, 60_000)) return eventFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate("captures", { learner: who.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 48 * 1024)
     if (!read.ok) return eventFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's more than a draft keeps at once. Select a shorter passage." : "That isn't something Nova can keep.")
     const result = await captureToDraft(who.profileId, read.body)

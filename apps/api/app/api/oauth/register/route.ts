@@ -1,18 +1,20 @@
 // POST /api/oauth/register: RFC 7591 dynamic client registration. ChatGPT and
 // Claude register themselves before the learner sees anything; a client owns
-// nothing until a learner approves it. Limited per minute across all callers.
+// nothing until a learner approves it. Limited per address and across all
+// callers (rate-limits policy oauth.register).
 //@ts-ignore
 import { parseRegistration } from "@repo/api/connect/oauth-rules"
 //@ts-ignore
 import { registerClient } from "@repo/api/connect/oauth"
-import { allowAttempt } from "../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../lib/rate-limits"
 import { json, preflight } from "../../../../lib/connect/config"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function POST(req: Request) {
-  if (!allowAttempt("oauth:register", 30, 60_000)) return json({ error: "temporarily_unavailable", error_description: "Too many registrations; try again in a minute." }, 429)
+  const limited = await rateGate("oauth.register", { req })
+  if (limited) return json({ error: "temporarily_unavailable", error_description: "Too many registrations; try again later." }, limited.status, { "retry-after": limited.headers.get("retry-after") ?? "60" })
   const text = (await req.text().catch(() => "")).slice(0, 20_000)
   let body: unknown = null
   try { body = JSON.parse(text) } catch { /* invalid below */ }

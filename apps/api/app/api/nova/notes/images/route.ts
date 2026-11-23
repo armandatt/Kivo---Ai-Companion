@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { saveNoteImage, NOTE_IMAGE_BODY_MAX, NOTE_IMAGE_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/note-images"
+import { saveNoteImage, NOTE_IMAGE_BODY_MAX } from "@repo/api/nova/product/note-images"
 //@ts-ignore
 import { admitStorage, type StorageRefusal } from "@repo/api/billing/accounting/storage"
 //@ts-ignore
 import { upgradeLine } from "@repo/api/billing/offer"
 import { PLAN_URL } from "../../../../../lib/billing/metered"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -20,15 +21,17 @@ export async function POST(req: Request) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`note-image:${access.profileId}`, NOTE_IMAGE_REQUESTS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("notes.images", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, NOTE_IMAGE_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "That image is too large. Capture a smaller region." : "That image couldn't be read.")
     // Storage allowance: the upload's bytes are admitted before it is stored
     // (billing/accounting/storage.ts); refused only when enforcing, and never
     // touching what is already stored.
     const data = (read.body as { data?: unknown } | null)?.data
+    // Its size on the account's hourly upload budget (rate-limits upload.bytes).
+    const heavy = await rateGate("upload.bytes", { learner: access.platformChatId, weight: Math.max(1, Math.ceil((typeof data === "string" ? data.length * 3 / 4 : 0) / 1_000_000)) })
+    if (heavy) return heavy
     const gate = await admitStorage({ platformChatId: access.platformChatId, profileId: access.profileId, bytes: typeof data === "string" ? Math.floor(data.length * 3 / 4) : 0 })
     if (gate.refused) return storageRefused(gate.refused)
     const result = await saveNoteImage(access.profileId, read.body).finally(() => { void gate.release() })

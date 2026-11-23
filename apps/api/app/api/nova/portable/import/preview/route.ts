@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { previewImport } from "@repo/api/portable/import"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
-import { crossSiteUpload, portableLimit, readUpload } from "../../../../../../lib/nova/portable-access"
+import { crossSiteUpload, portableLimit, readUpload, uploadBytesLimit } from "../../../../../../lib/nova/portable-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -19,6 +19,8 @@ export async function POST(req: Request) {
     if (limited) return limited
     const upload = await readUpload(req)
     if (!upload.ok) return upload.response
+    const heavy = await uploadBytesLimit(access.platformChatId, upload.bytes.length)
+    if (heavy) return heavy
     const p = await previewImport(access.profileId, upload.bytes)
     return NextResponse.json(p, { status: p.ok ? 200 : 422, headers: { "cache-control": "no-store" } })
   } catch (err) {

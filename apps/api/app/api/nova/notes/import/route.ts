@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
 import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
-import { transcribeForNote, IMPORTS_PER_MINUTE, IMPORT_BODY_MAX } from "@repo/api/nova/product/note-import"
+import { transcribeForNote, IMPORT_BODY_MAX } from "@repo/api/nova/product/note-import"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -23,9 +24,8 @@ export async function POST(req: Request) {
     if (access.denied) return access.denied
     const read = await readSmallJson(req, IMPORT_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "That file is too large. Up to 3 MB." : "That file couldn't be read.")
-    if (!allowAttempt(`note-import:${access.profileId}`, IMPORTS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot of files at once. Give it a minute.")
-    }
+    const limited = await rateGate("notes.import", { learner: access.platformChatId })
+    if (limited) return limited
     const run = await metered(access.platformChatId, () => transcribeForNote(read.body), { feature: "notes_import" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof transcribeForNote>>

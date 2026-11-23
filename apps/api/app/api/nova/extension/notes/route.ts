@@ -5,7 +5,8 @@ import { resolveEventLearner } from "@repo/api/nova/product/learning-events"
 import { listNoteChoices, noteChoicePreview, saveSelectionToNote } from "@repo/api/nova/product/note-append"
 //@ts-ignore
 import { EVENT_BODY_MAX_BYTES } from "@repo/api/nova/product/learning-events.types"
-import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -16,13 +17,13 @@ export const dynamic = "force-dynamic"
 // POST /api/nova/extension/notes   a selection_saved event, plus noteId or newNote
 // The learner is the credential's own; a note id is used only with their profile.
 // Rules: product/note-append.ts.
-async function learnerOf(req: Request): Promise<{ profileId: string; connectionId: string } | NextResponse> {
+async function learnerOf(req: Request): Promise<{ profileId: string; connectionId: string; platformChatId: string } | NextResponse> {
   const caller = await resolveExtensionCaller(req)
   if (caller.kind === "unauthenticated") return eventFail(401, "unauthenticated", "Connect Nova again.")
   if (caller.kind !== "learner") return eventFail(409, caller.kind, "Finish connecting Nova on the web first.")
   const learner = await resolveEventLearner(caller.platformChatId)
   if (learner.status !== "ready") return eventFail(409, learner.status, "Finish the short setup on Nova first.")
-  return { profileId: learner.profileId, connectionId: caller.connectionId }
+  return { profileId: learner.profileId, connectionId: caller.connectionId, platformChatId: caller.platformChatId }
 }
 
 export async function GET(req: Request) {
@@ -33,7 +34,8 @@ async function handleGET(req: Request): Promise<NextResponse> {
   try {
     const who = await learnerOf(req)
     if (who instanceof NextResponse) return who
-    if (!allowAttempt(`ext-notes:${who.connectionId}`, 120, 60_000)) return eventFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate("extension.notes", { learner: who.platformChatId })
+    if (limited) return limited
     const at = new URL(req.url).searchParams
     const preview = at.get("preview")
     if (preview) {

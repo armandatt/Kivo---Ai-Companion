@@ -4,7 +4,8 @@ import { acceptDraft, changeDayFlow, finishItemTask, loadDayFlow, setDayView, st
 //@ts-ignore
 import { approvePending } from "@repo/api/nova/product/day-copilot"
 import { dayFail, requireDayLearner } from "../../../../lib/nova/day-access"
-import { allowAttempt, readSmallJson } from "../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -38,7 +39,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireDayLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`day-flow:${access.profileId}`, 60, 60_000)) return dayFail(429, "rate_limited", "That's a lot of changes at once. Give it a moment.")
+    const limited = await rateGate("day.flow", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 16 * 1024)
     if (!read.ok) return dayFail(400, "invalid", "That isn't a change Today can make.")
     const body = read.body as Record<string, unknown>

@@ -25,9 +25,8 @@ import { fairUse } from "@repo/api/billing/accounting/rules"
 //@ts-ignore
 import { hitLimit } from "@repo/api/billing/accounting/limiter"
 import { randomUUID } from "crypto"
-import { allowAttempt } from "./extension-access"
+import { rateGate } from "../rate-limits"
 
-export const TURNS_PER_MINUTE = 8
 
 export const builderFail = (status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   NextResponse.json({ ok: false, error, message, ...extra }, { status, headers: { "cache-control": "no-store" } })
@@ -40,12 +39,13 @@ export const builderFail = (status: number, error: string, message: string, extr
 export type Turn = { refused: NextResponse } | { refused: null; counted: boolean; reservationId: string | null }
 
 export async function spendForTurn(platformChatId: string): Promise<Turn> {
-  if (!allowAttempt(`builder-turn:${platformChatId}`, TURNS_PER_MINUTE, 60_000)) {
-    return { refused: builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.") }
-  }
+  // The account's AI rate and Build with Nova's own (rate-limits ai.account,
+  // builder.turn), persistent and the same on every surface.
+  const limited = await rateGate(["ai.account", "builder.turn"], { learner: platformChatId })
+  if (limited) return { refused: limited }
   const credits = enforcing("nova_credits")
   if (credits) {
-    // Persistent: holds across restarts (the in-memory limit above is per process).
+    // Usage accounting's fair use (USAGE_FAIR_USE novaJobsPerMinute), enforced with the credits.
     const hit = await hitLimit(`builder-turn:${platformChatId}`, fairUse().novaJobsPerMinute, 60_000)
     if (!hit.allowed) return { refused: builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.", { retryAfterSeconds: hit.retryAfterSeconds }) }
   }

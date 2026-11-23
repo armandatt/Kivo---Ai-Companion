@@ -7,12 +7,12 @@ import { loadChosenLanguage } from "@repo/api/nova/product/surface-language"
 //@ts-ignore
 import { loadLearningContexts } from "@repo/api/nova/adapters/account-preferences-adapter"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const PROPOSALS_PER_MINUTE = 4
 
 // POST /api/nova/subjects/propose  { request }
 // Nova proposes changes to the learner's subjects and topics from their own
@@ -24,9 +24,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`study-proposal:${access.profileId}`, PROPOSALS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("subjects.propose", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "Say what you want to change.")
     const contexts = await loadLearningContexts(access.platformChatId).catch(() => [])

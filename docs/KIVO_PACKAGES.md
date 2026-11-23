@@ -91,7 +91,7 @@ provenance.json          creator, source, license, exportedAt, packageId, import
   - The learner comes from the session only.
   - Uploads must use a content type HTML forms cannot send (`application/vnd.kivo.map+zip` / `octet-stream` / `zip`). An Origin header must be Kivo's; `Sec-Fetch-Site` must not name another site.
   - 10 MB at most.
-  - Postgres rate limits per learner: export 10/min, preview 20/min, import 6/min.
+  - Rate limits per account (docs/RATE_LIMITS.md): export 10/min, preview 20/min, import 6/min; one export and one import at a time per account (3–4 for everyone); uploads count their size against an hourly budget.
 - **Page:** `/map/portable` ("Import / export" on the Knowledge Map).
   - **Import:** choose a file → checked → preview (counts, outline, renames, what is excluded) → Import → open the map. A repeat says it was already imported, and a failure offers Try again, which resumes.
   - **Export:** choose a subject → tick notes → links on or off → licence → credit → download.

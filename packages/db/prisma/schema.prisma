@@ -2099,6 +2099,24 @@ model RateLimitWindow {
   @@index([expiresAt])
 }
 
+// ─── Concurrency leases (packages/api/src/rate-limits/leases.ts, its only
+// reader and writer) ─────────────────────────────────────────────────────────
+// One row per operation running under a concurrency limit ("at most N imports
+// at once for this account"). Taken atomically (an advisory lock per key, in
+// a short transaction), given back when the work ends, and expired by
+// `expiresAt` if the process died first, so a slot is never stuck. `key`
+// names the limit and its subject the way RateLimitWindow keys do
+// (`<policy>:<subject>`), so account deletion removes both alike.
+model RateLimitLease {
+  key       String
+  holder    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@id([key, holder])
+  @@index([expiresAt])
+}
+
 // ─── Importing a .kivo map package (portable/import.ts, its only writer) ─────
 // One job per learner and package: a retry, a double click or a second tab
 // finds the same job. The map itself is made through the canonical writers

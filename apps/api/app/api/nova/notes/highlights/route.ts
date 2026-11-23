@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { addHighlight, listHighlights, HIGHLIGHT_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/pdf-highlights"
+import { addHighlight, listHighlights } from "@repo/api/nova/product/pdf-highlights"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -28,9 +29,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`note-highlight:${access.profileId}`, HIGHLIGHT_REQUESTS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("notes.highlights", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 64_000)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, "invalid", "That highlight couldn't be saved.")
     const result = await addHighlight(access.profileId, read.body)

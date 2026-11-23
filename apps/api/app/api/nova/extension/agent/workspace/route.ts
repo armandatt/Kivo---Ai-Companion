@@ -3,7 +3,8 @@ import { NextResponse } from "next/server"
 import { agentReadNote, agentRelated, agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
 import { checkAgentTicket } from "@repo/api/nova/product/agent-ticket"
-import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -21,7 +22,8 @@ async function handle(req: Request): Promise<NextResponse> {
   try {
     const who = await requireExtensionLearner(req)
     if (who.denied) return who.denied
-    if (!allowAttempt(`agent-workspace:${who.profileId}`, 30, 60_000)) return eventFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate("agent.workspace", { learner: who.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 4 * 1024)
     const body = (read.ok ? read.body : null) as { ticket?: unknown; op?: unknown; query?: unknown; id?: unknown } | null
     if (!checkAgentTicket(body?.ticket, who.connectionId).ok) return eventFail(409, "task_expired", "Start the task again.")

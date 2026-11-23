@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
 import { placeDraftItem, setDraftItemPlacement } from "@repo/api/nova/product/capture-drafts"
-import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
 import { PLACE_STATUS, readPlaceBody } from "../../../../../../lib/nova/place-body"
+import { rateGate } from "../../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -15,13 +16,13 @@ export const dynamic = "force-dynamic"
 // PUT  /api/nova/extension/captures/place  { draftId, itemId, subjectId|null, topicId|null }
 //      The learner's own choice (or "nowhere"), kept as theirs.
 // Rules: product/knowledge-placement.ts. The draft must be the learner's.
-const PLACES_PER_MINUTE = 40
 
 async function handle(req: Request, choose: boolean): Promise<NextResponse> {
   try {
     const who = await requireExtensionLearner(req)
     if (who.denied) return who.denied
-    if (!allowAttempt(`place:${who.profileId}`, PLACES_PER_MINUTE, 60_000)) return eventFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate(["ai.account", "captures.place"], { learner: who.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 4 * 1024)
     const body = read.ok ? readPlaceBody(read.body) : null
     if (!body || !body.draftId) return eventFail(400, "invalid", "That isn't a passage Nova can place.")

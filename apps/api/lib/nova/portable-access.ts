@@ -5,22 +5,20 @@
 //   - the content type is one a cross-site HTML form cannot send;
 //   - an Origin header, when present, must be Kivo's own;
 //   - Sec-Fetch-Site must not name another site.
-// Each action is rate-limited per learner in Postgres (billing limiter).
+// Each action is rate-limited per account and at once (rate-limits policies
+// portable.export, portable.import-preview, portable.import), and uploads
+// count their size (upload.bytes).
 
 import { NextResponse } from "next/server"
-//@ts-ignore
-import { hitLimit } from "@repo/api/billing/accounting/limiter"
 import { noteFail } from "./note-access"
 import { connectOrigin } from "../connect/config"
+import { concurrencyGate, rateGate } from "../rate-limits"
 
 export const UPLOAD_MAX_BYTES = 10_000_000
 const UPLOAD_TYPES = new Set(["application/vnd.kivo.map+zip", "application/octet-stream", "application/zip"])
 
-export const PORTABLE_LIMITS = {
-  "export":         { limit: 10, windowMs: 60_000 },
-  "import-preview": { limit: 20, windowMs: 60_000 },
-  "import":         { limit: 6,  windowMs: 60_000 },
-} as const
+const POLICY = { "export": "portable.export", "import-preview": "portable.import-preview", "import": "portable.import" } as const
+export type PortableAction = keyof typeof POLICY
 
 export function crossSiteUpload(req: Request): NextResponse | null {
   const type = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase()
@@ -42,13 +40,16 @@ export async function readUpload(req: Request): Promise<{ ok: true; bytes: Uint8
   return { ok: true, bytes: buf }
 }
 
-export async function portableLimit(action: keyof typeof PORTABLE_LIMITS, platformChatId: string): Promise<NextResponse | null> {
-  const { limit, windowMs } = PORTABLE_LIMITS[action]
-  try {
-    const hit = await hitLimit(`portable-${action}:${platformChatId}`, limit, windowMs)
-    if (!hit.allowed) return NextResponse.json({ ok: false, error: "rate_limited", message: "That's a lot of maps at once. Wait a minute and try again." }, { status: 429, headers: { "retry-after": String(hit.retryAfterSeconds ?? 60) } })
-  } catch (err) {
-    console.error(`[portable] limiter unavailable: ${(err as Error).name}`)
-  }
-  return null
+export async function portableLimit(action: PortableAction, platformChatId: string): Promise<NextResponse | null> {
+  return rateGate(POLICY[action], { learner: platformChatId })
+}
+
+/** One export or import at a time per account, and a few for everyone. Run `release` in finally. */
+export async function portableSlot(action: "export" | "import", platformChatId: string, holder?: string) {
+  return concurrencyGate(POLICY[action], { learner: platformChatId }, holder)
+}
+
+/** An upload's size on the account's hourly upload budget (upload.bytes), in megabytes. */
+export async function uploadBytesLimit(platformChatId: string, bytes: number): Promise<NextResponse | null> {
+  return rateGate("upload.bytes", { learner: platformChatId, weight: Math.max(1, Math.ceil(bytes / 1_000_000)) })
 }

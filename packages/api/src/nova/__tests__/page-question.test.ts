@@ -154,7 +154,7 @@ describe("a page question is answered and nothing else", () => {
   it("is opened by the extension's own credential, for a learner, with a limit", () => {
     expect(route).toMatch(/resolveExtensionCaller\(req\)/);
     expect(route).toMatch(/caller\.kind !== "learner"/);
-    expect(route).toMatch(/allowAttempt\(`ask:\$\{caller\.connectionId\}`/);
+    expect(route).toMatch(/rateGate\("extension\.ask", \{ learner: caller\.platformChatId \}\)/);
     expect(route).not.toMatch(/cookies\(|kevo_session|requireWebLearner/);
   });
 });

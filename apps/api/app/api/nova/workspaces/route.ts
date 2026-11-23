@@ -5,7 +5,8 @@ import { createWorkspace, listWorkspaces } from "@repo/api/nova/product/workspac
 import { learnerKey } from "@repo/api/nova/product/learner-key"
 import { prisma } from "@repo/db/client"
 import { requireWorkspaceLearner, workspaceFail } from "../../../../lib/nova/workspace-access"
-import { allowAttempt, readSmallJson } from "../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,7 +14,6 @@ export const dynamic = "force-dynamic"
 // A plan is text only (files were read when it was proposed): 256 KB is far
 // more than the largest plan the check allows.
 const PLAN_BODY_MAX = 256 * 1024
-const CREATES_PER_MINUTE = 10
 
 // GET /api/nova/workspaces — the learner's workspaces, newest first.
 // Response: WorkspacesView (packages/api/src/nova/product/workspaces.types.ts).
@@ -39,9 +39,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireWorkspaceLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`workspace-create:${access.platformChatId}`, CREATES_PER_MINUTE, 60_000)) {
-      return workspaceFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("workspaces.create", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, PLAN_BODY_MAX)
     if (!read.ok) return workspaceFail(read.reason === "too_large" ? 413 : 400, "invalid", "That plan couldn't be read.")
     const body = (read.body ?? {}) as Record<string, unknown>

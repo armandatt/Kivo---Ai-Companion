@@ -172,7 +172,7 @@ export function slowestStage(t: TurnTimings): string | null {
 
 export type FailureCategory =
   | "none" | "understanding_failed" | "understanding_malformed" | "response_failed"
-  | "operation_failed" | "send_failed" | "rate_limited" | "budget_exhausted" | "nova_allowance_exhausted"
+  | "operation_failed" | "send_failed" | "rate_limited" | "ai_rate_limited" | "budget_exhausted" | "nova_allowance_exhausted"
   | "busy" | "stale_prompt" | "forged_callback" | "internal";
 
 export interface TurnTrace {

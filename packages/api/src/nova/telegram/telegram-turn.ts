@@ -16,6 +16,8 @@
 
 import { prisma } from "@repo/db/client";
 import { checkRateLimit } from "../../services/rateLimit.service";
+import { checkRate } from "../../rate-limits/engine";
+import { learnerWho } from "../../rate-limits/account";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { wordFirstUse } from "../brains/first-use-wording";
 import { sayInLanguage } from "../brains/language-wording";
@@ -429,6 +431,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     const limited = Date.now();
     const limit = await checkRateLimit(event.chatId);
     if (!limit.allowed) { await deliver({ text: say().rateLimited }); return finish("rate_limited"); }
+    // The account's AI rate, shared with the web, the extension and MCP
+    // (rate-limits ai.account): a message here is a model call like any other.
+    if (!(await checkRate("ai.account", await learnerWho(event.chatId))).allowed) { await deliver({ text: say().rateLimited }); return finish("ai_rate_limited"); }
     if (!await acquireTurn(profile.id, now)) { await deliver({ text: say().busy }); return finish("busy"); }
 
     try {

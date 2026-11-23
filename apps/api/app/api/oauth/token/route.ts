@@ -2,7 +2,7 @@
 // Codes are single use; refresh tokens rotate, and a reused one ends the grant.
 //@ts-ignore
 import { clientAuthenticates, exchangeCode, findClient, refreshTokens } from "@repo/api/connect/oauth"
-import { allowAttempt } from "../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../lib/rate-limits"
 import { json, preflight } from "../../../../lib/connect/config"
 import { clientCredentials, readForm } from "../../../../lib/connect/metadata"
 
@@ -12,7 +12,10 @@ export const dynamic = "force-dynamic"
 export async function POST(req: Request) {
   const form = await readForm(req)
   const creds = clientCredentials(req, form)
-  if (!creds.clientId || !allowAttempt(`oauth:token:${creds.clientId}`, 60, 60_000)) return json({ error: "invalid_client", error_description: "Unknown client, or too many requests." }, 401)
+  if (!creds.clientId) return json({ error: "invalid_client", error_description: "Unknown client." }, 401)
+  // Per client and per address (rate-limits policy oauth.token), before the client is looked up.
+  const limited = await rateGate("oauth.token", { client: creds.clientId, req })
+  if (limited) return json({ error: "temporarily_unavailable", error_description: "Too many requests; try again shortly." }, limited.status, { "retry-after": limited.headers.get("retry-after") ?? "60" })
   const client = await findClient(creds.clientId)
   if (!client || !clientAuthenticates(client, creds.secret)) return json({ error: "invalid_client", error_description: "Client authentication failed." }, 401)
   try {

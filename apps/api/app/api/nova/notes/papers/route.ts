@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
 import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
-import { importPaper, PAPER_IMPORTS_PER_MINUTE } from "@repo/api/nova/product/paper-import"
+import { importPaper } from "@repo/api/nova/product/paper-import"
 //@ts-ignore
 import { PAPER_BODY_MAX } from "@repo/api/nova/product/paper.types"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -22,9 +23,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`paper-import:${access.profileId}`, PAPER_IMPORTS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot of papers at once. Give it a minute.")
-    }
+    const limited = await rateGate("papers.import", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, PAPER_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "That's too much to send at once." : "That isn't a paper Kivo can import.")
     const body = read.body as { transcribe?: unknown }

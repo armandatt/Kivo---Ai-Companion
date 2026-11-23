@@ -12,7 +12,8 @@ import { admitBrowserTask, clientTaskKey, refundBrowserTask, reserveBrowserTask,
 import { enforcing } from "@repo/api/billing/accounting/targets"
 //@ts-ignore
 import { startInteraction } from "@repo/api/services/llm-usage"
-import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { concurrencyGate, rateGate } from "../../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -32,7 +33,8 @@ async function handle(req: Request): Promise<NextResponse> {
   try {
     const who = await requireExtensionLearner(req)
     if (who.denied) return who.denied
-    if (!allowAttempt(`agent-start:${who.profileId}`, 20, 60_000)) return eventFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate("agent.start", { learner: who.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 8 * 1024)
     const objective = read.ok && read.body && typeof (read.body as { objective?: unknown }).objective === "string" ? (read.body as { objective: string }).objective.trim() : ""
     if (!objective) return eventFail(400, "invalid", "Say what Nova should do.")
@@ -40,34 +42,52 @@ async function handle(req: Request): Promise<NextResponse> {
     const pageTitle = typeof rawTitle === "string" ? rawTitle.slice(0, 200) : ""
     const clientKey = clientTaskKey(read.ok ? (read.body as { clientKey?: unknown } | null)?.clientKey : undefined)
     let issued = issueAgentTicket(who.connectionId)
-
-    if (enforcing("browser_tasks")) {
-      // Browser tasks are their own allowance: one task reserved here, before
-      // any step runs, and nothing taken from Nova credits.
-      const admitted = await admitBrowserTask({ platformChatId: who.platformChatId, taskId: issued.taskId, clientKey })
-      if (admitted.refused) return taskRefused(admitted.refused)
-      const task = admitted.task
-      if (task?.duplicate && task.taskId !== issued.taskId) issued = issueAgentTicket(who.connectionId, Date.now(), task.taskId)
-      let context: Awaited<ReturnType<typeof agentContext>>
-      try {
-        context = await startInteraction({ feature: "extension_agent", surface: "extension", learner: who.platformChatId, requestId: issued.taskId }, () => agentContext(who.profileId, objective, pageTitle))
-      } catch (err) {
-        // Kivo failed before the task began: the task goes back.
-        if (task && !task.duplicate) await refundBrowserTask(task.reservationId, "kivo_failed_before_start")
-        throw err
+    // Task starts and tasks running at once, per account (agent.tasks). The
+    // slot is the task's; its steps renew it, and it is given back if the
+    // start fails below.
+    const startLimited = await rateGate("agent.tasks", { learner: who.platformChatId })
+    if (startLimited) return startLimited
+    const slot = await concurrencyGate("agent.tasks", { learner: who.platformChatId }, issued.taskId)
+    if (slot.refused) return slot.refused
+    let started = false
+    try {
+      if (enforcing("browser_tasks")) {
+        // Browser tasks are their own allowance: one task reserved here, before
+        // any step runs, and nothing taken from Nova credits. The account's AI
+        // rate still applies (metered applies it on the other path).
+        const aiLimited = await rateGate("ai.account", { learner: who.platformChatId })
+        if (aiLimited) return aiLimited
+        const admitted = await admitBrowserTask({ platformChatId: who.platformChatId, taskId: issued.taskId, clientKey })
+        if (admitted.refused) return taskRefused(admitted.refused)
+        const task = admitted.task
+        if (task?.duplicate && task.taskId !== issued.taskId) issued = issueAgentTicket(who.connectionId, Date.now(), task.taskId)
+        let context: Awaited<ReturnType<typeof agentContext>>
+        try {
+          context = await startInteraction({ feature: "extension_agent", surface: "extension", learner: who.platformChatId, requestId: issued.taskId }, () => agentContext(who.profileId, objective, pageTitle))
+        } catch (err) {
+          // Kivo failed before the task began: the task goes back.
+          if (task && !task.duplicate) await refundBrowserTask(task.reservationId, "kivo_failed_before_start")
+          throw err
+        }
+        started = !task?.duplicate
+        return NextResponse.json({ success: true, ticket: issued.ticket, expiresAt: issued.expiresAt, maxSteps: AGENT_TASK_STEPS, ...context }, { headers: { "cache-control": "no-store" } })
       }
-      return NextResponse.json({ success: true, ticket: issued.ticket, expiresAt: issued.expiresAt, maxSteps: AGENT_TASK_STEPS, ...context }, { headers: { "cache-control": "no-store" } })
-    }
 
-    // Not enforcing: one request on the daily AI allowance, as before, and the
-    // task recorded in shadow.
-    const run = await metered(who.platformChatId, () => agentContext(who.profileId, objective, pageTitle), { feature: "extension_agent", surface: "extension" })
-    if (!run.ok) return run.response
-    const context = run.value as Awaited<ReturnType<typeof agentContext>>
-    const task = await reserveBrowserTask({ platformChatId: who.platformChatId, taskId: issued.taskId, clientKey })
-    if (task?.duplicate && task.taskId !== issued.taskId) issued = issueAgentTicket(who.connectionId, Date.now(), task.taskId)
-    const { ticket, expiresAt } = issued
-    return NextResponse.json({ success: true, ticket, expiresAt, maxSteps: AGENT_TASK_STEPS, ...context }, { headers: { "cache-control": "no-store" } })
+      // Not enforcing: one request on the daily AI allowance, as before, and the
+      // task recorded in shadow.
+      const run = await metered(who.platformChatId, () => agentContext(who.profileId, objective, pageTitle), { feature: "extension_agent", surface: "extension" })
+      if (!run.ok) return run.response
+      const context = run.value as Awaited<ReturnType<typeof agentContext>>
+      const task = await reserveBrowserTask({ platformChatId: who.platformChatId, taskId: issued.taskId, clientKey })
+      if (task?.duplicate && task.taskId !== issued.taskId) issued = issueAgentTicket(who.connectionId, Date.now(), task.taskId)
+      started = !task?.duplicate
+      const { ticket, expiresAt } = issued
+      return NextResponse.json({ success: true, ticket, expiresAt, maxSteps: AGENT_TASK_STEPS, ...context }, { headers: { "cache-control": "no-store" } })
+    } finally {
+      // A retried start is the task already running (it holds its own slot),
+      // and a start that failed is no task: either way this slot goes back.
+      if (!started) await slot.release()
+    }
   } catch (err) {
     console.error("[nova/extension/agent/start]", err)
     return eventFail(500, "failed", "Your workspace didn't load. Try again.")

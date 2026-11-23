@@ -2,15 +2,15 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { deleteDraft, editDraftChanges, editDraftPlan, getDraft } from "@repo/api/nova/product/builder"
 import { requireWorkspaceLearner } from "../../../../../lib/nova/workspace-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
 import { builderFail, statusFor } from "../../../../../lib/nova/builder-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 // A plan is text only; the check allows far less than this.
 const PLAN_BODY_MAX = 256 * 1024
-const EDITS_PER_MINUTE = 60
 
 // GET /api/nova/builder/[id] — the conversation, the proposal and the job's
 // real stage. The page polls this while a job runs. Response: BuilderResponse.
@@ -36,7 +36,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const access = await requireWorkspaceLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`builder-edit:${access.platformChatId}`, EDITS_PER_MINUTE, 60_000)) return builderFail(429, "rate_limited", "That's a lot of edits at once. Give it a moment.")
+    const limited = await rateGate("builder.edit", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, PLAN_BODY_MAX)
     if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", "That proposal couldn't be read.")
     const body = (read.body ?? {}) as { plan?: unknown; keep?: unknown; baseVersion?: unknown }
