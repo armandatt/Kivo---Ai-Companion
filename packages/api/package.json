@@ -17,6 +17,7 @@
     "./personality/*": "./src/personality/*",
     "./auth/*": "./src/auth/*",
     "./billing/*": "./src/billing/*",
+    "./portable/*": "./src/portable/*",
     "./nova": "./src/nova/nova-orchestrator.ts",
     "./nova/types": "./src/nova/types/index.ts",
     "./nova/commands": "./src/nova/commands.ts",
@@ -123,6 +124,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
     "@polar-sh/sdk": "1.0.2",
+    "fflate": "0.8.3",
     "zod": "^3.25.76"
   }
 }
