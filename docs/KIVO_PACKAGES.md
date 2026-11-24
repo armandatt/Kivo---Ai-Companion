@@ -93,9 +93,9 @@ provenance.json          creator, source, license, exportedAt, packageId, import
   - Uploads must use a content type HTML forms cannot send (`application/vnd.kivo.map+zip` / `octet-stream` / `zip`). An Origin header must be Kivo's; `Sec-Fetch-Site` must not name another site.
   - 10 MB at most.
   - Rate limits per account (docs/RATE_LIMITS.md): export 10/min, preview 20/min, import 6/min; one export and one import at a time per account (3–4 for everyone); uploads count their size against an hourly budget.
-- **Page:** `/map/portable` ("Import / export" on the Knowledge Map).
-  - **Import:** choose a file → checked → preview (counts, outline, renames, what is excluded) → Import → open the map. A repeat says it was already imported, and a failure offers Try again, which resumes.
-  - **Export:** choose a subject → tick notes → links on or off → licence → credit → download.
+- **Pages** (25 Nov, founder review #10 and #14): two buttons on the Knowledge Map, **Share** (`/map/share`) and **Import** (`/map/import`); `/map/portable` redirects to Share.
+  - **Import:** choose a file → checked → preview (counts, outline, renames, what is excluded) → Import → open the map (`arrive=import`: the map's opening plays, fitted at a readable zoom; founder review #16). A repeat says it was already imported, and a failure offers Try again, which resumes.
+  - **Export:** Whole map (default) or One subject → file name → Download. Under "More options": notes (none ticked by default), links (on), who may pass it on (three choices: All rights reserved, CC BY 4.0, CC0; files carrying BY-SA or BY-NC still open and are named), credit.
 - **Tests:**
   - `portable/__tests__/kivo-archive.test.ts` (9): format, ZIP Slip, zip bombs, tampering, inventory, versions.
   - `portable/__integration__/kivo-portable.itest.ts` (9, real Postgres; the four added 25 Nov cover links and whole maps):

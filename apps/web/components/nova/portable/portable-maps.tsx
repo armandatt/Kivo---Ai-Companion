@@ -1,27 +1,37 @@
 'use client'
 
 // Import and export Knowledge Maps as .kivo files (docs/KIVO_PACKAGES.md).
+// Two pages, two actions (founder review #10): /map/share and /map/import.
 // Import: choose a file → Kivo checks it → preview → Import → open the map.
-// Export: choose a subject → tick the notes to include → licence → download.
+// Export: the whole map or one subject → a name → Download. Notes, links,
+// licence and credit are under "More options" with safe defaults (#14).
 // Everything is decided on the server (packages/api/src/portable); this page
 // sends the file or the choices and shows what comes back.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Download, FileUp, Loader2, Upload } from 'lucide-react'
+import { ChevronDown, Download, FileUp, Loader2, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 
 const CARD = 'rounded-2xl border border-white/8 bg-card/60 p-5'
-// Who may reuse a shared map, said plainly; the licence's official name is
-// kept beside it (it is what the file records).
+// Who may pass the file on, said plainly; the licence's official name is
+// kept beside it (it is what the file records). Everyone who opens a .kivo
+// gets their own copy to change, so the choice is only about passing it on.
+// Three choices are offered; files with the other two still open and say so.
 const LICENCES: Array<[id: string, plain: string, official: string]> = [
-  ['all-rights-reserved', 'Only for their own study', 'All rights reserved'],
-  ['cc-by-4.0', 'Anyone can share and edit · give credit', 'CC BY 4.0'],
-  ['cc-by-sa-4.0', 'Share and edit · give credit · keep it open', 'CC BY-SA 4.0'],
-  ['cc-by-nc-4.0', 'Share and edit, not for money · give credit', 'CC BY-NC 4.0'],
-  ['cc0-1.0', 'Free for anyone, no credit needed', 'CC0'],
+  ['all-rights-reserved', 'Keep it for study (don’t pass it on)', 'All rights reserved'],
+  ['cc-by-4.0', 'Anyone can pass it on, with credit', 'CC BY 4.0'],
+  ['cc0-1.0', 'Anyone can pass it on, no credit needed', 'CC0'],
 ]
+// How a licence on a file someone sent is named (all five a file can carry).
+const LICENCE_NAMES: Record<string, string> = {
+  'all-rights-reserved': 'For study only (All rights reserved)',
+  'cc-by-4.0': 'Free to pass on with credit (CC BY 4.0)',
+  'cc-by-sa-4.0': 'Free to pass on with credit, same licence (CC BY-SA 4.0)',
+  'cc-by-nc-4.0': 'Free to pass on with credit, not for money (CC BY-NC 4.0)',
+  'cc0-1.0': 'Free for anyone (CC0)',
+}
 
 type Preview = {
   ok: true; packageId: string; title: string; description: string | null; creator: string | null; source: string | null; license: string; exportedAt: string | null
@@ -30,7 +40,7 @@ type Preview = {
   renames: Array<{ from: string; to: string }>; outline: Array<{ name: string; depth: number; topics: number }>
   job: { id: string; status: string; rootSubjectId: string | null } | null
 }
-type ImportResult = { ok: true; status: 'complete'; jobId: string; rootSubjectId: string; already: boolean; counts: { subjects: number; topics: number; notes: number } }
+type ImportResult = { ok: true; status: 'complete'; jobId: string; rootSubjectId: string; rootSubjectIds?: string[]; already: boolean; counts: { subjects: number; topics: number; notes: number; links?: number; linksAlreadySaved?: number } }
   | { ok: true; status: 'running'; jobId: string }
   | { ok: false; status?: string; jobId?: string; message: string }
 
@@ -40,16 +50,29 @@ async function send(url: string, file: File): Promise<Response> {
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/vnd.kivo.map+zip' }, body: file })
 }
 
-export function PortableMaps() {
+/** Where an imported map opens: inside its subject (one root), else the whole map; played as a new map (`arrive=import`). */
+export function importedMapHref(rootSubjectId: string | null | undefined, rootSubjectIds?: string[]): string {
+  const roots = rootSubjectIds?.length ? rootSubjectIds : rootSubjectId ? [rootSubjectId] : []
+  return roots.length === 1 ? `/map?explore=${encodeURIComponent(`subject:${roots[0]}`)}&arrive=import` : '/map?arrive=import'
+}
+
+export function PortableMaps({ mode }: { mode: 'share' | 'import' }) {
+  const share = mode === 'share'
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8 pb-20 pt-10 lg:pt-4">
+    <div className="mx-auto w-full max-w-3xl space-y-6 pb-20 pt-10 lg:pt-4" data-portable={mode}>
       <header>
         <Link href="/map" className="text-sm text-foreground/55 hover:text-foreground">← Knowledge Map</Link>
-        <h1 className="mt-3 text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">Share Knowledge Maps</h1>
-        <p className="mt-2 max-w-prose text-sm text-foreground/60">Download a map as a <code>.kivo</code> file to share with your batch, or open one a senior or friend sent you. Everyone gets their own copy to change as they like.</p>
+        <h1 className="mt-3 text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">{share ? 'Share your map' : 'Import a map'}</h1>
+        <p className="mt-2 max-w-prose text-sm text-foreground/60">
+          {share
+            ? <>Download your map as a <code>.kivo</code> file and send it to your batch. They get their own copy; your progress stays private.</>
+            : <>Open a <code>.kivo</code> file a senior or friend sent you. It becomes your own copy to change as you like.</>}
+        </p>
       </header>
-      <ImportSection />
-      <ExportSection />
+      {share ? <ExportSection /> : <ImportSection />}
+      <p className="text-sm text-foreground/55">
+        {share ? <>Got a file from someone? <Link href="/map/import" className="text-keppel-300 hover:underline" data-switch-import>Import a map</Link></> : <>Want to send yours? <Link href="/map/share" className="text-keppel-300 hover:underline" data-switch-share>Share your map</Link></>}
+      </p>
     </div>
   )
 }
@@ -70,7 +93,7 @@ function ImportSection() {
     setState('checking')
     try {
       const res = await send('/api/nova/portable/import/preview', f)
-      if (res.status === 401) { window.location.href = '/signin?from=/map/portable'; return }
+      if (res.status === 401) { window.location.href = '/signin?from=/map/import'; return }
       const body = await res.json() as Preview | { ok: false; message: string }
       if (!body.ok) { setState('error'); setMessage(body.message); return }
       setPreview(body); setState('ready')
@@ -109,8 +132,8 @@ function ImportSection() {
 
   return (
     <section aria-labelledby="import-h" className={CARD}>
-      <h2 id="import-h" className="flex items-center gap-2 text-base font-semibold text-foreground"><FileUp aria-hidden className="size-4" /> Open a shared map</h2>
-      <p className="mt-1 text-sm text-foreground/60">Got a <code>.kivo</code> file? Open it here. You’ll see what’s inside before anything is added.</p>
+      <h2 id="import-h" className="flex items-center gap-2 text-base font-semibold text-foreground"><FileUp aria-hidden className="size-4" /> Choose the file</h2>
+      <p className="mt-1 text-sm text-foreground/60">You’ll see what’s inside before anything is added.</p>
       <input ref={input} type="file" accept=".kivo" className="sr-only" aria-label="Choose a .kivo file" onChange={e => { const f = e.target.files?.[0]; if (f) void check(f); e.target.value = '' }} />
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button type="button" onClick={() => input.current?.click()} disabled={state === 'checking' || state === 'importing'} className={BUTTON_QUIET}>
@@ -143,7 +166,7 @@ function ImportSection() {
           {preview.renames.length > 0 && <p className="text-xs text-foreground/60">You already have {preview.renames.length === 1 ? 'a subject' : 'subjects'} with {preview.renames.length === 1 ? 'this name' : 'these names'}, so the new one will be called {preview.renames.map(r => `“${r.to}”`).join(', ')}. Yours stays exactly as it is.</p>}
           <p className="text-xs text-foreground/50">Not included: {[preview.excluded.noteImages ? `${preview.excluded.noteImages} photos in notes` : null, 'anyone’s progress or scores'].filter(Boolean).join(' and ')}.</p>
           {preview.job?.status === 'complete'
-            ? <p className="text-sm text-foreground/75">You’ve already added this map. <Link className="text-keppel-300 underline" href={`/map?explore=subject:${preview.job.rootSubjectId}`}>Open it</Link></p>
+            ? <p className="text-sm text-foreground/75">You’ve already added this map. <Link className="text-keppel-300 underline" href={importedMapHref(preview.job.rootSubjectId)}>Open it</Link></p>
             : <button type="button" onClick={() => void (preview.job ? retry() : run())} disabled={state === 'importing'} className={BUTTON_PRIMARY}>
                 {state === 'importing' ? <><Loader2 className="size-4 animate-spin" /> Adding to your Kivo…</> : preview.job ? 'Finish adding it' : 'Add to my Kivo'}
               </button>}
@@ -153,8 +176,9 @@ function ImportSection() {
       {state === 'done' && result?.ok && result.status === 'complete' && (
         <div role="status" className="mt-5 rounded-xl border border-keppel-400/30 bg-keppel-400/8 px-4 py-3 text-sm text-foreground/85">
           <p className="font-medium text-foreground">{result.already ? 'This map is already in your Kivo.' : 'Added to your Kivo 🎉'}</p>
-          <p className="mt-1">{result.counts.subjects} subjects, {result.counts.topics} topics and {result.counts.notes} notes. It’s your copy now, so change anything you like.</p>
-          <Link href={`/map?explore=subject:${result.rootSubjectId}`} className={cn(BUTTON_PRIMARY, 'mt-3 inline-flex')}>Open the map</Link>
+          <p className="mt-1">{[plural(result.counts.subjects, 'subject'), plural(result.counts.topics, 'topic'), plural(result.counts.notes, 'note'), result.counts.links ? `${plural(result.counts.links, 'link')} (in your Saved pages too)` : null].filter(Boolean).join(', ')}. It’s your copy now, so change anything you like.</p>
+          {result.counts.linksAlreadySaved ? <p className="mt-1 text-foreground/65">{plural(result.counts.linksAlreadySaved, 'link')} you’d already saved stayed where you filed {result.counts.linksAlreadySaved === 1 ? 'it' : 'them'}.</p> : null}
+          <Link href={importedMapHref(result.rootSubjectId, result.rootSubjectIds)} className={cn(BUTTON_PRIMARY, 'mt-3 inline-flex')} data-open-imported>Open the map</Link>
         </div>
       )}
       {state === 'error' && result && !result.ok && result.jobId && <button type="button" onClick={() => void retry()} className={cn(BUTTON_QUIET, 'mt-3')}>Try again</button>}
@@ -162,15 +186,20 @@ function ImportSection() {
   )
 }
 
-const licenceName = (id: string) => { const l = LICENCES.find(([k]) => k === id); return l ? `${l[1]} (${l[2]})` : id }
+const licenceName = (id: string) => LICENCE_NAMES[id] ?? id
 
 // ── Export ──
 type Subject = { id: string; name: string; parentId?: string | null }
-type ExportPreview = { ok: true; root: { id: string; name: string }; subjects: Array<{ id: string; name: string; depth: number }>; topics: number; notes: Array<{ id: string; title: string; subjectId: string | null }>; links: number }
+type ExportPreview = {
+  ok: true; scope?: 'subject' | 'map'; root: { id: string; name: string }; roots?: Array<{ id: string; name: string }>
+  subjects: Array<{ id: string; name: string; depth: number }>; topics: number; notes: Array<{ id: string; title: string; subjectId: string | null }>; links: number; linksLeftOut?: number
+}
+const WHOLE_MAP = 'map'
 
 function ExportSection() {
   const [subjects, setSubjects] = useState<Subject[] | null>(null)
-  const [rootId, setRootId] = useState('')
+  // What to share: the whole map (default) or one top-level subject.
+  const [rootId, setRootId] = useState(WHOLE_MAP)
   const [preview, setPreview] = useState<ExportPreview | null>(null)
   const [noteIds, setNoteIds] = useState<Set<string>>(new Set())
   const [links, setLinks] = useState(true)
@@ -178,6 +207,7 @@ function ExportSection() {
   const [credit, setCredit] = useState('')
   // The file's name, and the map's title when someone opens it.
   const [name, setName] = useState('')
+  const [named, setNamed] = useState(false)
   const [busy, setBusy] = useState<'loading' | 'exporting' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
@@ -187,8 +217,8 @@ function ExportSection() {
   }, [])
 
   const load = useCallback(async (id: string) => {
-    setRootId(id); setPreview(null); setNoteIds(new Set()); setMessage(null)
-    setName((subjects ?? []).find(s => s.id === id)?.name ?? '')
+    setRootId(id); setPreview(null); setNoteIds(new Set()); setMessage(null); setDone(null)
+    if (!named) setName(id === WHOLE_MAP ? 'My Knowledge Map' : (subjects ?? []).find(s => s.id === id)?.name ?? '')
     if (!id) return
     setBusy('loading')
     try {
@@ -197,14 +227,19 @@ function ExportSection() {
       if (body.ok) setPreview(body); else setMessage(body.message)
     } catch { setMessage('Could not reach Kivo. Try again.') }
     setBusy(null)
-  }, [subjects])
+  }, [subjects, named])
+
+  const tops = (subjects ?? []).filter(s => !s.parentId)
+  // Opens on the whole map once the subjects are known.
+  const started = useRef(false)
+  useEffect(() => { if (subjects && tops.length && !started.current) { started.current = true; void load(WHOLE_MAP) } }, [subjects, tops.length, load])
 
   const fileName = `${name.trim().replace(/\.kivo$/i, '') || preview?.root.name || 'map'}.kivo`
   const download = async () => {
     if (!preview) return
     setBusy('exporting'); setMessage(null)
     try {
-      const res = await fetch('/api/nova/portable/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'export', rootSubjectId: preview.root.id, noteIds: [...noteIds], includeLinks: links, license, credit, title: name.trim() || undefined }) })
+      const res = await fetch('/api/nova/portable/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'export', rootSubjectId: rootId, noteIds: [...noteIds], includeLinks: links, license, credit, title: name.trim() || undefined }) })
       if (!res.ok) { const b = await res.json().catch(() => null) as { message?: string } | null; setMessage(b?.message ?? 'The file couldn’t be made. Try again.'); setBusy(null); return }
       const blob = await res.blob()
       const cd = res.headers.get('content-disposition') ?? ''
@@ -218,63 +253,92 @@ function ExportSection() {
     setBusy(null)
   }
 
-  const tops = (subjects ?? []).filter(s => !s.parentId)
+  const whole = rootId === WHOLE_MAP
+  const choice = (on: boolean) => cn('rounded-lg px-3 py-1.5 text-sm transition-colors', on ? 'bg-white/10 font-medium text-foreground' : 'text-foreground/65 hover:text-foreground')
   return (
     <section aria-labelledby="export-h" className={CARD}>
-      <h2 id="export-h" className="flex items-center gap-2 text-base font-semibold text-foreground"><Download aria-hidden className="size-4" /> Share your map</h2>
-      <p className="mt-1 text-sm text-foreground/60">Pick a subject and everything inside it comes along. Your progress stays private, and nothing in your Kivo changes.</p>
-      <label className="mt-4 block text-xs text-foreground/60" htmlFor="export-root">Which subject?</label>
-      <select id="export-root" value={rootId} onChange={e => void load(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground sm:w-80" disabled={subjects === null}>
-        <option value="">{subjects === null ? 'Loading your subjects…' : tops.length ? 'Choose a subject' : 'No subjects yet'}</option>
-        {tops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
-      {busy === 'loading' && <p role="status" className="mt-3 flex items-center gap-2 text-sm text-foreground/70"><Loader2 className="size-4 animate-spin" /> Getting your map ready…</p>}
-      {message && <p role="alert" className="mt-3 text-sm text-amber-200">{message}</p>}
-      {subjects !== null && tops.length === 0 && <p className="mt-3 text-sm text-foreground/55">Add a subject on your <Link href="/map" className="underline">Knowledge Map</Link> first, then share it from here.</p>}
-      {preview && (
-        <div className="mt-4 space-y-4">
-          <p className="text-sm text-foreground/70">Includes {plural(preview.subjects.length, 'subject')} and {plural(preview.topics, 'topic')}{preview.links ? ` and ${plural(preview.links, 'saved link')}` : ''}.</p>
+      <h2 id="export-h" className="sr-only">Share your map</h2>
+      {subjects !== null && tops.length === 0 ? (
+        <p className="text-sm text-foreground/60">Add a subject on your <Link href="/map" className="underline">Knowledge Map</Link> first, then share it from here.</p>
+      ) : (
+        <div className="space-y-5">
+          <div>
+            <p className="text-xs text-foreground/60" id="export-what">What to share</p>
+            <div role="radiogroup" aria-labelledby="export-what" className="mt-1.5 inline-flex rounded-xl border border-white/10 p-1">
+              <button type="button" role="radio" aria-checked={whole} onClick={() => void load(WHOLE_MAP)} className={choice(whole)} data-export-whole>Whole map</button>
+              <button type="button" role="radio" aria-checked={!whole} onClick={() => void load(tops[0]?.id ?? '')} disabled={!tops.length} className={choice(!whole)} data-export-one>One subject</button>
+            </div>
+            {!whole && (
+              <select aria-label="Which subject" value={rootId} onChange={e => void load(e.target.value)} className="mt-2 block w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground sm:w-80" data-export-root>
+                {tops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+          </div>
+
+          {busy === 'loading' && <p role="status" className="flex items-center gap-2 text-sm text-foreground/70"><Loader2 className="size-4 animate-spin" /> Getting your map ready…</p>}
+          {preview && (
+            <p className="text-sm text-foreground/70" data-export-summary>
+              {whole && preview.roots ? `${plural(preview.roots.length, 'top-level subject')} · ` : ''}{plural(preview.subjects.length, 'subject')} · {plural(preview.topics, 'topic')}{links && preview.links ? ` · ${plural(preview.links, 'saved link')}` : ''}{noteIds.size ? ` · ${plural(noteIds.size, 'note')}` : ''}
+            </p>
+          )}
+
           <label className="block text-xs text-foreground/60" htmlFor="export-name">File name
             <span className="mt-1 flex items-center rounded-xl border border-white/10 bg-background focus-within:border-keppel-400/60">
-              <input id="export-name" value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="e.g. 1st year knowledge roadmap"
+              <input id="export-name" value={name} onChange={e => { setName(e.target.value); setNamed(true) }} maxLength={80} placeholder="e.g. 1st year knowledge roadmap"
                 className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-foreground outline-none" data-export-name />
               <span className="pr-3 text-sm text-foreground/45">.kivo</span>
             </span>
             <span className="mt-1 block text-[11px] text-foreground/45">This is also the map’s name when someone opens it.</span>
           </label>
-          <fieldset>
-            <legend className="flex w-full items-center justify-between text-xs text-foreground/60">
-              <span>Notes to add (optional) · {noteIds.size} of {preview.notes.length}</span>
-              {preview.notes.length > 1 && (
-                <button type="button" onClick={() => setNoteIds(noteIds.size === preview.notes.length ? new Set() : new Set(preview.notes.map(n => n.id)))} className="text-keppel-300 hover:underline" data-export-all-notes>
-                  {noteIds.size === preview.notes.length ? 'Clear all' : 'Select all'}
-                </button>
-              )}
-            </legend>
-            {preview.notes.length === 0 ? <p className="mt-1 text-sm text-foreground/50">No notes in this subject yet.</p> : (
-              <ul className="mt-2 max-h-56 space-y-1 overflow-auto">
-                {preview.notes.map(n => (
-                  <li key={n.id}><label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={noteIds.has(n.id)} onChange={e => setNoteIds(s => { const x = new Set(s); if (e.target.checked) x.add(n.id); else x.delete(n.id); return x })} /> {n.title}</label></li>
-                ))}
-              </ul>
-            )}
-          </fieldset>
-          {preview.links > 0 && <label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={links} onChange={e => setLinks(e.target.checked)} /> Add my {plural(preview.links, 'saved link')} (as a reading list)</label>}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs text-foreground/60">What can others do with it?
-              <select value={license} onChange={e => setLicense(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground" data-export-licence>
-                {LICENCES.map(([k, plain, official]) => <option key={k} value={k}>{plain} ({official})</option>)}
-              </select>
-            </label>
-            <label className="text-xs text-foreground/60">Made by (optional)
-              <input value={credit} onChange={e => setCredit(e.target.value)} maxLength={120} placeholder="e.g. Bennett CSE, 2nd year" className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground" />
-            </label>
-          </div>
-          <p className="text-xs text-foreground/50">Share only notes you wrote or are allowed to share. Photos in notes aren’t included yet.</p>
-          <button type="button" onClick={() => void download()} disabled={busy !== null} className={BUTTON_PRIMARY} data-export-download>
+
+          {preview && (
+            <details className="group rounded-xl border border-white/8 px-3 py-2" data-export-more>
+              <summary className="flex cursor-pointer list-none items-center justify-between text-sm text-foreground/75">
+                <span>More options <span className="text-foreground/45">· notes, links, licence, credit</span></span>
+                <ChevronDown aria-hidden className="size-4 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-3 space-y-4 pb-1">
+                <fieldset>
+                  <legend className="flex w-full items-center justify-between text-xs text-foreground/60">
+                    <span>Notes to include · {noteIds.size} of {preview.notes.length}</span>
+                    {preview.notes.length > 1 && (
+                      <button type="button" onClick={() => setNoteIds(noteIds.size === preview.notes.length ? new Set() : new Set(preview.notes.map(n => n.id)))} className="text-keppel-300 hover:underline" data-export-all-notes>
+                        {noteIds.size === preview.notes.length ? 'Clear all' : 'Select all'}
+                      </button>
+                    )}
+                  </legend>
+                  {preview.notes.length === 0 ? <p className="mt-1 text-sm text-foreground/50">No notes here yet.</p> : (
+                    <ul className="mt-2 max-h-56 space-y-1 overflow-auto">
+                      {preview.notes.map(n => (
+                        <li key={n.id}><label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={noteIds.has(n.id)} onChange={e => setNoteIds(s => { const x = new Set(s); if (e.target.checked) x.add(n.id); else x.delete(n.id); return x })} /> {n.title}</label></li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1 text-[11px] text-foreground/45">Notes stay private unless you tick them. Share only notes you wrote or may share; photos in notes aren’t included yet.</p>
+                </fieldset>
+                {preview.links > 0 && (
+                  <label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={links} onChange={e => setLinks(e.target.checked)} data-export-links /> Include my {plural(preview.links, 'saved link')}</label>
+                )}
+                {preview.linksLeftOut ? <p className="text-[11px] text-amber-200/90">A file holds up to 500 links, so {plural(preview.linksLeftOut, 'link')} won’t be included. Share one subject at a time to include them all.</p> : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-foreground/60">Can others pass it on?
+                    <select value={license} onChange={e => setLicense(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground" data-export-licence>
+                      {LICENCES.map(([k, plain, official]) => <option key={k} value={k}>{plain} ({official})</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-foreground/60">Made by (optional)
+                    <input value={credit} onChange={e => setCredit(e.target.value)} maxLength={120} placeholder="e.g. Bennett CSE, 2nd year" className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground" />
+                  </label>
+                </div>
+              </div>
+            </details>
+          )}
+
+          {message && <p role="alert" className="text-sm text-amber-200">{message}</p>}
+          <button type="button" onClick={() => void download()} disabled={busy !== null || !preview} className={BUTTON_PRIMARY} data-export-download>
             {busy === 'exporting' ? <><Loader2 className="size-4 animate-spin" /> Making your file…</> : <><Download className="size-4" /> Download {fileName}</>}
           </button>
-          {done && <p role="status" className="text-sm text-keppel-300" data-export-done>Downloaded <span className="font-medium">{done}</span>. Send it to your batch, and they open it here.</p>}
+          {done && <p role="status" className="text-sm text-keppel-300" data-export-done>Downloaded <span className="font-medium">{done}</span>. Send it to your batch; they open it with Import on their Knowledge Map.</p>}
         </div>
       )}
     </section>

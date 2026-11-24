@@ -26,6 +26,18 @@
 
 import type { View } from './overview'
 
+// A resting view on whole device pixels (founder review #02). A wheel or pinch
+// zoom about the pointer ends at a fractional translation; the cards' layer is
+// a composited layer (will-change: transform), so at rest its text was
+// resampled at that sub-pixel offset and looked soft, most on standard-density
+// screens. The zoom itself is kept; only where the drawing sits is rounded, by
+// at most half a device pixel, so nothing visibly moves.
+export function snapView(v: View, dpr: number): View {
+  const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1
+  const x = Math.round(v.x * d) / d, y = Math.round(v.y * d) / d
+  return x === v.x && y === v.y ? v : { x, y, k: v.k }
+}
+
 // How long a layer's animation could last: far longer than any gesture (settle() ends it).
 const HOLD_MS = 600_000
 

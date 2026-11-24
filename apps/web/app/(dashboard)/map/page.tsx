@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { History } from 'lucide-react'
+import { FileDown, FileUp, History } from 'lucide-react'
 import { RecentlyDeleted } from '@/components/nova/knowledge-map/recently-deleted'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { KnowledgeMap } from '@/components/nova/knowledge-map/knowledge-map'
@@ -37,7 +37,9 @@ function Actions() {
     {said && <span role="status" className="text-xs text-foreground/70" data-trash-said>{said}</span>}
     <PageAction href="/notes/new">New note</PageAction>
     {/* On a phone, the map comes first: these are in the navigation. */}
-    <Link href="/map/portable" className={cn(BUTTON_QUIET, 'h-9')} data-portable-maps><span className="max-sm:sr-only">Share maps</span><span className="sm:hidden">Share</span></Link>
+    {/* Two actions, side by side (founder review #10): send a .kivo, open one. */}
+    <Link href="/map/share" className={cn(BUTTON_QUIET, 'h-9')} data-map-share title="Share your map as a .kivo file"><FileDown aria-hidden className="size-3.5" /><span className="max-sm:sr-only">Share</span></Link>
+    <Link href="/map/import" className={cn(BUTTON_QUIET, 'h-9')} data-map-import title="Import a .kivo map someone sent you"><FileUp aria-hidden className="size-3.5" /><span className="max-sm:sr-only">Import</span></Link>
     <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Browser Extension</Link>
     <Link href="/knowledge" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Topic list</Link>
   </>
@@ -111,7 +113,7 @@ export default function KnowledgeMapPage() {
     return (
       <Frame actions>
         <PageNotice title={view.workspaceId ? 'This map is empty' : 'Your map is empty'} action={<PageAction href="/settings/study">Add subjects and topics</PageAction>}>
-          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under. Deleted something by mistake? Open Recently deleted above.
+          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under. Got a <code>.kivo</code> file from your batch? <Link href="/map/import" className="text-keppel-300 underline" data-empty-import>Import it</Link>. Deleted something by mistake? Open Recently deleted above.
           {(view.workspaceId || others.length > 0) && (
             <span className="mt-4 flex flex-wrap gap-2" data-empty-switch>
               {view.workspaceId && <button type="button" onClick={() => choose('all')} className={cn(BUTTON_QUIET, 'h-9')}>Show everything you have</button>}

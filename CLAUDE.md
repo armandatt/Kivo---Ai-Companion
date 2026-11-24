@@ -556,7 +556,7 @@ Docs: `docs/RATE_LIMITS.md`. `packages/api/src/rate-limits/` is the only reader 
 
 ## Portable maps (.kivo files)
 
-Docs: `docs/KIVO_PACKAGES.md`. `packages/api/src/portable/`. The format and checks are pure: `map-package.ts`, `kivo-archive.ts`. `export.ts` reads only. `import.ts` is the only writer of `NovaImportJob`; it makes the map through `applyStudyEdits` and `createNote`, never directly. Routes are under `/api/nova/portable/*` (guards in `apps/api/lib/nova/portable-access.ts`). The page is `/map/portable`. Held by `portable/__tests__` and `kivo-portable.itest.ts`.
+Docs: `docs/KIVO_PACKAGES.md`. `packages/api/src/portable/`. The format and checks are pure: `map-package.ts`, `kivo-archive.ts`. `export.ts` reads only. `import.ts` is the only writer of `NovaImportJob`; it makes the map through `applyStudyEdits` and `createNote`, never directly. Routes are under `/api/nova/portable/*` (guards in `apps/api/lib/nova/portable-access.ts`). Two pages, two buttons on the map (25 Nov): `/map/share` (whole map, `kivo.map/2`, by default, or one subject, `kivo.map/1`; notes, links, licence and credit under More options) and `/map/import` (`/map/portable` redirects to share). Imported links become the importer's saved pages (`importSavedLink`, `source: "kivo_import"`). "Open the map" adds `arrive=import`, which plays the map's opening on that first view (`opening-view.ts`). A single note's format is prepared (`note-package.ts`, extension `.kio`, not shipped: `docs/KIVO_NOTE_FORMAT.md`). Held by `portable/__tests__` and `kivo-portable.itest.ts`.
 
 - **A package is transport, never canonical.** It carries package-local refs only: no ids and no learning state.
 - **An import is an independent copy** in the importer's account.
