@@ -9,6 +9,19 @@ The review marked Telegram as "pending" with no list of what was missing. This a
 | Jest: `telegram-mentor`, `telegram-hardening`, `semantic-interaction`, and the other Telegram tests | 289 / 289 pass (including 2 added today) |
 | Real Postgres: `nova-telegram`, `nova-telegram-acceptance`, `nova-hardening`, `nova-first-use`, `nova-unlinked-chat` | 157 / 157 pass |
 
+### Re-verified (second pass, same day)
+
+| Suite | Result |
+|---|---|
+| Jest: telegram, semantic-interaction, first-use, reply-language, grounded-reply | 363 / 363 pass |
+| Real Postgres: nova-telegram, -acceptance, -hardening, -first-use, -unlinked-chat, -language, nova-exams, usage-enforcement, usage-accounting | 224 / 224 pass |
+
+**Account limits**, checked in code and tests:
+- **Telegram can't bypass them.** Its Understanding call reserves from the account's own Nova credits; `usage-enforcement.itest.ts` holds that "Telegram's turn is refused once the month's credits are used".
+- **If billing can't be read,** the chat gets Free's allowance, never an unlimited one (`telegram-turn.ts`).
+- **A retried update** reserves once, keyed by `telegram:<chat>:<update_id>`.
+- **Exam dates** use the learner's calendar days, the same as Today (`nova-exams.itest.ts`).
+
 ## Implemented and covered by tests
 
 - **Webhook:** secret-token check, update dedup (`ProcessedTelegramUpdate`), one reply per update, typing indicator, timings logged per turn.
