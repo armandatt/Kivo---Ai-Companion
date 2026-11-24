@@ -7,7 +7,7 @@ import { ArrowLeft, CreditCard, ExternalLink, Loader2, Sparkles } from 'lucide-r
 import { PLANS, formatPrice, intervalLabel, type PlanKey } from '@repo/api/billing/plans'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
-import { compareLines, usageRows, type Allowances, type TierAllowance, type UsageRow } from './usage-model'
+import { compareLines, planMatrix, upgradeHint, usageRows, type Allowances, type PlanColumn, type TierAllowance, type UsageRow } from './usage-model'
 
 // The account's plan: what it has, until when, what it has used, and the
 // ways to change it. There is no free trial: paid plans come only from a
@@ -118,7 +118,7 @@ export function BillingPage() {
   }
 
   const shell = (children: React.ReactNode) => (
-    <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
+    <div className="mx-auto w-full max-w-4xl pb-20 pt-10 lg:pt-4">
       <Link href="/settings" className="inline-flex items-center gap-1.5 text-sm text-foreground/55 transition-colors hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
       <h1 className="mt-4 text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.4rem]">Plan and usage</h1>
       <p className="mt-2 text-sm text-foreground/60">Your plan, what it includes, what you&apos;ve used and when it renews.</p>
@@ -171,7 +171,7 @@ export function BillingPage() {
           )}
         </div>
 
-        {view.allowances ? <UsageTable a={view.allowances} readAt={readAt} onRefresh={() => void load()} /> : (
+        {view.allowances ? <UsageTable a={view.allowances} readAt={readAt} onRefresh={() => void load()} offer={view.nextOffer ?? null} now={view.catalog?.[view.tier ?? 'free'] ?? null} /> : (
           <div className="relative mt-6">
             <div className="flex items-baseline justify-between text-xs">
               <span className="font-medium text-foreground/75">Nova today</span>
@@ -189,6 +189,7 @@ export function BillingPage() {
       {view.catalog && (view.nextOffer || view.tier !== 'pro') && (
         <Upgrade view={view} wanted={wanted} busy={busy} onCheckout={key => void go(`checkout:${key}`, '/api/billing/checkout', { plan: key })} />
       )}
+      {view.catalog && <ComparePlans view={view} />}
     </>,
   )
 }
@@ -209,33 +210,34 @@ const STATE_LABEL: Partial<Record<UsageRow['state'], { text: string; tone: strin
   fair_use:  { text: 'Fair use', tone: 'border-white/12 bg-white/4 text-foreground/55' },
 }
 
-// The four allowances, each on its own row: they never share a balance.
+// The four allowances, each on its own card: they never share a balance.
 // Every figure is the server's (usage-model.ts only words it).
-function UsageTable({ a, readAt, onRefresh }: { a: Allowances; readAt: Date | null; onRefresh: () => void }) {
+function UsageTable({ a, readAt, onRefresh, offer, now }: { a: Allowances; readAt: Date | null; onRefresh: () => void; offer: { name: string; allowance: TierAllowance } | null; now: TierAllowance | null }) {
   const rows = usageRows(a)
   return (
     <div className="relative mt-6" aria-label="What you've used">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">This period</p>
-        <button type="button" onClick={onRefresh} className="text-[11px] text-foreground/45 underline-offset-2 hover:text-foreground/70 hover:underline">
+        <button type="button" onClick={onRefresh} className="text-[11px] text-foreground/45 underline-offset-2 hover:text-foreground/70 hover:underline" data-usage-refresh>
           {readAt ? `Updated ${readAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · Refresh` : 'Refresh'}
         </button>
       </div>
-      <ul className="mt-3 divide-y divide-white/6 border-y border-white/6">
+      <ul className="mt-3 grid gap-3 sm:grid-cols-2">
         {rows.map(r => {
           const tag = STATE_LABEL[r.state]
+          const hint = upgradeHint(r, offer, now)
+          const alert = r.state === 'used_up' || r.state === 'read_only'
           return (
-            <li key={r.key} className="py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <span className="flex items-center gap-2 text-sm font-medium text-foreground/85">
-                  {r.name}
-                  {tag && <span className={cn('rounded-full border px-2 py-px text-[10px] font-medium', tag.tone)}>{tag.text}</span>}
-                </span>
-                <span className="text-sm tabular-nums text-foreground/70">{r.figure}{r.left ? <span className="text-foreground/45"> · {r.left}</span> : null}</span>
+            <li key={r.key} className={cn('flex flex-col rounded-2xl border p-4', alert ? 'border-amber-300/30 bg-amber-300/[0.04]' : 'border-white/8 bg-white/[0.02]')} data-usage-row={r.key} data-usage-state={r.state}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-foreground/85">{r.name}</span>
+                {tag && <span className={cn('rounded-full border px-2 py-px text-[10px] font-medium', tag.tone)}>{tag.text}</span>}
               </div>
+              <p className="mt-2 text-xl font-semibold tabular-nums tracking-tight text-foreground">{r.figure}</p>
+              {r.left && <p className="text-xs tabular-nums text-foreground/55">{r.left}</p>}
               {r.pct !== null && r.limit !== null && <Bar used={Math.min(r.used, r.limit)} limit={r.limit} label={`${r.name} used`} pct={r.pct} />}
               {r.extra && (
-                <div className="mt-3 pl-3 border-l border-white/10">
+                <div className="mt-3 border-l border-white/10 pl-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs">
                     <span className="text-foreground/70">{r.extra.label}</span>
                     <span className="tabular-nums text-foreground/60">{r.extra.figure}</span>
@@ -244,8 +246,9 @@ function UsageTable({ a, readAt, onRefresh }: { a: Allowances; readAt: Date | nu
                   {r.extra.renews && <p className="mt-1 text-[11px] text-foreground/45">{r.extra.renews}</p>}
                 </div>
               )}
-              <p className="mt-1.5 text-[11px] text-foreground/50">{r.renews}</p>
-              <details className="group mt-1.5">
+              <p className="mt-2 text-[11px] text-foreground/50">{r.renews}</p>
+              {hint && <p className="mt-2 text-xs text-keppel-300" data-usage-hint>{hint} <a href="#upgrade" className="underline underline-offset-2">See plans</a></p>}
+              <details className="group mt-auto pt-2">
                 <summary className="cursor-pointer list-none text-[11px] text-foreground/45 hover:text-foreground/70 [&::-webkit-details-marker]:hidden">
                   <span className="underline-offset-2 group-open:underline">What counts, and what happens at the limit</span>
                 </summary>
@@ -256,7 +259,49 @@ function UsageTable({ a, readAt, onRefresh }: { a: Allowances; readAt: Date | nu
           )
         })}
       </ul>
+      <p className="mt-3 text-[11px] leading-relaxed text-foreground/45">Nova credits follow what each request really costs Kivo, so a short question uses less than a long document. They are not a count of messages or words.</p>
     </div>
+  )
+}
+
+// Free, Plus and Pro side by side, from the server's table. A plan not on
+// sale says so; this account's plan is marked. Prices come from plans.ts.
+function ComparePlans({ view }: { view: View }) {
+  const tier = view.tier ?? (view.plan === 'pro' ? 'pro' : 'free')
+  const cols: PlanColumn[] = [
+    { tier: 'free', name: 'Free', price: 'Free', onSale: true, current: tier === 'free' },
+    { tier: 'plus', name: 'Plus', price: `${formatPrice(PLANS.plus_monthly)}${intervalLabel(PLANS.plus_monthly)}`, onSale: view.purchasable.includes('plus_monthly'), current: tier === 'plus' },
+    { tier: 'pro', name: 'Pro', price: `${formatPrice(PLANS.pro_monthly)}${intervalLabel(PLANS.pro_monthly)}`, onSale: view.purchasable.includes('pro_monthly'), current: tier === 'pro' },
+  ]
+  const rows = planMatrix(view.catalog!, cols)
+  return (
+    <section aria-labelledby="compare" className={CARD}>
+      <h2 id="compare" className="text-base font-semibold text-foreground">Compare plans</h2>
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full min-w-[30rem] text-sm">
+          <thead>
+            <tr className="text-left align-bottom">
+              <th scope="col" className="pb-3"><span className="sr-only">Allowance</span></th>
+              {cols.map(c => (
+                <th key={c.tier} scope="col" className="pb-3 pr-3 font-medium">
+                  <span className="block text-foreground">{c.name}{c.current && <span className="ml-1.5 rounded-full bg-keppel-400/15 px-1.5 py-px text-[10px] font-medium text-keppel-300">Your plan</span>}</span>
+                  <span className="block text-xs font-normal text-foreground/55">{c.onSale ? c.price : `${c.price} · coming soon`}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/6">
+            {rows.map(r => (
+              <tr key={r.name}>
+                <th scope="row" className="py-2 pr-3 text-left font-normal text-foreground/65">{r.name}</th>
+                {r.cells.map((cell, i) => <td key={i} className={cn('py-2 pr-3 tabular-nums', cols[i]!.current ? 'font-medium text-foreground' : 'text-foreground/65')}>{cell}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-[11px] text-foreground/45">Fair use means no fixed number; limits on very heavy or automated use still apply. No plan is unlimited.</p>
+    </section>
   )
 }
 

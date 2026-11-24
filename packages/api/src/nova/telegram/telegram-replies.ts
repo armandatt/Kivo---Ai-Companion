@@ -130,6 +130,12 @@ function dayLines(view: NovaTodayReady): string[] {
   if (view.plan.totalMinutesToday > 0) lines.push(`Today: ${view.plan.totalMinutesToday} of ${view.plan.budgetMinutes} min planned.`);
   const skipped = view.planChanges?.skipped ?? [];
   if (skipped.length > 0) lines.push(`Left out today: ${skipped.map(t => t.topicName).join(", ")}.`);
+  // When an exam's work does not fit before it (product/shortfall.ts, the same
+  // sentence Today and the Planner show): said, with the learner's two ways to
+  // change it. Nothing is added to the day here (founder review #08: Telegram
+  // did not say it before).
+  const short = view.plan.shortfall;
+  if (short) lines.push("", short.summary, "Tell me how long you have today to refit it, or change your usual time in Study setup.");
   return lines;
 }
 

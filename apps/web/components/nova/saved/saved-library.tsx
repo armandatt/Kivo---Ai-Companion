@@ -13,9 +13,8 @@ import type { LearningResource, LibraryFacets } from '@repo/api/nova/product/lea
 import { READING_STATUS_LABEL, RESOURCE_TYPES, RESOURCE_TYPE_LABEL, type ReadingStatus, type ResourceType } from '@repo/api/nova/product/resource-meta'
 import { ResourceCard, TYPE_ICON } from './resource-card'
 import { createCollection, deleteCollection, fetchLibrary, fetchResource, renameCollection, type LibraryFilter } from './saved-api'
+import { DEFAULT_SAVED_VIEW, readSavedView, writeSavedView, type SavedView } from './saved-view'
 
-const VIEW_KEY = 'kivo-saved-view'
-const readView = (): 'list' | 'grid' => { try { return localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list' } catch { return 'list' } }
 // Below the desktop width the rail is a row of chips that scrolls sideways.
 const rail = (on: boolean) => `flex w-full shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors max-lg:w-auto max-lg:rounded-full max-lg:border max-lg:border-white/10 max-lg:px-3 ${on ? 'bg-white/[0.07] font-medium text-foreground' : 'text-foreground/70 hover:bg-white/[0.04] hover:text-foreground'}`
 const chip = (on: boolean) => `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${on ? 'border-nova/50 bg-nova/10 text-foreground' : 'border-white/10 text-foreground/70 hover:border-white/20 hover:text-foreground'}`
@@ -76,7 +75,9 @@ export function SavedLibrary({ refreshKey, onItems, saveLink }: { refreshKey: nu
   const [more, setMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [view, setView] = useState<'list' | 'grid'>('list')
+  // Board by default; a learner who chose List keeps it (read after mount,
+  // while the first page is still loading, so no cards are shown twice).
+  const [view, setView] = useState<SavedView>(DEFAULT_SAVED_VIEW)
   const [newName, setNewName] = useState<string | null>(null)
   const [pinned, setPinned] = useState<LearningResource | null>(null)
   const [reload, setReload] = useState(0)
@@ -89,8 +90,8 @@ export function SavedLibrary({ refreshKey, onItems, saveLink }: { refreshKey: nu
     document.addEventListener('mousedown', away); document.addEventListener('keydown', esc)
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
   }, [filtersOpen])
-  useEffect(() => setView(readView()), [])
-  const chooseView = (v: 'list' | 'grid') => { setView(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* storage off */ } }
+  useEffect(() => setView(readSavedView()), [])
+  const chooseView = (v: SavedView) => { setView(v); writeSavedView(v) }
 
   // Typing searches a moment after it stops.
   useEffect(() => {
@@ -193,8 +194,8 @@ export function SavedLibrary({ refreshKey, onItems, saveLink }: { refreshKey: nu
         {/* Save a link sits beside the title; while a link is being checked it takes the whole row. */}
         <div className="order-last w-full sm:order-none sm:ml-auto sm:w-auto sm:min-w-[20rem] sm:max-w-md sm:flex-1 has-[[data-state=review]]:order-last has-[[data-state=review]]:basis-full has-[[data-state=review]]:max-w-none">{saveLink}</div>
         <div role="group" aria-label="View" className="ml-auto inline-flex rounded-lg border border-white/10 p-0.5 sm:ml-0">
-          <button type="button" onClick={() => chooseView('list')} aria-pressed={view === 'list'} aria-label="List" className={`grid size-8 place-items-center rounded-md transition-colors ${view === 'list' ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground'}`}><List className="size-4" /></button>
-          <button type="button" onClick={() => chooseView('grid')} aria-pressed={view === 'grid'} aria-label="Cards" className={`grid size-8 place-items-center rounded-md transition-colors ${view === 'grid' ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground'}`}><LayoutGrid className="size-4" /></button>
+          <button type="button" onClick={() => chooseView('grid')} aria-pressed={view === 'grid'} aria-label="Board" title="Board" className={`grid size-8 place-items-center rounded-md transition-colors ${view === 'grid' ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground'}`}><LayoutGrid className="size-4" /></button>
+          <button type="button" onClick={() => chooseView('list')} aria-pressed={view === 'list'} aria-label="List" title="List" className={`grid size-8 place-items-center rounded-md transition-colors ${view === 'list' ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground'}`}><List className="size-4" /></button>
         </div>
       </div>
 

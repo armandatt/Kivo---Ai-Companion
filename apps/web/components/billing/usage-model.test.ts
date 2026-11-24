@@ -113,3 +113,30 @@ test('comparison with the next plan uses the table it is given', () => {
   const lines = compareLines(free, pro)
   assert.deepEqual(lines.map(l => [l.now, l.next]), [['150', '3,500'], ['10', '120'], ['500 MB', '15 GB'], ['2,000 calls, then 100 reads a month', 'Fair use']])
 })
+
+// Founder review #05
+import { planMatrix, upgradeHint } from './usage-model'
+const CAT = {
+  free: { novaCredits: 150, browserTasks: 10, mcpLifetime: 2000, mcpReadOnly: 100, storageBytes: 500_000_000 },
+  plus: { novaCredits: 1000, browserTasks: 60, mcpLifetime: null, mcpReadOnly: null, storageBytes: 5_000_000_000 },
+  pro: { novaCredits: 3000, browserTasks: 200, mcpLifetime: null, mcpReadOnly: null, storageBytes: 20_000_000_000 },
+}
+test('the plan matrix shows every plan from the server table, learning history included on all', () => {
+  const cols = (['free', 'plus', 'pro'] as const).map(t => ({ tier: t, name: t, price: '', onSale: true, current: t === 'free' }))
+  const m = planMatrix(CAT, cols)
+  assert.deepEqual(m[0]!.cells, ['150', '1,000', '3,000'])
+  assert.deepEqual(m[3]!.cells, ['2,000 calls, then 100 reads a month', 'Fair use', 'Fair use'])
+  assert.deepEqual(m.at(-1)!.cells, ['Included', 'Included', 'Included'])
+  assert.ok(!JSON.stringify(m).match(/unlimited/i))
+})
+test('an upgrade line appears only where it helps, and only for a plan on sale', () => {
+  const offer = { name: 'Plus', allowance: CAT.plus }
+  assert.equal(upgradeHint({ key: 'nova', state: 'ok' }, offer, CAT.free), null)
+  assert.equal(upgradeHint({ key: 'nova', state: 'low' }, offer, CAT.free), 'Plus gives 1,000 Nova credits a month.')
+  assert.equal(upgradeHint({ key: 'nova', state: 'used_up' }, null, CAT.free), null, 'nothing on sale: no prompt')
+  assert.match(upgradeHint({ key: 'mcp', state: 'read_only' }, offer, CAT.free)!, /fair use/)
+  assert.equal(upgradeHint({ key: 'browser', state: 'low' }, { name: 'X', allowance: CAT.free }, CAT.free), null, 'no more of it: no prompt')
+})
+test('MCP explains reads and writes apart', () => {
+  assert.match(row(base(), 'mcp').what, /A read .* changes nothing; a write creates/)
+})

@@ -176,7 +176,12 @@ function Setup({ a, address, before, reload, onClose }: {
               step2Ready ? 'bg-action text-action-foreground hover:bg-action-hover' : 'border border-white/12 text-foreground/80 hover:bg-white/5')} data-setup-open>
             <Mark a={a} size="sm" /> {a.add} <ArrowUpRight aria-hidden className="size-3.5" />
           </a>
-          <p className="mt-1.5 text-[11px] text-foreground/50">Paste the link as the <span className="text-foreground/70">{a.paste}</span></p>
+          <p className="mt-1.5 text-[11px] text-foreground/50">Kivo can’t add itself there: paste the link as the <span className="text-foreground/70">{a.paste}</span></p>
+          <details className="mt-1.5 text-[11px] text-foreground/55" data-setup-path>
+            <summary className="cursor-pointer hover:text-foreground">Where exactly?</summary>
+            <ol className="mt-1 list-decimal space-y-0.5 pl-4">{a.path.map(p => <li key={p}>{p}</li>)}</ol>
+            <p className="mt-1">{a.planNote} <a href={a.docsUrl} target="_blank" rel="noopener noreferrer" className="underline">{a.name}’s guide</a></p>
+          </details>
         </Step>
         <Step n={3} done={false} active={opened} title="Allow">
           <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-white/12 px-3 py-2 text-sm text-foreground/70" data-setup-waiting>
