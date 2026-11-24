@@ -14,7 +14,7 @@ import { PLANS, formatPrice } from '@repo/api/billing/plans'
 import type { ReactNode } from 'react'
 import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Puzzle, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
-import { Reveal } from './frame'
+import { AppWindow, Reveal } from './frame'
 import { StoreButton } from '@/components/extension/store-button'
 import { CHROME_STORE_URL, STORE_LISTING_NAME } from '@/lib/extension-store'
 import { LazyBuildDemo, LazyCreatureDemo, LazyExtensionDemo, LazyFocusDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTelegramDemo, LazyWorkspaceDemo } from './demos'
@@ -31,6 +31,18 @@ function Intro({ eyebrow, title, children, id }: { eyebrow: string; title: strin
       <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#00E5A0]">{eyebrow}</p>
       <h2 id={`${id}-title`} className="mt-3 text-balance text-4xl font-bold tracking-tight text-[#e8eaf0] md:text-5xl md:leading-[1.08]">{title}</h2>
       <p className="mx-auto mt-5 max-w-xl text-pretty text-lg leading-relaxed text-slate-400">{children}</p>
+    </Reveal>
+  )
+}
+
+// Intro, left-aligned, for a section that pairs its words with something beside them.
+function LeadIntro({ eyebrow, title, children, id }: { eyebrow: string; title: string; children: ReactNode; id: string }) {
+  return (
+    <Reveal>
+      <span aria-hidden className="mb-5 block h-10 w-px bg-gradient-to-b from-transparent to-[#00E5A0]/50" />
+      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#00E5A0]">{eyebrow}</p>
+      <h2 id={`${id}-title`} className="mt-3 text-balance text-4xl font-bold tracking-tight text-[#e8eaf0] md:text-5xl md:leading-[1.08]">{title}</h2>
+      <p className="mt-5 max-w-xl text-pretty text-lg leading-relaxed text-slate-400">{children}</p>
     </Reveal>
   )
 }
@@ -79,20 +91,71 @@ export function BuildSection() {
   )
 }
 
+// The Knowledge Map, shown as it really is: screenshots of the app itself
+// (main's map, a synthetic sample semester, nothing of anyone's), the wide
+// one on a computer and the app's own phone layout on a phone. Plain images,
+// lazy, sized up front (no layout shift); nothing of the map's code loads for
+// them. Below, the interactive sample map drawn by the map's own engine.
+// Re-capture both when the map changes (docs/LANDING_MAP_SHOWCASE.md).
+export const MAP_SHOWCASE = {
+  desktop: { src: '/landing/knowledge-map-desktop.webp', width: 2090, height: 1175 },
+  mobile: { src: '/landing/knowledge-map-mobile.webp', width: 720, height: 948 },
+  alt: 'Kivo’s Knowledge Map for a sample Operating Systems subject: topics such as Deadlocks and Memory management nested under it, OS Lab as a subject inside it, a note and saved web pages filed under Banker’s algorithm and Paging, and faint lines where notes link to topics in other subjects.',
+} as const
+
+const MAP_KEY: Array<{ mark: ReactNode; title: string; body: string }> = [
+  { mark: <span className="size-2.5 rounded-full bg-[#a78bfa]" />, title: 'Subjects, and subjects inside them', body: 'A year, a course, a lab: nested as you organise them.' },
+  { mark: <span className="h-3 w-1 rounded-full bg-[#a78bfa]" />, title: 'Topics inside topics', body: 'Deadlocks holds Banker’s algorithm; each knows what you’ve studied.' },
+  { mark: <span className="flex gap-1"><span className="size-2 rounded-full bg-amber-400" /><span className="size-2 rounded-[2px] bg-sky-400" /></span>, title: 'Notes and saved pages, filed in place', body: 'Your notes and the pages you saved sit beside the topic they explain.' },
+  { mark: <span className="h-px w-4 bg-slate-400" />, title: 'Links that cross subjects', body: 'Write [[Deadlocks]] in a DBMS note and the two connect on the map.' },
+]
+
 export function MapSection() {
   return (
-    <section id="map" aria-labelledby="map-title" className={SECTION}>
+    <section id="map" aria-labelledby="map-title" className={SECTION} data-map-showcase>
       <div className="mx-auto max-w-6xl space-y-14">
-        <Intro id="map" eyebrow="AI-powered Second Brain" title="Your AI-powered second brain.">
-          Subjects inside subjects, topics inside topics, and the notes and papers that connect them. Open any card to go deeper.
-        </Intro>
-        <Reveal><LazyMapDemo /></Reveal>
-        <Points items={[
-          { title: 'As deep as you think', body: 'Subjects inside subjects, topics inside topics. Open any card to explore inside it.' },
-          { title: 'Connections you can see', body: 'Select a card and everything joined to it lights up.' },
-          { title: 'Grows as you learn', body: 'Every subject, note, paper and task you add takes its place.' },
-        ]} />
-        <SectionCta>Start your second brain</SectionCta>
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
+          <LeadIntro id="map" eyebrow="AI-powered Second Brain" title="Your knowledge should connect, not stay scattered.">
+            Kivo puts your subjects, notes and saved pages on one map, joined the way you file and link them, so you can see how ideas relate and build understanding over time.
+          </LeadIntro>
+          <Reveal>
+            <ul className="grid gap-x-8 gap-y-5 sm:grid-cols-2" data-map-key>
+              {MAP_KEY.map(k => (
+                <li key={k.title} className="flex gap-3">
+                  <span aria-hidden className="mt-1.5 flex h-3 w-5 shrink-0 items-center justify-center">{k.mark}</span>
+                  <span><span className="block text-sm font-semibold text-slate-100">{k.title}</span><span className="mt-1 block text-sm leading-relaxed text-slate-400">{k.body}</span></span>
+                </li>
+              ))}
+            </ul>
+          </Reveal>
+        </div>
+
+        <Reveal>
+          <figure>
+            <AppWindow label="Knowledge Map · Operating Systems">
+              <picture>
+                <source media="(max-width: 639px)" srcSet={MAP_SHOWCASE.mobile.src} width={MAP_SHOWCASE.mobile.width} height={MAP_SHOWCASE.mobile.height} />
+                <img src={MAP_SHOWCASE.desktop.src} width={MAP_SHOWCASE.desktop.width} height={MAP_SHOWCASE.desktop.height} alt={MAP_SHOWCASE.alt}
+                  loading="lazy" decoding="async" className="block aspect-[720/948] h-auto w-full object-cover sm:aspect-[2090/1175]" data-map-showcase-img />
+              </picture>
+            </AppWindow>
+            <figcaption className="mt-3 text-center text-xs text-slate-500">The Knowledge Map in Kivo, with a sample semester. On a phone it reads top to bottom.</figcaption>
+          </figure>
+        </Reveal>
+
+        <div className="space-y-8 pt-6">
+          <Reveal className="text-center">
+            <h3 className="text-2xl font-bold tracking-tight text-[#e8eaf0] md:text-3xl">Try it on a sample map.</h3>
+            <p className="mx-auto mt-2 max-w-xl text-base text-slate-400">Drawn by the map’s own engine. Select a card to light what it’s joined to, or open one to go inside.</p>
+          </Reveal>
+          <Reveal><LazyMapDemo /></Reveal>
+          <Points items={[
+            { title: 'As deep as you think', body: 'Subjects inside subjects, topics inside topics. Open any card to explore inside it.' },
+            { title: 'Connections you can see', body: 'Select a card and everything joined to it lights up.' },
+            { title: 'Grows as you learn', body: 'Every subject, note, paper and task you add takes its place.' },
+          ]} />
+          <SectionCta>Start your Knowledge Map</SectionCta>
+        </div>
       </div>
     </section>
   )
