@@ -2,6 +2,28 @@
 
 Status: **blocked pending the owner's decision. No access was changed.**
 
+## 1. Live today, on every plan (unchanged)
+
+Checked 25 Nov 2026: no Learning DNA or Progress code or route reads a plan or tier. `apps/web/components/nova/learning-dna`, `components/nova/progress`, `/api/nova/learning-dna` and `/api/nova/progress` all serve every account the same.
+
+- **Learning DNA** (`/learning-dna`):
+  - Usual session length, time of day (once the timezone is known) and comparisons from "How did it go?" answers.
+  - Each comes with its evidence level and whether it is weakening.
+  - "What Nova doesn't know" lists what is not computed.
+- **Progress** (`/progress`):
+  - Counted sessions and active days, and the consistency trend.
+  - Topic growth (mastery history), journey events, comebacks and recent sessions.
+  - What was not counted, and why.
+- **Free, Plus and Pro** all show both in full: pricing page, `plans.ts` Free features, and Plan and usage ("Included" in the comparison).
+
+## 2. Proposed, not built, not approved
+
+The paid layer in section "Proposal" below. Nothing in it exists in code. It must not be advertised, priced or gated until approved.
+
+## 3. Needs the owner's explicit approval
+
+Listed at the end ("What is needed from the owner"). Until then, sections 1 and 2 stay as they are.
+
 ## What the review asks
 
 - Make Learning DNA a Plus and Pro feature.
@@ -15,7 +37,7 @@ Status: **blocked pending the owner's decision. No access was changed.**
 
 So there is no "advanced" Learning DNA or Progress today to put behind a plan. Locking what exists would hide a learner's own history from them, which both the brief and the current product rules forbid. Inventing a paid section with nothing behind it would be a false feature. Either way, it conflicts with the plan matrix, which needs your approval to change.
 
-## Proposal: a real premium layer
+## Proposal (section 2): a real premium layer
 
 These are new capabilities, built on records Kivo already keeps. None of them hides or removes anything a learner has today.
 
