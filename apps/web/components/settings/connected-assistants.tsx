@@ -6,6 +6,7 @@
 // connector settings; the assistant then sends you to Kivo to allow it.
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 type Connection = { id: string; client: string; scopes: string[]; connectedAt: string; lastUsedAt: string | null }
 
@@ -35,7 +36,10 @@ export function ConnectedAssistants() {
 
   return (
     <section className="rounded-3xl border border-white/8 bg-card/70 p-6">
-      <h2 className="text-base font-semibold text-foreground">AI assistants</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-foreground">AI assistants</h2>
+        <Link href="/assistants" className="text-sm font-medium text-nova-ink hover:underline" data-assistants-link>Set up step by step</Link>
+      </div>
       <p className="mt-1 text-sm text-foreground/55">
         Let ChatGPT or Claude search your notes, save what you learn in a conversation and build your Knowledge Map. Add this address as a custom connector in the assistant, then allow it here when it asks.
       </p>

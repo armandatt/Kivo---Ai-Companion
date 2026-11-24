@@ -26,7 +26,7 @@ const REX_PAGES = ["/coach", "/goals", "/journey"];
 describe("routeAccess", () => {
   it("shows a Nova learner Nova's pages", () => {
     for (const { path } of NOVA_ROUTES) expect(routeAccess("nova", path)).toBe("render");
-    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/map", "/knowledge", "/build", "/notes", "/notes/drafts", "/saved", "/calendar", "/focus", "/progress", "/learning-dna", "/creature", "/guide"]);
+    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/map", "/knowledge", "/build", "/notes", "/notes/drafts", "/saved", "/assistants", "/calendar", "/focus", "/progress", "/learning-dna", "/creature", "/guide"]);
     // Today first, the Knowledge Map right under it; the Planner is not a page
     // of its own any more, but its address still opens (it sends to Today).
     expect(routeAccess("nova", "/planner")).toBe("render");
