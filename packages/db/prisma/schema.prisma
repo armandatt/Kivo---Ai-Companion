@@ -2133,7 +2133,7 @@ model NovaImportJob {
   title         String
   // "running" | "failed" | "complete"
   status        String
-  // "structure" | "notes" | "about" | "verify" | "done"
+  // "structure" | "notes" | "links" | "about" | "verify" | "done"
   stage         String
   pkg           Json?
   // { subjectNames: {ref: name}, notesDone: [ref], aboutNoteId, counts }

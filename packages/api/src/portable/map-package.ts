@@ -5,7 +5,12 @@
 // canonical: after an import the learner's own subjects, topics and notes are
 // the source of truth, made through their own writers.
 //
-// Format "kivo.map/1". Every reference inside is local to the package
+// Format "kivo.map/1": one subject tree (one root subject). Format
+// "kivo.map/2": the same shape with one or more root subjects, for a whole
+// Knowledge Map (founder review #12). Exports of one subject stay format 1,
+// so a file made for one subject still opens in any Kivo; only a whole-map
+// export is format 2, and an older Kivo says it was made by a newer version.
+// Every reference inside is local to the package
 // ("s1", "t3", "n2"): no private database id ever leaves the owner's
 // account. Learning state (mastery, reviews, sessions, Learning DNA) is never
 // part of a package: a map shares what was learned about, not how one person
@@ -13,7 +18,12 @@
 
 import { createHash } from "node:crypto";
 
-export const MAP_FORMAT = "kivo.map/1";
+export const MAP_FORMAT_V1 = "kivo.map/1";
+export const MAP_FORMAT_V2 = "kivo.map/2";
+/** The format of a one-subject package (kept as the default name for older callers). */
+export const MAP_FORMAT = MAP_FORMAT_V1;
+export const MAP_FORMATS = [MAP_FORMAT_V1, MAP_FORMAT_V2] as const;
+export type MapFormat = typeof MAP_FORMATS[number];
 
 // Limits a package must keep. An export, an upload and an import are all
 // refused above them, so none of them can exhaust the server.
@@ -36,7 +46,12 @@ export type License = typeof LICENSES[number];
 export interface PackageSubject  { ref: string; name: string; parentRef: string | null }
 export interface PackageTopic    { ref: string; subjectRef: string; parentRef: string | null; name: string; kind: "milestone" | null; position: number }
 export interface PackageNote     { ref: string; title: string; body: string; subjectRef: string | null; topicName: string | null }
-export interface PackageResource { ref: string; title: string; url: string; domain: string; subjectRef: string | null; topicName: string | null }
+export interface PackageResource {
+  ref: string; title: string; url: string; domain: string; subjectRef: string | null; topicName: string | null;
+  // Optional in both formats (older files have none): what the page said about
+  // itself when it was saved, so the copy reads like the original.
+  description?: string | null; resourceType?: string | null; siteName?: string | null;
+}
 
 // Where a package came from. Carried into every import; never used to decide
 // anything (it is the exporter's word, shown as such).
@@ -49,12 +64,13 @@ export interface Attribution {
 }
 
 export interface MapPackage {
-  format:      typeof MAP_FORMAT;
+  format:      MapFormat;
   title:       string;
   description: string | null;
   license:     License;
   attribution: Attribution;
-  // The root subjects of the map (refs of subjects with no parent in the package).
+  // Every subject, parents before children. Format 1 has exactly one with no
+  // parent (the root); format 2 has one or more.
   subjects:    PackageSubject[];
   topics:      PackageTopic[];
   notes:       PackageNote[];
@@ -68,7 +84,9 @@ export interface MapPackage {
 export interface SourceSubject  { id: string; name: string; parentId: string | null }
 export interface SourceTopic    { id: string; subjectId: string; name: string; parentId: string | null; kind: "milestone" | null; position: number; archived: boolean }
 export interface SourceNote     { id: string; title: string; body: string; subjectId: string | null; topicName: string | null }
-export interface SourceResource { id: string; title: string; url: string; domain: string; subjectId: string | null; topicName: string | null }
+export interface SourceResource { id: string; title: string; url: string; domain: string; subjectId: string | null; topicName: string | null; description?: string | null; resourceType?: string | null; siteName?: string | null }
+
+export const RESOURCE_DESCRIPTION_MAX = 600;
 
 const IMAGE_LINE = /^!\[[^\]]*\]\(kivo-image:[^)]+\)\s*$/gm;
 
@@ -81,25 +99,37 @@ export function stripNoteImages(body: string): { body: string; images: number } 
 }
 
 export function buildPackage(input: {
-  rootSubjectId: string;
-  subjects: SourceSubject[];          // the owner's subjects (any; only the root's subtree is used)
+  // One subject (its tree, format 1), or several top-level subjects (format 2:
+  // the whole map). Order is kept.
+  rootSubjectId?: string;
+  rootSubjectIds?: string[];
+  subjects: SourceSubject[];          // the owner's subjects (any; only the roots' subtrees are used)
   topics: SourceTopic[];
   notes: SourceNote[];                // only the notes the owner selected
   resources: SourceResource[];        // only when the owner chose to include saved pages
   title: string; description: string | null; license: License; attribution: Attribution;
   privateNotesLeftOut: number;
 }): MapPackage {
-  // The root and every subject inside it, root first, parents before children.
+  // Each root and every subject inside it, root first, parents before children.
+  const rootIds = input.rootSubjectIds ?? (input.rootSubjectId ? [input.rootSubjectId] : []);
+  const multi = input.rootSubjectIds !== undefined;
+  if (rootIds.length === 0) throw new Error("root subject not found");
   const byParent = new Map<string | null, SourceSubject[]>();
   for (const s of input.subjects) byParent.set(s.parentId, [...(byParent.get(s.parentId) ?? []), s]);
-  const root = input.subjects.find(s => s.id === input.rootSubjectId);
-  if (!root) throw new Error("root subject not found");
   const ordered: SourceSubject[] = [];
-  const walk = (s: SourceSubject) => { ordered.push(s); for (const c of byParent.get(s.id) ?? []) walk(c); };
-  walk(root);
+  const seen = new Set<string>();
+  const walk = (s: SourceSubject) => { if (seen.has(s.id)) return; seen.add(s.id); ordered.push(s); for (const c of byParent.get(s.id) ?? []) walk(c); };
+  const roots = new Set<string>();
+  for (const id of rootIds) {
+    const root = input.subjects.find(s => s.id === id);
+    if (!root) throw new Error("root subject not found");
+    if (seen.has(root.id)) continue;      // already inside an earlier root
+    roots.add(root.id);
+    walk(root);
+  }
 
   const sRef = new Map<string, string>(ordered.map((s, i) => [s.id, `s${i + 1}`]));
-  const subjects: PackageSubject[] = ordered.map(s => ({ ref: sRef.get(s.id)!, name: s.name, parentRef: s.id === root.id ? null : (s.parentId ? sRef.get(s.parentId) ?? null : null) }));
+  const subjects: PackageSubject[] = ordered.map(s => ({ ref: sRef.get(s.id)!, name: s.name, parentRef: roots.has(s.id) ? null : (s.parentId ? sRef.get(s.parentId) ?? null : null) }));
 
   // Topics of those subjects, archived ones left out, parents before children.
   const live = input.topics.filter(t => sRef.has(t.subjectId) && !t.archived);
@@ -129,10 +159,15 @@ export function buildPackage(input: {
 
   const resources: PackageResource[] = input.resources
     .filter(r => r.subjectId !== null && sRef.has(r.subjectId) && /^https?:\/\//i.test(r.url))
-    .map((r, i) => ({ ref: `r${i + 1}`, title: r.title, url: r.url, domain: r.domain, subjectRef: sRef.get(r.subjectId!)!, topicName: r.topicName }));
+    .map((r, i) => ({
+      ref: `r${i + 1}`, title: r.title, url: r.url, domain: r.domain, subjectRef: sRef.get(r.subjectId!)!, topicName: r.topicName,
+      ...(r.description ? { description: r.description.slice(0, RESOURCE_DESCRIPTION_MAX) } : {}),
+      ...(r.resourceType ? { resourceType: r.resourceType.slice(0, 40) } : {}),
+      ...(r.siteName ? { siteName: r.siteName.slice(0, 120) } : {}),
+    }));
 
   return {
-    format: MAP_FORMAT, title: input.title, description: input.description, license: input.license, attribution: input.attribution,
+    format: multi ? MAP_FORMAT_V2 : MAP_FORMAT_V1, title: input.title, description: input.description, license: input.license, attribution: input.attribution,
     subjects, topics, notes, resources,
     excluded: { noteImages, privateNotes: input.privateNotesLeftOut, learningState: true },
   };
@@ -150,7 +185,8 @@ const REF = /^[srnt]\d{1,5}$/;   // s: subject, t: topic, n: note, r: resource
 export function validatePackage(raw: unknown): PackageCheck {
   if (!raw || typeof raw !== "object") return { ok: false, reason: "not_an_object" };
   const p = raw as Record<string, unknown>;
-  if (p.format !== MAP_FORMAT) return { ok: false, reason: "unknown_format" };
+  if (!(MAP_FORMATS as readonly unknown[]).includes(p.format)) return { ok: false, reason: "unknown_format" };
+  const format = p.format as MapFormat;
   if (!isStr(p.title, PACKAGE_LIMITS.title)) return { ok: false, reason: "bad_title" };
   if (!optStr(p.description, PACKAGE_LIMITS.description)) return { ok: false, reason: "bad_description" };
   if (!LICENSES.includes(p.license as License)) return { ok: false, reason: "bad_license" };
@@ -169,7 +205,8 @@ export function validatePackage(raw: unknown): PackageCheck {
     if (names.has(key)) return { ok: false, reason: "duplicate_subject_name" };
     names.add(key); sRefs.add(s.ref);
   }
-  if (subjects.filter(s => s.parentRef === null).length !== 1) return { ok: false, reason: "one_root_subject" };
+  const rootCount = subjects.filter(s => s.parentRef === null).length;
+  if (format === MAP_FORMAT_V1 ? rootCount !== 1 : rootCount < 1) return { ok: false, reason: "one_root_subject" };
 
   const topicNames = new Set<string>();
   for (const t of topics) {
@@ -199,6 +236,7 @@ export function validatePackage(raw: unknown): PackageCheck {
     if (!isStr(r.domain, 255)) return { ok: false, reason: "bad_resource_domain" };
     if (r.subjectRef !== null && !(typeof r.subjectRef === "string" && sRefs.has(r.subjectRef))) return { ok: false, reason: "resource_subject_unknown" };
     if (!optStr(r.topicName, PACKAGE_LIMITS.name)) return { ok: false, reason: "bad_resource_topic" };
+    if (!optStr(r.description, RESOURCE_DESCRIPTION_MAX) || !optStr(r.resourceType, 40) || !optStr(r.siteName, 120)) return { ok: false, reason: "bad_resource_meta" };
     rRefs.add(r.ref);
   }
   const a = p.attribution as Record<string, unknown> | undefined;
@@ -210,10 +248,18 @@ export function validatePackage(raw: unknown): PackageCheck {
   return {
     ok: true,
     pkg: {
-      format: MAP_FORMAT, title: p.title as string, description: (p.description as string | null) ?? null, license: p.license as License,
+      format, title: p.title as string, description: (p.description as string | null) ?? null, license: p.license as License,
       attribution: { creator: (a.creator as string | null) ?? null, source: (a.source as string | null) ?? null, packageId: (a.packageId as string | null) ?? null, exportedAt: (a.exportedAt as string | null) ?? null, importedFrom: (a.importedFrom as string | null) ?? null },
       subjects: subjects as unknown as PackageSubject[], topics: topics as unknown as PackageTopic[],
-      notes: notes as unknown as PackageNote[], resources: resources as unknown as PackageResource[],
+      notes: notes as unknown as PackageNote[],
+      // Only the fields a resource has: anything else in the file is dropped here.
+      resources: resources.map(r => ({
+        ref: r.ref as string, title: r.title as string, url: r.url as string, domain: r.domain as string,
+        subjectRef: (r.subjectRef as string | null) ?? null, topicName: (r.topicName as string | null) ?? null,
+        ...(r.description ? { description: r.description as string } : {}),
+        ...(r.resourceType ? { resourceType: r.resourceType as string } : {}),
+        ...(r.siteName ? { siteName: r.siteName as string } : {}),
+      })),
       excluded: { noteImages: Number(ex?.noteImages) || 0, privateNotes: Number(ex?.privateNotes) || 0, learningState: true },
     },
   };
@@ -239,6 +285,9 @@ export function packageHash(pkg: MapPackage): string {
 }
 
 // What a package holds, for the import preview and the manifest.
+/** The package's root subjects (no parent), in order. */
+export const packageRoots = (pkg: MapPackage): PackageSubject[] => pkg.subjects.filter(s => s.parentRef === null);
+
 export function packageCounts(pkg: MapPackage) {
   return { subjects: pkg.subjects.length, topics: pkg.topics.length, notes: pkg.notes.length, resources: pkg.resources.length, excluded: pkg.excluded };
 }

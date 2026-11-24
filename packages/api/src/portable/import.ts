@@ -1,9 +1,11 @@
 // ─── Importing a .kivo file: an independent copy, made by the map's own writers
 // Nothing here writes a subject, topic or note directly. The subject tree is
 // made with setup-edit's applyStudyEdits (versioned, all or nothing per batch
-// of up to STUDY_EDITS_MAX edits), notes with notes.ts createNote. The only
-// table this file writes is NovaImportJob, which records how far an import
-// got, so that:
+// of up to STUDY_EDITS_MAX edits), notes with notes.ts createNote, links as
+// saved pages with learning-events.ts importSavedLink (filed under the same
+// subject and topic as in the map; before 25 Nov they were only a list in the
+// "About this map" note, founder review #15). The only table this file writes
+// is NovaImportJob, which records how far an import got, so that:
 //   - one package is imported once per learner (unique profile + packageId);
 //   - a stopped import resumes and makes nothing twice (each stage checks what
 //     is already there before it adds);
@@ -17,11 +19,13 @@
 import { prisma } from "@repo/db/client";
 import { applyStudyEdits, loadStudyStructure, subjectName } from "../nova/product/setup-edit";
 import { createNote } from "../nova/product/notes";
+import { importSavedLink, linksByClientIds, type ImportedLinkOutcome } from "../nova/product/learning-events";
+import { createHash } from "node:crypto";
 import { STUDY_EDITS_MAX, SUBJECT_DEPTH_MAX, SUBJECT_NAME_MAX, TOPIC_NAME_MAX, type StudyEdit, type StudyStructure } from "../nova/product/setup-edit.types";
 import { TOPIC_DEPTH_MAX } from "../nova/product/topic-tree";
 import { normalizeTopicName } from "../nova/engines/topic-mastery-engine";
 import { unpackArchive, type UnpackFailure } from "./kivo-archive";
-import { validatePackage, type MapPackage } from "./map-package";
+import { packageRoots, validatePackage, type MapPackage } from "./map-package";
 
 const NAMES_PER_EDIT = 100;
 const LEASE_MS = 2 * 60_000;
@@ -32,9 +36,18 @@ const topicNameOf = (raw: string) => normalizeTopicName(raw).slice(0, TOPIC_NAME
 export interface ImportProgress {
   subjectNames: Record<string, string>;   // package subject ref → the name it gets here
   notesDone: string[];                    // package note refs already created
+  // Package resource ref → what happened to it (absent: not yet done). Jobs
+  // started before the links stage existed have none and run it on resume.
+  links?: Record<string, ImportedLinkOutcome>;
   aboutNoteId: string | null;
-  counts?: { subjects: number; topics: number; notes: number };
+  rootSubjectIds?: string[];
+  counts?: ImportCounts;
 }
+export interface ImportCounts { subjects: number; topics: number; notes: number; links?: number; linksAlreadySaved?: number }
+
+// The saved page made from one link of one package: the same id every run, so
+// a resumed or repeated import makes it once (unique per learner).
+export const linkClientId = (packageId: string, ref: string) => `kivo-${createHash("sha256").update(`${packageId}:${ref}`).digest("hex").slice(0, 40)}`;
 
 // ── Checks a package must pass before anything is made ──
 export type ImportCheck = { ok: true } | { ok: false; reason: "too_deep" | "name_too_long"; detail: string };
@@ -107,7 +120,7 @@ export function missingEdits(pkg: MapPackage, names: Record<string, string>, str
 
 // Read back: every subject in place under its parent, every topic under its
 // subject and parent. Pure.
-export function verifyStructure(pkg: MapPackage, names: Record<string, string>, structure: StudyStructure): { ok: true; rootSubjectId: string } | { ok: false; detail: string } {
+export function verifyStructure(pkg: MapPackage, names: Record<string, string>, structure: StudyStructure): { ok: true; rootSubjectId: string; rootSubjectIds: string[] } | { ok: false; detail: string } {
   const byName = new Map(structure.subjects.map(s => [key(s.name), s]));
   for (const s of pkg.subjects) {
     const here = byName.get(key(names[s.ref]!));
@@ -123,12 +136,40 @@ export function verifyStructure(pkg: MapPackage, names: Record<string, string>, 
     const parent = t.parentRef ? subject.topics.find(x => key(x.name) === key(tName.get(t.parentRef!)!)) : null;
     if ((topic.parentId ?? null) !== (parent?.id ?? null)) return { ok: false, detail: `topic ${t.ref} not under its parent` };
   }
-  const root = pkg.subjects.find(s => !s.parentRef)!;
-  return { ok: true, rootSubjectId: byName.get(key(names[root.ref]!))!.id };
+  const rootSubjectIds = packageRoots(pkg).map(r => byName.get(key(names[r.ref]!))!.id);
+  return { ok: true, rootSubjectId: rootSubjectIds[0]!, rootSubjectIds };
 }
 
-// The provenance note at the root: where the map came from, its licence, what
-// was not carried, and its links (format 1 carries links as a list here).
+// Read back: every link saved here is a saved page filed under its subject and
+// topic as in the map. A link the learner had already saved and filed
+// elsewhere is theirs and is not moved (outcome "already_saved"). Pure.
+export function verifyLinks(
+  pkg: MapPackage, names: Record<string, string>, structure: StudyStructure, packageId: string,
+  outcomes: Record<string, ImportedLinkOutcome>, rows: Array<{ clientEventId: string; subjectId: string | null; topicName: string | null }>,
+): { ok: true; saved: number; alreadySaved: number } | { ok: false; detail: string } {
+  const byName = new Map(structure.subjects.map(s => [key(s.name), s]));
+  const byClient = new Map(rows.map(r => [r.clientEventId, r]));
+  let saved = 0, alreadySaved = 0;
+  for (const r of pkg.resources) {
+    if (!r.subjectRef) continue;
+    const outcome = outcomes[r.ref];
+    if (!outcome) return { ok: false, detail: `link ${r.ref} not done` };
+    if (outcome === "already_saved") { alreadySaved += 1; continue; }
+    if (outcome === "filed_existing") { saved += 1; continue; }
+    if (outcome === "invalid") return { ok: false, detail: `link ${r.ref} invalid` };
+    const row = byClient.get(linkClientId(packageId, r.ref));
+    if (!row) return { ok: false, detail: `link ${r.ref} missing` };
+    const subject = byName.get(key(names[r.subjectRef]!));
+    if (!subject || row.subjectId !== subject.id) return { ok: false, detail: `link ${r.ref} not under its subject` };
+    if ((r.topicName ? key(r.topicName) : null) !== (row.topicName ? key(row.topicName) : null)) return { ok: false, detail: `link ${r.ref} not under its topic` };
+    saved += 1;
+  }
+  return { ok: true, saved, alreadySaved };
+}
+
+// The provenance note at the root (or, for a whole map with several roots,
+// filed nowhere): where the map came from, its licence, what was not carried,
+// and its links as a list (each is also a saved page of its own).
 export function aboutNoteBody(pkg: MapPackage, names: Record<string, string>, importedAt: Date): string {
   const lic: Record<string, string> = {
     "all-rights-reserved": "All rights reserved by the creator. For your own study; don't redistribute it.",
@@ -157,7 +198,7 @@ export function aboutNoteBody(pkg: MapPackage, names: Record<string, string>, im
   ].filter(Boolean);
   lines.push("", `Not included: ${left.join("; ")}.`);
   if (pkg.resources.length > 0) {
-    lines.push("", "## Resources");
+    lines.push("", "## Links in this map", "", "Each one is also in your Saved pages, filed under its subject and topic.");
     const bySubject = new Map<string, typeof pkg.resources>();
     for (const r of pkg.resources) { const k = r.subjectRef ?? ""; bySubject.set(k, [...(bySubject.get(k) ?? []), r]); }
     for (const [ref, rs] of bySubject) {
@@ -223,7 +264,7 @@ export async function previewImport(profileId: string, bytes: Uint8Array): Promi
 
 // ── Running an import ──
 export type ImportResult =
-  | { ok: true; status: "complete"; jobId: string; rootSubjectId: string; already: boolean; counts: { subjects: number; topics: number; notes: number } }
+  | { ok: true; status: "complete"; jobId: string; rootSubjectId: string; rootSubjectIds: string[]; already: boolean; counts: ImportCounts }
   | { ok: true; status: "running"; jobId: string }
   | { ok: false; status: "failed" | "refused"; jobId?: string; reason: string; message: string };
 
@@ -234,7 +275,7 @@ export async function startImport(profileId: string, bytes: Uint8Array, now = ne
   const where = { profileId_packageId: { profileId, packageId: manifest.packageId } };
   let job = await prisma.novaImportJob.findUnique({ where });
   if (job && job.packageSha256 !== sha256) return { ok: false, status: "refused", reason: "different_file", message: MESSAGES.different_file! };
-  if (job?.status === "complete") return { ok: true, status: "complete", jobId: job.id, rootSubjectId: job.rootSubjectId!, already: true, counts: (job.progress as unknown as ImportProgress).counts ?? { subjects: 0, topics: 0, notes: 0 } };
+  if (job?.status === "complete") return completed(job, true);
   if (!job) {
     const structure = await loadStudyStructure(profileId);
     const progress: ImportProgress = { subjectNames: planSubjectNames(pkg, structure.subjects.map(s => s.name)), notesDone: [], aboutNoteId: null };
@@ -260,9 +301,14 @@ export async function resumeImport(profileId: string, jobId: string, now = new D
   });
   const job = await prisma.novaImportJob.findFirst({ where: { id: jobId, profileId }, select: { id: true, status: true, rootSubjectId: true, progress: true } });
   if (!job) return { ok: false, status: "refused", reason: "not_found", message: "That import isn't yours, or no longer exists." };
-  if (job.status === "complete") return { ok: true, status: "complete", jobId, rootSubjectId: job.rootSubjectId!, already: true, counts: (job.progress as unknown as ImportProgress).counts ?? { subjects: 0, topics: 0, notes: 0 } };
+  if (job.status === "complete") return completed(job, true);
   if (claimed.count === 0) return { ok: true, status: "running", jobId };
   return runImport(jobId, profileId, now);
+}
+
+function completed(job: { id: string; rootSubjectId: string | null; progress: unknown }, already: boolean): ImportResult {
+  const progress = job.progress as ImportProgress;
+  return { ok: true, status: "complete", jobId: job.id, rootSubjectId: job.rootSubjectId!, rootSubjectIds: progress.rootSubjectIds ?? [job.rootSubjectId!], already, counts: progress.counts ?? { subjects: 0, topics: 0, notes: 0 } };
 }
 
 async function save(jobId: string, data: Record<string, unknown>) {
@@ -312,15 +358,38 @@ async function runImport(jobId: string, profileId: string, now: Date): Promise<I
         progress.notesDone = [...done];
         await save(jobId, { progress: progress as never });
       }
-      stage = "about"; await save(jobId, { stage });
+      stage = "links"; await save(jobId, { stage });
     }
 
-    // 3. Where it came from, at its root.
+    // 3. Links, each saved once as a saved page under its subject and topic.
+    if (stage === "links") {
+      const structure = await loadStudyStructure(profileId);
+      const idOf = new Map(structure.subjects.map(s => [key(s.name), s.id]));
+      const outcomes = { ...(progress.links ?? {}) };
+      const credit = [pkg.attribution.creator ? `made by ${pkg.attribution.creator}` : null, `imported ${now.toISOString().slice(0, 10)}`].filter(Boolean).join(", ");
+      for (const r of pkg.resources) {
+        if (outcomes[r.ref] || !r.subjectRef) continue;
+        const subjectId = idOf.get(key(names[r.subjectRef]!));
+        if (!subjectId) return fail(`link ${r.ref}: subject missing`, "A link in this map couldn't be saved. Nothing else was changed; you can try again.");
+        const res = await importSavedLink(profileId, {
+          clientEventId: linkClientId(job.packageId, r.ref), url: r.url, title: r.title, domain: r.domain, subjectId, topicName: r.topicName,
+          description: r.description ?? null, resourceType: r.resourceType ?? null, siteName: r.siteName ?? null,
+          provenance: `From the shared map “${pkg.title}” (${credit}).`,
+        }, now);
+        outcomes[r.ref] = res.outcome;
+        progress.links = outcomes;
+        await save(jobId, { progress: progress as never });
+      }
+      progress.links = outcomes;
+      stage = "about"; await save(jobId, { stage, progress: progress as never });
+    }
+
+    // 4. Where it came from, at its root.
     if (stage === "about") {
       if (!progress.aboutNoteId) {
         const structure = await loadStudyStructure(profileId);
-        const root = pkg.subjects.find(s => !s.parentRef)!;
-        const rootId = structure.subjects.find(s => key(s.name) === key(names[root.ref]!))?.id ?? null;
+        const roots = packageRoots(pkg);
+        const rootId = roots.length === 1 ? structure.subjects.find(s => key(s.name) === key(names[roots[0]!.ref]!))?.id ?? null : null;
         const res = await createNote(profileId, { title: `About this map: ${pkg.title}`.slice(0, 200), body: aboutNoteBody(pkg, names, now), subjectId: rootId, once: true });
         if (!res.ok) return fail(`about: ${res.error}`, "The map was made, but its source note couldn't be saved. You can try again.");
         progress.aboutNoteId = res.note.id;
@@ -329,14 +398,23 @@ async function runImport(jobId: string, profileId: string, now: Date): Promise<I
       stage = "verify"; await save(jobId, { stage });
     }
 
-    // 4. Read it back before saying it worked.
+    // 5. Read it back before saying it worked.
     const structure = await loadStudyStructure(profileId);
     const v = verifyStructure(pkg, names, structure);
     if (!v.ok) return fail(`verify: ${v.detail}`, "The map was made but doesn't match the file. You can try again.");
     if (progress.notesDone.length !== pkg.notes.length) return fail("verify: notes", "Not every note was saved. You can try again.");
-    progress.counts = { subjects: pkg.subjects.length, topics: pkg.topics.length, notes: pkg.notes.length };
+    const filed = pkg.resources.filter(r => r.subjectRef);
+    const rows = await linksByClientIds(profileId, filed.map(r => linkClientId(job.packageId, r.ref)));
+    const l = verifyLinks(pkg, names, structure, job.packageId, progress.links ?? {}, rows);
+    if (!l.ok) {
+      // A link not done yet (a job that reached here before the links stage existed): do it now.
+      if (/not done/.test(l.detail)) { await save(jobId, { stage: "links", status: "running" }); return runImport(jobId, profileId, now); }
+      return fail(`verify: ${l.detail}`, "The map was made but a link doesn't match the file. You can try again.");
+    }
+    progress.rootSubjectIds = v.rootSubjectIds;
+    progress.counts = { subjects: pkg.subjects.length, topics: pkg.topics.length, notes: pkg.notes.length, links: l.saved, linksAlreadySaved: l.alreadySaved };
     await save(jobId, { status: "complete", stage: "done", pkg: null as never, progress: progress as never, rootSubjectId: v.rootSubjectId, completedAt: new Date(), error: null });
-    return { ok: true, status: "complete", jobId, rootSubjectId: v.rootSubjectId, already: false, counts: progress.counts };
+    return { ok: true, status: "complete", jobId, rootSubjectId: v.rootSubjectId, rootSubjectIds: v.rootSubjectIds, already: false, counts: progress.counts };
   } catch (err) {
     return fail(`error: ${(err as Error).name}: ${(err as Error).message}`, "The import stopped. Nothing was lost; you can try again and it continues where it stopped.");
   }

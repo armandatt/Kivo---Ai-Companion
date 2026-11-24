@@ -82,8 +82,9 @@ provenance.json          creator, source, license, exportedAt, packageId, import
   - **Stages:**
     1. **structure:** `missingEdits` → `applyStudyEdits`, in batches of up to 60, re-reading the structure each pass, so maps larger than one batch work and a resumed import adds only what is missing.
     2. **notes:** `createNote` once per note, with each done note recorded on the job.
-    3. **about:** one "About this map" note at the root, holding the title, creator, source, licence, dates, package id, what was left out, and the links as a list.
-    4. **verify:** every subject under its parent, every topic under its subject and parent, every note made.
+    3. **links** (25 Nov, founder review #15): each link becomes a saved page of the importer's, filed under the same subject and topic, through `learning-events.ts importSavedLink`. `source: "kivo_import"`; its note says which map it came from; `clientEventId` is `linkClientId(packageId, ref)`, so a resumed or repeated import makes each once. A page the importer already saved is not duplicated and keeps their filing (one they had filed nowhere is filed here). No processing is queued (no model calls). Each link's outcome is recorded on the job (`progress.links`).
+    4. **about:** one "About this map" note at the root (filed nowhere for a whole map with several roots), holding the title, creator, source, licence, dates, package id, what was left out, and the links as a list.
+    5. **verify:** every subject under its parent, every topic under its subject and parent, every note made, every link a saved page under its subject and topic (`verifyLinks`). A job from before the links stage (no `progress.links`) is sent back through it.
   - Only after `verify` passes is the job `complete`. The stored package is then cleared.
   - **One run at a time.** A run claims the job; a stopped run can be taken over after 2 minutes, or at once if it failed.
   - **What it touches:** only the importer's account. No model call. No storage use: format 1 has no images.
@@ -97,13 +98,17 @@ provenance.json          creator, source, license, exportedAt, packageId, import
   - **Export:** choose a subject → tick notes → links on or off → licence → credit → download.
 - **Tests:**
   - `portable/__tests__/kivo-archive.test.ts` (9): format, ZIP Slip, zip bombs, tampering, inventory, versions.
-  - `portable/__integration__/kivo-portable.itest.ts` (5, real Postgres):
+  - `portable/__integration__/kivo-portable.itest.ts` (9, real Postgres; the four added 25 Nov cover links and whole maps):
     - export reads only and leaks no ids or private text; another learner can't export;
     - the import makes new ids with nesting and filing intact, keeps provenance, and leaves the source untouched;
     - importing again makes nothing; editing or deleting the copy leaves the source alone;
     - a tampered file makes nothing;
     - resume after a stop creates nothing twice, and a stranger can't resume someone else's job;
-    - 70 units and 210 topics import over several batches.
+    - 70 units and 210 topics import over several batches;
+    - links filed under different topics (and a subject inside a subject) arrive as saved pages in exactly those places, with provenance; the source is unchanged; importing again makes nothing;
+    - an import stopped among the links resumes and makes each once; a job from before the links stage gets its links;
+    - a page the importer already saved is neither duplicated nor moved;
+    - a whole map with two top-level subjects, one clashing with the importer's own, imports as independent copies.
 
 ## Production rollout
 
@@ -132,10 +137,19 @@ The platform is ready. The package itself needs the approved third-year B.Tech C
 4. Check what it holds, then choose **Import into my Kivo**.
 5. Choose **Open the map**. It's your own copy: rename, add, delete; nothing you do changes anyone else's.
 
-## Limits of format 1
+## Format 2: the whole map (`kivo.map/2`, 25 Nov, founder review #12)
+
+- **Why a new version.** Format 1 holds exactly one root subject, and a learner's map usually has several top-level subjects. Wrapping them in an invented root would put a subject in the importer's map that the creator never made, so format 2 instead allows **one or more** subjects with no parent. Everything else (refs, topics, notes, links, attribution, licence, limits, archive checks) is format 1's.
+- **Which one is written.** Exporting one subject still writes format 1, so those files open in any Kivo. Only "Whole map" (`rootSubjectId: "map"`) writes format 2; an older Kivo refuses it as `unsupported_version` ("made by a newer version of Kivo").
+- **Reading.** `validatePackage` and `unpackArchive` accept both; the manifest's `mapFormat` must equal the graph's `format`. Format 1 still refuses a second root.
+- **Links in both formats** may carry `description`, `resourceType` and `siteName` (optional; older files have none); unknown fields are dropped on read.
+- **Import.** Every root is planned for a clash-free name, made, and read back; the job's `rootSubjectId` is the first root and `progress.rootSubjectIds` lists all of them. A whole map opens on the map's top level.
+- **Tests:** `portable/__tests__/whole-map.test.ts` (12) and the itest's whole-map case.
+
+## Limits of formats 1 and 2
 
 - Note images and PDFs are not carried. Each image is replaced in the note by a line saying so.
-- Saved pages travel as links in the source note, not as saved-page entries.
 - Topic explanations (details) are not carried.
+- At most 500 links per file (`PACKAGE_LIMITS.resources`); the export preview says how many are left out (`linksLeftOut`) instead of dropping them silently.
 
 `kivo.archive/2` adds `resources/` with the same inventory and checks.

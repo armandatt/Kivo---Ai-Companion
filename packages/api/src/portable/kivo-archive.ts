@@ -15,7 +15,7 @@
 
 import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped } from "fflate";
 import { createHash, randomUUID } from "node:crypto";
-import { MAP_FORMAT, PACKAGE_LIMITS, validatePackage, type MapPackage } from "./map-package";
+import { MAP_FORMATS, PACKAGE_LIMITS, validatePackage, type MapFormat, type MapPackage } from "./map-package";
 
 export const ARCHIVE_FORMAT = "kivo.archive/1";
 export const KIVO_EXTENSION = ".kivo";
@@ -35,7 +35,7 @@ const ALLOWED = /^(manifest\.json|graph\.json|provenance\.json|content\/notes\/n
 export interface ManifestEntry { path: string; bytes: number; type: string; sha256: string }
 export interface Manifest {
   format:     typeof ARCHIVE_FORMAT;
-  mapFormat:  typeof MAP_FORMAT;
+  mapFormat:  MapFormat;
   packageId:  string;
   createdAt:  string;
   title:      string;
@@ -67,7 +67,7 @@ export function packArchive(pkg: MapPackage, opts: { packageId?: string; now?: D
   for (const n of notes) files[`content/notes/${n.ref}.md`] = { data: strToU8(n.body), type: "text/markdown" };
 
   const manifest: Manifest = {
-    format: ARCHIVE_FORMAT, mapFormat: MAP_FORMAT, packageId, createdAt, title: pkg.title,
+    format: ARCHIVE_FORMAT, mapFormat: pkg.format, packageId, createdAt, title: pkg.title,
     counts: { subjects: pkg.subjects.length, topics: pkg.topics.length, notes: notes.length, resources: pkg.resources.length, edges: edgeCount(pkg), nestedSubjects: pkg.subjects.filter(s => s.parentRef).length },
     files: Object.entries(files).map(([path, f]) => ({ path, bytes: f.data.length, type: f.type, sha256: sha(f.data) })),
   };
@@ -132,7 +132,7 @@ export function unpackArchive(bytes: Uint8Array): UnpackResult {
   const manifest = json("manifest.json") as Manifest | undefined | null;
   if (manifest === undefined) return { ok: false, reason: "missing_manifest" };
   if (!manifest || typeof manifest !== "object" || !Array.isArray(manifest.files)) return { ok: false, reason: "bad_manifest" };
-  if (manifest.format !== ARCHIVE_FORMAT || manifest.mapFormat !== MAP_FORMAT) return { ok: false, reason: "unsupported_version", detail: `${String(manifest.format)} / ${String(manifest.mapFormat)}` };
+  if (manifest.format !== ARCHIVE_FORMAT || !(MAP_FORMATS as readonly unknown[]).includes(manifest.mapFormat)) return { ok: false, reason: "unsupported_version", detail: `${String(manifest.format)} / ${String(manifest.mapFormat)}` };
   if (typeof manifest.packageId !== "string" || !/^[0-9a-f-]{36}$/i.test(manifest.packageId)) return { ok: false, reason: "bad_manifest", detail: "packageId" };
 
   // Every listed file is present with its checksum, and nothing else is there.
@@ -157,5 +157,7 @@ export function unpackArchive(bytes: Uint8Array): UnpackResult {
   }
   const checked = validatePackage({ ...graph, notes });
   if (!checked.ok) return { ok: false, reason: "bad_graph", detail: checked.reason };
+  // The graph and the manifest name the same format: a file can't say one and be the other.
+  if (checked.pkg.format !== manifest.mapFormat) return { ok: false, reason: "bad_manifest", detail: "mapFormat" };
   return { ok: true, pkg: checked.pkg, manifest, sha256: sha(bytes) };
 }
