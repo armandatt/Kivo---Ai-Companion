@@ -10,6 +10,7 @@
 // does today; where something is not finished (the extension's store
 // listing), it says so.
 
+import { PLANS, formatPrice } from '@repo/api/billing/plans'
 import type { ReactNode } from 'react'
 import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Puzzle, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
@@ -363,6 +364,55 @@ export function UseCases() {
               </div>
             ))}
           </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+// ── What one subscription brings together (founder review #06) ──────────────
+// Each line is something Kivo does today, and "instead of" names the kind of
+// tool it stands in for, never a product or a price: competitors' prices are
+// USD-only, change often, and some are free for students (research and dates:
+// docs/LANDING_VALUE_RESEARCH.md), so no saving is claimed. The price and what
+// Plus adds come from plans.ts, as on the pricing table.
+export const VALUE_ITEMS: Array<{ title: string; body: string; instead: string }> = [
+  { title: 'Knowledge Map', body: 'Every subject, topic, note and saved page on one map, joined the way you filed them.', instead: 'a separate mind-map app' },
+  { title: 'Notes that connect', body: 'Markdown notes with maths, [[links]], PDFs side by side and a tutor beside the page.', instead: 'a separate notes app' },
+  { title: 'Nova, your mentor', body: 'Plans your day around your exams and time, on the web and on Telegram.', instead: 'a planner and reminders' },
+  { title: 'Browser extension', body: 'Save pages and passages while you read, and file them under your topics.', instead: 'a read-later app' },
+  { title: 'Focus room', body: 'Timed sessions with a scene and a sound, counted towards what you studied.', instead: 'a focus timer' },
+  { title: 'Claude and ChatGPT', body: 'Connect your assistant to your notes and map, so its answers start from your material.', instead: 'copy-pasting notes into chats' },
+  { title: 'Progress and Learning DNA', body: 'How you study, from your own sessions, on every plan.', instead: 'a spreadsheet you never keep' },
+]
+
+export function ValueSection() {
+  const plus = PLANS.plus_monthly
+  const price = formatPrice(plus)
+  const onSale = plus.enabled
+  return (
+    <section id="value" aria-labelledby="value-title" className={SECTION} data-value-section>
+      <div className="relative mx-auto max-w-6xl space-y-12">
+        <Intro id="value" eyebrow="One place for a whole semester" title={`Everything you study with, for ${price} a month.`}>
+          Kivo puts the map, the notes, the planning, the reading and your AI assistant in one place that knows what you are studying. Free covers all of it with smaller allowances; Plus is for using it every day.
+        </Intro>
+        <Reveal>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {VALUE_ITEMS.map(v => (
+              <li key={v.title} className="rounded-2xl border border-white/8 bg-white/[0.02] p-5">
+                <p className="text-sm font-semibold text-slate-100">{v.title}</p>
+                <p className="mt-1.5 text-sm leading-relaxed text-slate-400">{v.body}</p>
+                <p className="mt-3 text-xs text-slate-500">Instead of {v.instead}</p>
+              </li>
+            ))}
+            <li className="rounded-2xl border border-[#00E5A0]/30 bg-[#00E5A0]/[0.05] p-5 sm:col-span-2 lg:col-span-2" data-value-plus>
+              <p className="text-sm font-semibold text-slate-100">What {price} a month adds{onSale ? '' : ' (coming soon)'}</p>
+              <ul className="mt-2 grid gap-1.5 text-sm text-slate-300 sm:grid-cols-2">
+                {plus.features.filter(f => f !== 'Everything in Free').map(f => <li key={f} className="flex gap-2"><span aria-hidden className="text-[#00E5A0]">+</span>{f}</li>)}
+              </ul>
+              <p className="mt-3 text-xs text-slate-500">Charged in Indian rupees. Fair use is fair use: no plan is unlimited. <a href="#pricing" className="underline underline-offset-2 hover:text-slate-300">Compare plans</a></p>
+            </li>
+          </ul>
         </Reveal>
       </div>
     </section>

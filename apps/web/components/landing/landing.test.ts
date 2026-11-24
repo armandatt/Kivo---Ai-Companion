@@ -168,3 +168,13 @@ test('the extension preview uses the popup’s own words, keeps only what it rea
   assert.doesNotMatch(sections, /chromewebstore/)
   assert.match(web('components/extension/store-button.tsx'), /href=\{url\} target="_blank" rel="noopener noreferrer"/)
 })
+
+// Founder review #06: the value section claims no saving and names no competitor price.
+test('the value section takes its price from plans.ts and claims no saving', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('./sections.tsx', import.meta.url), 'utf8')
+  const part = src.slice(src.indexOf('export const VALUE_ITEMS'))
+  assert.match(part, /formatPrice\(plus\)/)
+  assert.doesNotMatch(part, /₹\s*\d|\$\s*\d/, 'no hard-coded prices')
+  assert.doesNotMatch(part, /save ₹|you save|saving of|unlimited access|Notion|Readwise|Xmind|Obsidian/i)
+})
