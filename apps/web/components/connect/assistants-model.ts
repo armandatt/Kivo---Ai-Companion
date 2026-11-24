@@ -8,26 +8,40 @@ export interface Assistant {
   id: AssistantId
   name: string
   mark: string               // a letter mark, not a brand logo
-  // Where its connector settings are. Opened in a new tab by the learner.
+  // Where its connector settings are, as the assistant's own documentation
+  // gives it (founder review #17, checked 25 Nov 2026). Neither Claude nor
+  // ChatGPT documents a link that opens the add-connector form or fills in
+  // the address, so this opens the nearest page and the steps say the rest.
+  // Never add query parameters here that the vendor does not document.
   settingsUrl: string
+  docsUrl: string            // the vendor's own instructions
   // The three moves, as short as they can be said.
   add: string                // what to press there
   paste: string              // where the address goes
   allow: string
+  // The clicks on the assistant's page, in order, for when its screens differ.
+  path: string[]
+  planNote: string
   tryPrompts: string[]
 }
 
 export const ASSISTANTS: readonly Assistant[] = [
   {
     id: 'claude', name: 'Claude', mark: 'C',
-    settingsUrl: 'https://claude.ai/settings/connectors',
-    add: 'Add custom connector', paste: 'connector link', allow: 'Tap Connect in Claude, then Allow on Kivo',
+    settingsUrl: 'https://claude.ai/customize/connectors',
+    docsUrl: 'https://claude.com/docs/connectors/custom/add-unlisted',
+    add: 'Open Claude connectors', paste: 'MCP server URL', allow: 'Connect in Claude, then Allow on Kivo',
+    path: ['Add', 'Add custom connector', 'Name: Kivo', 'Paste the link as the MCP server URL', 'Continue, then Add', 'Connect, then Allow on Kivo'],
+    planNote: 'Works on every Claude plan; Free allows one custom connector. On Team and Enterprise an Owner adds it first.',
     tryPrompts: ['What have I added to Kivo recently?', 'Save this conversation as a note in Kivo', 'Add these topics to my Knowledge Map'],
   },
   {
     id: 'chatgpt', name: 'ChatGPT', mark: 'G',
-    settingsUrl: 'https://chatgpt.com/#settings/Connectors',
-    add: 'Developer mode → Create', paste: 'MCP server link, sign-in: OAuth', allow: 'Tap Connect in ChatGPT, then Allow on Kivo',
+    settingsUrl: 'https://chatgpt.com/plugins',
+    docsUrl: 'https://developers.openai.com/api/docs/guides/custom-mcp-server',
+    add: 'Open ChatGPT plugins', paste: 'Server URL, with OAuth', allow: 'Install it in ChatGPT, then Allow on Kivo',
+    path: ['+ (add)', 'Add custom MCP server', 'Name: Kivo', 'Paste the link as the Server URL', 'Authentication: OAuth', 'Create as a plugin, then Install', 'Allow on Kivo'],
+    planNote: 'Custom MCP servers are a ChatGPT web feature; which plans and workspaces allow them is up to OpenAI.',
     tryPrompts: ['Search my Kivo notes for deadlocks', 'Turn this chat into a Kivo note', 'What’s on my Knowledge Map for OS?'],
   },
 ]
