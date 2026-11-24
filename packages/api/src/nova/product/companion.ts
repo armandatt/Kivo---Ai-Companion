@@ -40,6 +40,8 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   // The browser extension: connecting it, and the pages saved with it (the
   // route stays /saved, so old links keep working).
   { path: "/saved",   label: "Browser Extension" },
+  // Kivo inside Claude and ChatGPT (Kivo Connect): connect and disconnect.
+  { path: "/assistants", label: "AI Assistants" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/progress", label: "Progress" },
