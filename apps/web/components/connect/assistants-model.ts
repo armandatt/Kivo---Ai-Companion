@@ -38,7 +38,7 @@ export const ASSISTANTS: readonly Assistant[] = [
   {
     id: 'chatgpt', name: 'ChatGPT', mark: 'G',
     settingsUrl: 'https://chatgpt.com/plugins',
-    docsUrl: 'https://developers.openai.com/api/docs/guides/developer-mode',
+    docsUrl: 'https://developers.openai.com/api/docs/guides/custom-mcp-server',
     add: 'Open ChatGPT plugins', paste: 'Server URL, with OAuth', allow: 'Install it in ChatGPT, then Allow on Kivo',
     path: ['+ (add)', 'Add custom MCP server', 'Name: Kivo', 'Paste the link as the Server URL', 'Authentication: OAuth', 'Create as a plugin, then Install', 'Allow on Kivo'],
     planNote: 'Custom MCP servers are a ChatGPT web feature; which plans and workspaces allow them is up to OpenAI.',

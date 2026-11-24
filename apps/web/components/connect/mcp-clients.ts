@@ -13,7 +13,7 @@ export const MCP_URL = 'https://www.thekivo.in/api/mcp'
 // recording of adding Kivo in Claude or ChatGPT, signing in, allowing, a read
 // and a write that reaches Kivo. None exists yet (it needs the owner's own
 // Claude or ChatGPT account), so none is shown: never put another video here.
-// When recorded: public/connect/kivo-connect-demo.{webm,png,vtt}, then set this.
+// What to record and how to add it: docs/KIVO_CONNECT_VIDEO.md.
 export const CONNECT_VIDEO: import('@/components/media/demo-video').DemoVideoSource | null = null
 
 export interface McpClient {
@@ -50,7 +50,7 @@ export const MCP_CLIENTS: McpClient[] = [
       'Sign in to Kivo if asked, and choose Allow.',
       'In a conversation, type @ and choose Kivo.',
     ],
-    note: 'Which ChatGPT plans and workspaces may add custom MCP servers is up to OpenAI, and its menu names change from time to time; the steps on Kivo’s side stay the same. OpenAI’s own guide: developers.openai.com/api/docs/guides/developer-mode.',
+    note: 'Which ChatGPT plans and workspaces may add custom MCP servers is up to OpenAI, and its menu names change from time to time; the steps on Kivo’s side stay the same. OpenAI’s own guide: developers.openai.com/api/docs/guides/custom-mcp-server.',
   },
   {
     id: 'other', name: 'Other MCP clients', status: 'untested',

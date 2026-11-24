@@ -81,6 +81,8 @@ export default function KivoConnectDocs() {
             ["It writes", "New notes and additions to notes, new subjects and topics, links between notes and topics, and saved web pages filed under a topic. Each change is read back and reported."],
             ["You approve the big changes", "Deleting, moving, renaming or refiling, and anything touching more than 12 items, waits for you: the assistant gives you a link, you see each change by name in Kivo, and choose Approve or Decline."],
             ["It all lands in your Kivo", "What it saves is ordinary Kivo notes, topics and saved pages: on your Knowledge Map, in Notes and in search, yours to edit like anything you write."],
+            ["You choose what it may do", "Connecting opens a Kivo page (OAuth sign-in) that names the assistant and lists each permission it asks for. Nothing is shared until you choose Allow, and it gets only the tools those permissions cover."],
+            ["You can take it back", "Settings › AI assistants (or AI Assistants in the sidebar) lists every connected assistant with its permissions and last use. Disconnect ends its access at once; an unused connection lapses after 30 days."],
           ].map(([t, d]) => (
             <div key={t} className="rounded-xl border border-white/8 bg-card/60 p-4">
               <p className="text-sm font-semibold text-foreground">{t}</p>
