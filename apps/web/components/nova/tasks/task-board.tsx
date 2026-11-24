@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ListTree, Plus } from 'lucide-react'
 import { subtreeOf } from '@repo/api/nova/product/task-tree'
 import {
@@ -20,6 +20,13 @@ type Props = {
   onDelete: (id: string) => Promise<boolean>
   // The learner's own order for an open column (POST /api/nova/tasks/order).
   onReorder?: (status: 'todo' | 'in_progress', ids: string[]) => Promise<boolean>
+  // Optional, for a board shown inside a page (Today): a line on a card (who
+  // added it), an action under it ("Add to today"), the empty columns' words,
+  // and the due day a new task gets.
+  cardBadge?:  (task: NovaTaskItem) => ReactNode
+  cardAction?: (task: NovaTaskItem) => ReactNode
+  empty?:      Partial<Record<TaskStatus, string>>
+  newTaskDueDay?: string
 }
 
 const EMPTY: Record<TaskStatus, string> = {
@@ -50,8 +57,10 @@ function Steps({ parent, all, onOpen, onToggle }: { parent: string; all: NovaTas
   )
 }
 
-function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, onShift, dragging, onDragStart, onDragEnd }: {
+function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, onShift, dragging, onDragStart, onDragEnd, badge, action }: {
   task: NovaTaskItem
+  badge?: ReactNode
+  action?: ReactNode
   // Every task on the board, for this one's steps.
   all: NovaTaskItem[]
   onOpen: () => void
@@ -84,6 +93,7 @@ function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, 
       data-task={task.id}
     >
       <button type="button" onClick={onOpen} className="block w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 rounded-lg">
+        {badge}
         <span className={`block text-sm font-medium leading-snug ${task.status === 'done' ? 'text-foreground/50 line-through decoration-foreground/25' : 'text-foreground'}`}>{task.title}</span>
         {where && <span className="mt-1 block truncate text-xs text-foreground/50">{where}</span>}
         {(due || task.priority || task.estimatedMinutes) && (
@@ -107,6 +117,7 @@ function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, 
             className="h-7 w-full rounded-lg border border-dashed border-white/10 bg-transparent px-2 text-[11px] text-foreground outline-none placeholder:text-foreground/35 focus:border-keppel-400/60" />
         </form>
       )}
+      {action && <div className="mt-2">{action}</div>}
       {/* Moving without dragging: for touch screens and the keyboard. */}
       <div className="mt-2.5 flex items-center justify-between border-t border-white/6 pt-2">
         <button type="button" disabled={!prev} onClick={() => prev && onMove(prev)} aria-label={prev ? `Move to ${TASK_STATUS_LABEL[prev]}` : 'First column'}
@@ -133,7 +144,7 @@ function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, 
 // The learner's tasks as a board. A column is a status; moving a card sets
 // that status on the task and nothing else. The same rows are the list on
 // Today, so what moves here has moved there.
-export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate, onDelete, onReorder }: Props) {
+export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate, onDelete, onReorder, cardBadge, cardAction, empty, newTaskDueDay }: Props) {
   const [editing, setEditing]   = useState<NovaTaskItem | null>(null)
   const [adding, setAdding]     = useState<TaskStatus | null>(null)
   const [dragged, setDragged]   = useState<string | null>(null)
@@ -179,12 +190,13 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
               </header>
 
               {column.length === 0 ? (
-                <p className="px-1.5 py-6 text-center text-xs leading-relaxed text-foreground/40">{EMPTY[status]}</p>
+                <p className="px-1.5 py-6 text-center text-xs leading-relaxed text-foreground/40">{empty?.[status] ?? EMPTY[status]}</p>
               ) : (
                 <ul className="space-y-2.5">
                   {column.map((task, i) => (
                     <Card
                       key={task.id} task={task} all={tasks}
+                      badge={cardBadge?.(task)} action={cardAction?.(task)}
                       onOpenStep={t => setEditing(t)}
                       onToggleStep={t => void onUpdate(t.id, { status: t.status === 'done' ? 'todo' : 'done' })}
                       onAddStep={title => onCreate({ title, parentId: task.id })}
@@ -213,6 +225,7 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
           task={editing}
           subjects={view.subjects}
           initialStatus={adding ?? 'todo'}
+          initialDueDay={editing ? undefined : newTaskDueDay}
           // Any task but itself and its own steps.
           parents={tasks.filter(t => !editing || !subtreeOf(tasks.map(x => ({ id: x.id, parent: x.parentId })), editing.id).includes(t.id)).map(t => ({ id: t.id, title: t.title }))}
           error={error}

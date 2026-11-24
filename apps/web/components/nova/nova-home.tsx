@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, KanbanSquare, Loader2, Plus, Sparkles, Target, Timer, Undo2, X } from 'lucide-react'
+import { AlarmClock, ChevronRight, KanbanSquare, Loader2, Plus, Sparkles, Target, Timer, Undo2, X } from 'lucide-react'
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import type { FlowItemView, FlowOp } from '@repo/api/nova/product/day-flow.types'
 import { greetingFor } from '@repo/api/nova/product/greetings'
@@ -23,6 +23,7 @@ import { Playground, type OpenProposal } from './today/playground'
 import { CopilotPanel, type CopilotHandle } from './today/copilot-panel'
 import { BOARD_ID, TodayBoard } from './today/today-board'
 import { PlannerLook } from './today/planner-look'
+import { dayTasks, dueNotPlanned, type BoardScope } from './today/day-board-model'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -65,6 +66,8 @@ export function NovaHome({ view, refreshing }: Props) {
   const [chosen, setChosen] = useState<string | null>(null)
   const [boardOpen, setBoardOpen] = useState(false)
   const [boardTask, setBoardTask] = useState<string | null>(null)
+  const [boardScope, setBoardScope] = useState<BoardScope>('today')
+  const [addingDue, setAddingDue] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [quickError, setQuickError] = useState<string | null>(null)
   const [quickSaved, setQuickSaved] = useState(false)
@@ -77,13 +80,13 @@ export function NovaHome({ view, refreshing }: Props) {
   // The board's state is in the address, so a reload or a link keeps it.
   useEffect(() => {
     const at = new URLSearchParams(window.location.search)
-    if (at.get('board') === 'open') { setBoardOpen(true); setBoardTask(at.get('task')) }
+    if (at.get('board') === 'open') { setBoardOpen(true); setBoardTask(at.get('task')); if (at.get('scope') === 'all') setBoardScope('all') }
   }, [])
   const motion = (): ScrollBehavior => (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
   const toggleBoard = (open: boolean, from: 'header' | 'board' = 'header') => {
     setBoardOpen(open)
     const url = new URL(window.location.href)
-    if (open) url.searchParams.set('board', 'open'); else { url.searchParams.delete('board'); url.searchParams.delete('task') }
+    if (open) url.searchParams.set('board', 'open'); else { url.searchParams.delete('board'); url.searchParams.delete('task'); url.searchParams.delete('scope') }
     window.history.replaceState(null, '', url)
     if (!open) setBoardTask(null)
     // Opening brings the board into view; closing from inside it goes back to
@@ -91,6 +94,14 @@ export function NovaHome({ view, refreshing }: Props) {
     if (open) window.setTimeout(() => document.getElementById(BOARD_ID)?.scrollIntoView({ block: 'start', behavior: motion() }), 0)
     else if (from === 'board') { boardToggle.current?.scrollIntoView({ block: 'nearest', behavior: motion() }); boardToggle.current?.focus({ preventScroll: true }) }
   }
+  // Which tasks the board shows: today's plan (the default) or all of them.
+  const chooseScope = (scope: BoardScope) => {
+    setBoardScope(scope)
+    const url = new URL(window.location.href)
+    if (scope === 'all') url.searchParams.set('scope', 'all'); else url.searchParams.delete('scope')
+    window.history.replaceState(null, '', url)
+  }
+  const openBoard = (scope: BoardScope) => { chooseScope(scope); if (!boardOpen) toggleBoard(true); else window.setTimeout(() => document.getElementById(BOARD_ID)?.scrollIntoView({ block: 'start', behavior: motion() }), 0) }
   const showNova = (open: boolean) => { setNovaOpen(open); try { localStorage.setItem(LAYOUT, open ? 'nova-shown' : 'nova-hidden') } catch { /* storage off */ } }
   // A session ending (here or on the focus screen) brings the flow up to date.
   useEffect(() => { if (live.ended) void day.load() }, [live.ended]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -130,14 +141,25 @@ export function NovaHome({ view, refreshing }: Props) {
     if (window.matchMedia('(min-width: 1024px)').matches) showNova(true); else setNovaOnPhone(true)
   }, [])
   const ask = useCallback((text: string) => { openNova(); nova.current?.send(text, { draftNow: text.toLowerCase().startsWith('just draft') }) }, [openNova])
+  // A task made from Add to today: due today, like one made on today's board.
   const createTask = useCallback(async (title: string) => {
-    const ok = await board.create({ title })
-    if (!ok) return null
-    const made = (await fetch('/api/nova/tasks', { cache: 'no-store' }).then(r => r.json()).catch(() => null)) as { tasks?: Array<{ id: string; title: string; createdAt: string }> } | null
-    const mine = made?.tasks?.filter(t => t.title === title).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]
+    const made = await board.createTask({ title, dueDay: day.flow?.day ?? null })
     await day.load()
-    return mine?.id ?? null
+    return made?.id ?? null
   }, [board, day])
+
+  // Open tasks due today or late that are not in today's plan: offered in one go.
+  const tasksReady = board.view?.status === 'ready'
+  const dueOutside = useMemo(() => (tasksReady && flow ? dueNotPlanned(board.tasks, flow) : []), [tasksReady, flow, board.tasks])
+  // Open tasks in today's plan: what the Board button and the board's Today tab both count.
+  const todaysTasks = tasksReady ? board.tasks.filter(t => !t.parentId && t.status !== 'done' && dayTasks(flow).has(t.id)).length : 0
+  const addDue = useCallback(async () => {
+    if (!flow || dueOutside.length === 0) return
+    setAddingDue(true)
+    const room = Math.max(0, 30 - flow.items.length)
+    await day.ops(dueOutside.slice(0, Math.min(room, 20)).map(t => ({ op: 'add' as const, item: { kind: 'task' as const, taskId: t.id } })))
+    setAddingDue(false)
+  }, [day, flow, dueOutside])
 
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
   const starters = subject ? [`Plan time for ${subject.subjectName}`, 'Plan my day', 'Just draft something'] : ['Plan my day with Nova', 'I want to learn something new', 'I have about an hour']
@@ -164,8 +186,9 @@ export function NovaHome({ view, refreshing }: Props) {
               )}
               <button type="button" ref={boardToggle} onClick={() => toggleBoard(!boardOpen)} aria-expanded={boardOpen} aria-controls={BOARD_ID}
                 className={cn('inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm hover:bg-white/5 hover:text-foreground', boardOpen ? 'bg-white/6 text-foreground' : 'text-foreground/70')}
-                aria-label="Board" title={boardOpen ? 'Close your task board' : 'Open your task board below'} data-today-board-toggle>
+                aria-label="Today’s board" title={boardOpen ? 'Close today’s board' : 'Open today’s board: the tasks in today’s plan'} data-today-board-toggle>
                 <KanbanSquare className="size-4" /> <span className="max-sm:hidden">Board</span>
+                {todaysTasks > 0 && <span className="rounded-full bg-white/8 px-1.5 text-[11px] tabular-nums text-foreground/70">{todaysTasks}</span>}
               </button>
               <button type="button" disabled={!flow} onClick={() => setAdding(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/12 px-3 text-sm font-medium text-foreground/85 hover:bg-white/5 disabled:opacity-50" data-today-add>
                 <Plus className="size-4" /> Add myself
@@ -177,6 +200,24 @@ export function NovaHome({ view, refreshing }: Props) {
 
           {/* ── The nearest dated item, when there is one ───────────────── */}
           {view.nextDeadline && <ExamLine deadline={view.nextDeadline} />}
+
+          {/* ── Due work that is not in today's plan yet ─────────────────── */}
+          {dueOutside.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.05] px-3.5 py-2.5 text-sm" data-today-due-outside>
+              <AlarmClock aria-hidden className="size-4 shrink-0 text-rose-300" />
+              <p className="min-w-0 flex-1 text-foreground/85">
+                {dueOutside.length === 1
+                  ? <><span className="font-medium">{dueOutside[0]!.title}</span> is {dueOutside[0]!.dueInDays === 0 ? 'due today' : 'overdue'} and isn’t in today’s plan.</>
+                  : <>{dueOutside.length} tasks are due today or overdue and aren’t in today’s plan.</>}
+              </p>
+              <div className="flex gap-2">
+                <button type="button" disabled={addingDue || day.busy} onClick={() => void addDue()} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-action px-3 text-sm font-semibold text-action-foreground hover:bg-action-hover disabled:opacity-60" data-today-due-add>
+                  {addingDue ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : <Plus aria-hidden className="size-3.5" />} Add {dueOutside.length === 1 ? 'it' : 'them'} to today
+                </button>
+                <button type="button" onClick={() => openBoard('all')} className="inline-flex h-8 items-center rounded-lg border border-white/12 px-3 text-sm hover:bg-white/5" data-today-due-review>Review</button>
+              </div>
+            </div>
+          )}
 
           {/* ── Subjects: top-level only; choosing one is context ───────── */}
           {view.subjectProgress && view.subjectProgress.length > 0 && (
@@ -245,15 +286,18 @@ export function NovaHome({ view, refreshing }: Props) {
           )}
 
           {/* ── The task board, when the learner opens it ───────────────── */}
-          {boardOpen && <TodayBoard board={board} task={boardTask} onChanged={() => void day.load()} onClose={() => toggleBoard(false, 'board')} />}
+          {boardOpen && <TodayBoard board={board} flow={flow} onOps={day.ops} task={boardTask} scope={boardScope} onScope={chooseScope}
+            onPlanWithNova={() => ask('Plan my day')}
+            onChanged={() => void day.load()} onClose={() => toggleBoard(false, 'board')} />}
 
           {/* ── A step away: dates, overdue work, the week ahead ────────── */}
           <details onToggle={e => setMoreOpen(e.currentTarget.open)} className="group rounded-2xl mt-8 border border-white/8 bg-card/30 transition-colors open:bg-card/60" data-today-more>
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-foreground/75 hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <span className="flex-1">More for today <span className="font-normal text-foreground/50">· coming up, overdue work, the week ahead</span></span>
+              <span className="flex-1">More for today <span className="font-normal text-foreground/50">· every deadline, catching up, the planner’s view and the week</span></span>
               <ChevronRight aria-hidden className="size-4 text-subtle transition-transform group-open:rotate-90" />
             </summary>
-            <div className="grid gap-8 border-t border-white/6 px-4 pb-6 pt-5 lg:grid-cols-2">
+            {/* Read only when opened: closed, it fetches nothing. */}
+            {moreOpen && <div className="grid gap-8 border-t border-white/6 px-4 pb-6 pt-5 lg:grid-cols-2">
               <div className="space-y-8">
                 <Deadlines exams={view.upcoming} tasks={board.view?.status === 'ready' ? board.tasks : []} />
                 <RecoveryCard onChanged={() => { void board.refresh(); void day.load() }} />
@@ -265,8 +309,8 @@ export function NovaHome({ view, refreshing }: Props) {
                 <AccountingFor constraints={view.constraints} />
                 <p className="mt-4 text-xs text-foreground/55">How you are doing and what you know are on <Link href="/progress" className="underline">Progress</Link> and <Link href="/knowledge" className="underline">Knowledge</Link>.</p>
               </div>
-              {moreOpen && <div className="border-t border-white/6 pt-6 lg:col-span-2"><PlannerLook /></div>}
-            </div>
+              <div className="border-t border-white/6 pt-6 lg:col-span-2"><PlannerLook /></div>
+            </div>}
           </details>
           {refreshing && <p className="mt-2 text-xs text-subtle">Refreshing…</p>}
         </div>

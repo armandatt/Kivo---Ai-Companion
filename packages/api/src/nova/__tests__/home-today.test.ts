@@ -34,6 +34,16 @@ describe("Today keeps what it already did, a step away", () => {
     for (const link of ["'/planner", '"/planner']) expect(home).not.toContain(link);
     expect(home).not.toContain("<TodayTasks");
   });
+  it("the board is today's plan by default (the flow's tasks), with every task one click away", () => {
+    const board = web("components/nova/today/today-board.tsx");
+    expect(home).toContain("<TodayBoard board={board} flow={flow} onOps={day.ops}");
+    expect(home).toContain("useState<BoardScope>('today')");
+    expect(board).toContain("boardFor(scope, board.view, board.tasks, flow)");
+    expect(board).toContain("newTaskDueDay={scope === 'today' ? flow?.day : undefined}");
+  });
+  it("\"More for today\" fetches nothing until it is opened", () => {
+    expect(home).toContain("{moreOpen && <div className=\"grid gap-8");
+  });
   it("starts an item of the flow through the day's own route, and does not wait for the map", () => {
     expect(home).toContain("day.act({ action: 'start', itemId: item.id, minutes }");
     expect(home).not.toMatch(/map\.(loading|error)/);
