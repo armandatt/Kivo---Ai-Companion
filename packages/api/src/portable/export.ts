@@ -46,6 +46,28 @@ export async function previewExport(profileId: string, rootSubjectId: unknown): 
   return { ok: true, root: { id: tree[0]!.id, name: tree[0]!.name }, subjects: tree.map(s => ({ id: s.id, name: s.name, depth: s.depth })), topics, notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId })), links, limits: PACKAGE_LIMITS };
 }
 
+/**
+ * The file's name: the title as the learner wrote it ("1st year knowledge
+ * roadmap.kivo"), with only what a file system or a download header cannot
+ * carry taken out: path and reserved characters, control characters, a
+ * trailing ".kivo" typed twice. Never empty, never longer than 80 before the
+ * extension.
+ */
+export function kivoFileName(title: string): string {
+  const base = title.normalize("NFC")
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ").trim()
+    .replace(/(\.kivo)+$/i, "").replace(/^\.+/, "").trim()
+    .slice(0, 80).trim();
+  return `${base || "map"}.kivo`;
+}
+
+/** The Content-Disposition header for a download: an ASCII name for old clients, the exact one (RFC 5987) for the rest. */
+export function attachmentHeader(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
 export interface ExportInput {
   rootSubjectId: unknown; noteIds?: unknown; includeLinks?: unknown;
   title?: unknown; description?: unknown; license?: unknown; credit?: unknown; source?: unknown;
@@ -88,6 +110,5 @@ export async function exportMap(profileId: string, input: ExportInput, now = new
   // What leaves is what an import accepts: unpack it again before handing it over.
   const check = unpackArchive(bytes);
   if (!check.ok) { console.error(`[portable] export failed its own check: ${check.reason}`); return { ok: false, error: "failed", message: "The file couldn't be made. Nothing was changed; try again." }; }
-  const slug = pkg.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "map";
-  return { ok: true, bytes, filename: `${slug}.kivo`, manifest };
+  return { ok: true, bytes, filename: kivoFileName(pkg.title), manifest };
 }
