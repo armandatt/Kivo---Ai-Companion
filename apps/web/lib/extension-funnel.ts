@@ -11,6 +11,7 @@ export type FunnelEvent =
   | 'Extension sign-up opened'   // the landing page's button, before the store link is set
   | 'Extension code requested'   // Connect a browser
   | 'Extension connected'        // a browser redeemed the code shown
+  | 'Extension video opened'     // See how it works, on the Browser Extension page
 
 export type FunnelPlace = 'saved-intro' | 'saved-steps' | 'saved-faq' | 'saved-connected' | 'landing' | 'guide' | 'saved-panel'
 
