@@ -29,6 +29,10 @@ The page never decides a plan, a balance or a period. After checkout it waits fo
   A row whose limit is not enforced yet says so plainly ("Not applied yet … nothing pauses because of them"). Shadow mode never reads like a refusal.
 - **Storage** is a gauge, not a monthly allowance: it never claims to reset. A full allowance pauses new uploads; what is stored stays, opens and can be exported. Nothing is deleted.
 - **ChatGPT and Claude on Free** shows the lifetime calls ("lifetime: these calls don't reset"). After them, it shows this month's read calls and their renewal. Plus and Pro show fair use, and say that limits on very heavy or automated use still apply.
+- **Layout** (25 Nov, founder review #05): the four allowances are cards in a grid (two across from 640px, one on a phone), each with its figure, what is left, a bar, its renewal and the explanation folded. A note under them says Nova credits follow cost, not messages or words.
+- **A prompt where it helps:** a card that is running low, used up or read-only names what the next plan **on sale** gives for that allowance (`upgradeHint`), with a link to the plans; nothing when no plan is on sale or the next gives no more of it.
+- **Reads and writes** are explained apart on the ChatGPT and Claude card.
+- **Compare plans:** Free, Plus and Pro side by side from `planCatalog` (`planMatrix`), with prices from `plans.ts`, "Your plan" marked, a plan not on sale shown as coming soon, and Progress and Learning DNA "Included" on all three.
 - **Freshness:** "Updated hh:mm · Refresh". The page reads again when the tab comes back into view.
 - **Upgrade:** a comparison of "Now" against the next plan on sale, with a button only for a plan that can be bought now. Plus shows as coming soon while it is not on sale. A subscriber changes plan in Polar's portal (Manage subscription).
 - **Progress and Learning DNA are included in full on every plan.** Nothing about a person's own learning history is behind a paid plan.

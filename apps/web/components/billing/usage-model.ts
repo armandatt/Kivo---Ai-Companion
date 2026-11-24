@@ -63,6 +63,9 @@ function atLimit(enforced: boolean, mode: Allowances['mode'], rule: string): str
     : `${rule} Not applied yet: Kivo is measuring use while these limits are introduced, and nothing pauses because of them.`
 }
 
+// Reads and writes, said apart (connect/usage-class.ts decides which a tool is).
+const READS_AND_WRITES = 'A read looks at your notes, map or saved pages and changes nothing; a write creates, adds to, links, files or (with your approval) moves or deletes something.'
+
 export function usageRows(a: Allowances, o: DateOpts = {}): UsageRow[] {
   const rows: UsageRow[] = []
 
@@ -120,7 +123,7 @@ export function usageRows(a: Allowances, o: DateOpts = {}): UsageRow[] {
       key: 'mcp', name: 'ChatGPT and Claude', used: m.lifetimeUsed, limit: null,
       figure: `${n(m.lifetimeUsed)} calls so far`, left: null, pct: null, state: 'fair_use',
       renews: 'No fixed number · fair use',
-      what: 'Each time an assistant reads or changes your Kivo through the connector.',
+      what: `Each time an assistant reads or changes your Kivo through the connector. ${READS_AND_WRITES}`,
       atLimit: 'There is no monthly number on your plan. Limits on very heavy or automated use, such as many calls a minute, still apply to protect Kivo.',
     })
   } else {
@@ -133,7 +136,7 @@ export function usageRows(a: Allowances, o: DateOpts = {}): UsageRow[] {
       pct: pctOf(m.lifetimeUsed, m.lifetimeLimit),
       state: m.readOnly ? 'read_only' : stateOf(m.lifetimeUsed, m.lifetimeLimit),
       renews: 'Lifetime: these calls don’t reset',
-      what: `Each time an assistant reads or changes your Kivo through the connector. Free includes ${n(m.lifetimeLimit)} calls in total; after them, assistants can still read your Kivo, ${n(m.readOnlyLimit ?? 0)} times a month.`,
+      what: `Each time an assistant reads or changes your Kivo through the connector. Free includes ${n(m.lifetimeLimit)} calls in total; after them, assistants can still read your Kivo, ${n(m.readOnlyLimit ?? 0)} times a month. ${READS_AND_WRITES}`,
       atLimit: atLimit(a.enforced.mcp, a.mode, m.readOnly
         ? 'Changes from ChatGPT and Claude are paused. Reading still works, up to the monthly reads, and starts again each month.'
         : 'After them, changes from ChatGPT and Claude pause, and reading continues within the monthly reads.'),
@@ -153,4 +156,34 @@ export function compareLines(now: TierAllowance, next: TierAllowance): CompareLi
     { name: 'Images and attachments', now: bytes(now.storageBytes), next: bytes(next.storageBytes) },
     { name: 'ChatGPT and Claude', now: mcp(now), next: mcp(next) },
   ]
+}
+
+// ── Founder review #05: the whole matrix, and a prompt where it helps ──
+
+export interface PlanColumn { tier: Tier; name: string; price: string; onSale: boolean; current: boolean }
+// Every plan side by side, from the server's table (billing/offer.ts planCatalog).
+export function planMatrix(catalog: Record<Tier, TierAllowance>, cols: PlanColumn[]): Array<{ name: string; cells: string[] }> {
+  const mcp = (t: TierAllowance) => t.mcpLifetime === null ? 'Fair use' : `${n(t.mcpLifetime)} calls, then ${n(t.mcpReadOnly ?? 0)} reads a month`
+  const pick = (f: (t: TierAllowance) => string) => cols.map(c => f(catalog[c.tier]))
+  return [
+    { name: 'Nova credits a month', cells: pick(t => n(t.novaCredits)) },
+    { name: 'Browser-agent tasks a month', cells: pick(t => n(t.browserTasks)) },
+    { name: 'Images and attachments', cells: pick(t => bytes(t.storageBytes)) },
+    { name: 'ChatGPT and Claude', cells: pick(mcp) },
+    { name: 'Progress and Learning DNA', cells: pick(() => 'Included') },
+  ]
+}
+
+// A line under a row that is running low or used up, naming what the next
+// plan on sale gives for that allowance. Only for a plan on sale now (the
+// server's nextOffer); never when the next plan gives no more of it.
+export function upgradeHint(row: Pick<UsageRow, 'key' | 'state'>, offer: { name: string; allowance: TierAllowance } | null, now: TierAllowance | null): string | null {
+  if (!offer || (row.state !== 'low' && row.state !== 'used_up' && row.state !== 'read_only')) return null
+  const a = offer.allowance
+  switch (row.key) {
+    case 'nova': return now && a.novaCredits <= now.novaCredits ? null : `${offer.name} gives ${n(a.novaCredits)} Nova credits a month.`
+    case 'browser': return now && a.browserTasks <= now.browserTasks ? null : `${offer.name} gives ${n(a.browserTasks)} browser-agent tasks a month.`
+    case 'storage': return now && a.storageBytes <= now.storageBytes ? null : `${offer.name} gives ${bytes(a.storageBytes)} for images and attachments.`
+    case 'mcp': return a.mcpLifetime === null ? `On ${offer.name}, ChatGPT and Claude are fair use, reads and writes.` : null
+  }
 }
