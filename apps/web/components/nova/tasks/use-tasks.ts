@@ -37,14 +37,16 @@ export function useTasks() {
     if (id) setPending(p => { const rest = { ...p }; delete rest[id]; return rest })
   }, [refresh])
 
-  const create = useCallback(async (input: TaskInput): Promise<boolean> => {
+  // Makes a task and answers it as saved (its id, for adding it to today).
+  const createTask = useCallback(async (input: TaskInput): Promise<NovaTaskItem | null> => {
     setError(null)
     // One key per submission: a double click or a retry makes one task.
     const result = await send('/api/nova/tasks', 'POST', { ...input, clientKey: input.clientKey ?? `web:${crypto.randomUUID()}` })
-    if ('error' in result && !result.ok) { setError(result.message); return false }
+    if ('error' in result && !result.ok) { setError(result.message); return null }
     await settle(null)
-    return true
+    return 'task' in result && result.ok ? result.task : null
   }, [settle])
+  const create = useCallback(async (input: TaskInput): Promise<boolean> => (await createTask(input)) !== null, [createTask])
 
   const update = useCallback(async (id: string, changes: TaskInput): Promise<boolean> => {
     setError(null)
@@ -76,5 +78,5 @@ export function useTasks() {
     return !failed
   }, [settle])
 
-  return { view, tasks, loading, refreshing, loadError, error, clearError: () => setError(null), create, update, remove, refresh, reorder }
+  return { view, tasks, loading, refreshing, loadError, error, clearError: () => setError(null), create, createTask, update, remove, refresh, reorder }
 }
