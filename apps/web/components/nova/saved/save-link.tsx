@@ -97,26 +97,30 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
   }
 
   return (
-    <section className={draft ? 'rounded-2xl border border-white/8 bg-card/60 p-5 sm:p-6' : ''} data-section="save-link" data-state={draft ? 'review' : done ? 'done' : 'enter'}>
+    <section className={draft ? 'rounded-2xl border border-nova/25 bg-card/70 p-5 sm:p-6 motion-safe:animate-[subject-pop_180ms_ease-out]' : ''} data-section="save-link" data-state={draft ? 'review' : done ? 'done' : 'enter'}>
       {/* While a link is entered the field says what it is for; the heading
           shows once there is a link to review. */}
       <h2 className={draft ? 'flex items-center gap-2 text-base font-semibold text-foreground' : 'sr-only'}>
-        <Link2 className="size-4 text-keppel-300" aria-hidden /> Save a link
+        <Link2 className="size-4 text-keppel-300" aria-hidden /> Check and save
       </h2>
+      {draft && <p className="mt-1 text-sm text-foreground/55">Fix the title if you like and choose where it goes. Nothing is saved until you press Save.</p>}
 
       {!draft && (
         <form noValidate onSubmit={e => { e.preventDefault(); review(address, null) }}>
           <label htmlFor={`${id}-address`} className="sr-only">Page address</label>
           <div className="flex gap-2">
+            <span className="relative min-w-0 flex-1">
+            <Link2 aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground/40" />
             <input
               id={`${id}-address`} type="url" inputMode="url" autoComplete="off" autoCapitalize="none" spellCheck={false}
               value={address} onChange={e => { setAddress(e.target.value); setProblem(null) }}
-              placeholder="Paste a link to save it" aria-invalid={problem !== null} aria-describedby={problem ? `${id}-problem` : undefined}
-              className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-card/50 px-3 text-sm text-foreground placeholder:text-foreground/40 transition-colors hover:border-white/20 focus:border-white/30 focus:outline-none"
+              placeholder="Paste a link to save a page…" aria-invalid={problem !== null} aria-describedby={problem ? `${id}-problem` : undefined}
+              className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] pl-9 pr-3 text-sm text-foreground placeholder:text-foreground/40 transition-colors hover:border-white/20 focus:border-nova/60 focus:outline-none"
               data-link-input
             />
-            <button type="submit" className="inline-flex h-10 shrink-0 items-center justify-center rounded-lg border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:border-white/25 hover:bg-white/5 hover:text-foreground" data-link-review>
-              Review
+            </span>
+            <button type="submit" disabled={!address.trim()} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-action px-4 text-sm font-semibold text-action-foreground transition-colors hover:bg-action-hover disabled:bg-white/[0.06] disabled:font-medium disabled:text-foreground/45" data-link-review>
+              Save link
             </button>
           </div>
           {problem && <p id={`${id}-problem`} role="alert" className="mt-2 text-xs text-amber-300/90" data-link-problem>{problem}</p>}
@@ -124,8 +128,8 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
             <p role="status" className="mt-3 flex items-start gap-2 text-sm text-foreground/75" data-link-done={done.already ? 'already' : 'saved'}>
               <Check className="mt-0.5 size-4 shrink-0 text-keppel-300" aria-hidden />
               {done.already
-                ? <span>“{done.title}” was already saved, so there is still one copy. Its title and filing are now what you just set.</span>
-                : <span>Saved “{done.title}”.</span>}
+                ? <span>“{done.title}” was already saved, so you still have one copy, now with the title and place you just set.</span>
+                : <span>Saved “{done.title}”. It’s at the top of your list.</span>}
             </p>
           )}
         </form>
@@ -147,7 +151,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
             <label htmlFor={`${id}-title`} className={LABEL}>Title</label>
             <input id={`${id}-title`} ref={titleRef} value={draft.title} maxLength={EVENT_TITLE_MAX} onChange={e => setDraft({ ...draft, title: e.target.value })} className={FIELD} data-link-title />
             {draft.titleFrom === 'address' && (
-              <p className="mt-1.5 text-xs leading-relaxed text-foreground/45">Nova does not open the page, so this was read off the address. Change it to whatever helps you find it.</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-foreground/45">Kivo doesn’t open the page, so this title comes from the link. Change it to anything that helps you find it.</p>
             )}
           </div>
 
@@ -172,7 +176,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
             <button type="button" disabled={saving} onClick={() => { setDraft(null); setError(null) }} className="inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-5 text-sm text-foreground/75 transition-colors hover:bg-white/5 disabled:opacity-60">
               Cancel
             </button>
-            <p className="basis-full text-xs leading-relaxed text-foreground/45 sm:basis-auto sm:pl-2">Saving keeps the link. It does not count as studying it.</p>
+            <p className="basis-full text-xs leading-relaxed text-foreground/45 sm:basis-auto sm:pl-2">Saving keeps the link. Studying it is a separate step.</p>
           </div>
         </form>
       )}

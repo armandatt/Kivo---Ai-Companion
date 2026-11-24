@@ -2,25 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LearningResource, NovaSavedResourcesReady } from '@repo/api/nova/product/learning-events.types'
-import { BookmarkletPanel } from './bookmarklet-panel'
 import { useExtensionConnection } from './extension-panel'
-import { BrowsersPanel, ExtensionHeader, ExtensionHelp, SetupSteps } from './extension-install'
+import { ExtensionHeader, ExtensionHelp, GetStarted, OtherWays, useIntroVisibility } from './extension-install'
 import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
 import { SavedLibrary } from './saved-library'
 
-// The Browser Extension page (/saved): getting the extension, connecting it, and the learner's
-// inbox of saved pages and passages (pasted here, sent by the bookmark, or
-// sent by the extension). One page, because what the extension saves lands
-// here; the address stays /saved. A saved page is a bookmark with a subject,
-// nothing more: Nova learns nothing about the learner from it until they study it.
-//
-// Order, by what the learner needs now:
-//   not connected: header (status, Add to Chrome) → setup → saved pages → other ways → help
-//   connected:     header (status) → saved pages → browsers → other ways → help
+// The Browser Extension page (/saved). Saved pages are the page: what the
+// learner kept from the web, to find, organise and study. Around them, only
+// what is needed now:
+//   header      title, the connection (which is also where browsers are
+//               managed), and Add to Chrome while nothing is connected;
+//   start       three steps and "See how it works", until a browser is
+//               connected and a page saved (then a click away);
+//   saved pages the library, with Save a link at its top;
+//   other ways  the bookmark, folded;
+//   help        questions and what Nova keeps, folded.
+// The address stays /saved. A saved page is a bookmark with a subject: Nova
+// learns nothing about the learner from it until they study it.
 export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourcesReady; connect: boolean; onChanged: () => void }) {
   // A page the bookmark brought, read once when the screen opens.
-  // Taking it empties the address, so it is taken exactly once per visit.
   const [capture, setCapture] = useState<Capture | null>(null)
   const taken = useRef(false)
   useEffect(() => {
@@ -29,8 +30,6 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
     setCapture(takeCapture())
   }, [])
 
-  // The library reloads after a save here; what it shows is what Save a link
-  // checks for "already saved" (the server checks again).
   const [refreshKey, setRefreshKey] = useState(0)
   const [shown, setShown] = useState<LearningResource[]>(view.resources)
   const keep = useCallback((items: LearningResource[]) => setShown(items), [])
@@ -38,43 +37,31 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
 
   const connection = useExtensionConnection()
   const connected = connection.state === 'connected'
+  const intro = useIntroVisibility(connected, view.resources.length > 0 || shown.length > 0, connection.state === 'checking')
 
   // Arriving from the extension's "Get a code from Nova" (?connect): the
-  // connect controls are brought into view (and opened, once connected).
+  // connect controls are brought into view.
   const pointed = useRef(false)
   useEffect(() => {
     if (!connect || pointed.current || connection.state === 'checking') return
     pointed.current = true
-    const target = document.getElementById('connect')
-    if (target instanceof HTMLDetailsElement) target.open = true
-    target?.scrollIntoView({ block: 'start' })
-  }, [connect, connection.state])
+    if (connected) intro.show()
+    document.getElementById(connected ? 'connect' : 'get-started')?.scrollIntoView({ block: 'start' })
+  }, [connect, connection.state]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-10 pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
-      <ExtensionHeader connection={connection} />
+    <div className="mx-auto w-full max-w-6xl space-y-8 pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
+      <ExtensionHeader connection={connection} onShowIntro={intro.show} />
 
-      {!connected && connection.state !== 'checking' && <SetupSteps connection={connection} />}
-      {/* Sent here to connect (?connect) with a browser already connected: the
-          browsers come first, above the library that loads after them. */}
-      {connected && connect && <BrowsersPanel connection={connection} />}
+      {intro.shown && <GetStarted connection={connection} hasPages={shown.length > 0} dismissible={intro.dismissible} onDismiss={intro.dismiss} />}
 
       <section className="space-y-4" aria-labelledby="saved-heading">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 id="saved-heading" className="text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
-        </div>
-        <SaveLink subjects={view.subjects} resources={shown} capture={capture} onSaved={saved} />
-        <SavedLibrary refreshKey={refreshKey} onItems={keep} />
+        <SavedLibrary refreshKey={refreshKey} onItems={keep}
+          saveLink={<SaveLink subjects={view.subjects} resources={shown} capture={capture} onSaved={saved} />} />
       </section>
 
-      {connected && !connect && <BrowsersPanel connection={connection} />}
-
-      <section aria-labelledby="elsewhere-heading" className="space-y-4 border-t border-white/6 pt-8">
-        <h2 id="elsewhere-heading" className="text-base font-semibold tracking-tight text-foreground">Other ways to save</h2>
-        <BookmarkletPanel />
-      </section>
-
-      <ExtensionHelp />
+      <OtherWays />
+      <ExtensionHelp onShowIntro={intro.show} />
     </div>
   )
 }
