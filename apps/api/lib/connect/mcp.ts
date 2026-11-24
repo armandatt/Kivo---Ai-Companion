@@ -22,6 +22,12 @@ import { admitStorage, incomingBytes } from "@repo/api/billing/accounting/storag
 //@ts-ignore
 import { NOTE_IMAGE_BYTES_MAX } from "@repo/api/nova/product/note-images"
 import { CONNECT_VERSION } from "./config"
+import { randomUUID } from "node:crypto"
+//@ts-ignore
+import { acquireSlot, checkRate, readOnly, refusalMessage, type Refusal } from "@repo/api/rate-limits"
+//@ts-ignore
+import { classifyMcpCall } from "@repo/api/connect/usage-class"
+import { whoOf } from "../rate-limits"
 
 const INSTRUCTIONS = [
   "Kivo is the learner's own knowledge base: notes, subjects and topics, and a Knowledge Map of how they connect. You are reaching it on their behalf.",
@@ -75,32 +81,43 @@ export function buildServer(learner: ConnectLearner | Blocked, origin: string): 
       // items) and, enforcing, refused when the account's MCP allowance or
       // fair use says so (billing/accounting/mcp.ts). Scopes and the tool's
       // own checks still apply to every call admitted.
-      const gate = await admitMcpCall({ userId: learner.userId, grantId: learner.grantId, tool: tool.name, args })
-      if (!gate.admitted) return refusedCall(gate)
-      // Images a note write would store are admitted on the storage allowance first.
-      const storing = tool.name === "create_note" || tool.name === "update_note"
-        ? incomingBytes(args.images, NOTE_IMAGE_BYTES_MAX) + (Array.isArray(args.files) ? args.files.length * NOTE_IMAGE_BYTES_MAX : 0) : 0
-      const space = storing > 0 ? await admitStorage({ platformChatId: learner.platformChatId, profileId: learner.profileId, bytes: storing }) : null
-      if (space?.refused) {
-        const structured = { ok: false, error: "storage_allowance_exhausted", message: `This account's images use ${Math.round(space.refused.usedBytes / 1_000_000)} MB of ${Math.round(space.refused.limitBytes / 1_000_000)} MB, so no more can be added. Everything stored stays readable on Kivo.` }
-        return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
-      }
-      const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null }).finally(() => { if (space) void space.release() })
-      // The allowance, discoverable: on the profile, and on every result once
-      // a Free account is on its read-only calls.
-      if (result.ok && (tool.name === "get_my_profile" || gate.allowance.readOnly)) result.data = { ...result.data, mcpAllowance: gate.allowance }
-      const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
-      // Images go as MCP image content after the JSON, each named first by a
-      // line of text (which note, which image, its caption): never inside
-      // structuredContent, so their bytes are sent once.
-      const media = result.ok ? (result.media ?? []).flatMap((m: { label: string; mimeType: string; data: string }) => [
-        { type: "text" as const, text: m.label },
-        { type: "image" as const, data: m.data, mimeType: m.mimeType },
-      ]) : []
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(structured) }, ...media],
-        structuredContent: structured,
-        ...(result.ok ? {} : { isError: true }),
+      // Rate limits first (rate-limits/, docs/RATE_LIMITS.md), per account
+      // across every assistant it connects: calls (mcp.account), a batch's
+      // items (mcp.items), writes running at once (mcp.write), and in
+      // read-only mode no writes at all. Decided before anything is counted
+      // on the allowance.
+      const limits = await mcpLimits(learner.userId, tool.name, tool.kind, args)
+      if (limits.refused) return limits.refused
+      try {
+        const gate = await admitMcpCall({ userId: learner.userId, grantId: learner.grantId, tool: tool.name, args })
+        if (!gate.admitted) return refusedCall(gate)
+        // Images a note write would store are admitted on the storage allowance first.
+        const storing = tool.name === "create_note" || tool.name === "update_note"
+          ? incomingBytes(args.images, NOTE_IMAGE_BYTES_MAX) + (Array.isArray(args.files) ? args.files.length * NOTE_IMAGE_BYTES_MAX : 0) : 0
+        const space = storing > 0 ? await admitStorage({ platformChatId: learner.platformChatId, profileId: learner.profileId, bytes: storing }) : null
+        if (space?.refused) {
+          const structured = { ok: false, error: "storage_allowance_exhausted", message: `This account's images use ${Math.round(space.refused.usedBytes / 1_000_000)} MB of ${Math.round(space.refused.limitBytes / 1_000_000)} MB, so no more can be added. Everything stored stays readable on Kivo.` }
+          return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
+        }
+        const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null }).finally(() => { if (space) void space.release() })
+        // The allowance, discoverable: on the profile, and on every result once
+        // a Free account is on its read-only calls.
+        if (result.ok && (tool.name === "get_my_profile" || gate.allowance.readOnly)) result.data = { ...result.data, mcpAllowance: gate.allowance }
+        const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
+        // Images go as MCP image content after the JSON, each named first by a
+        // line of text (which note, which image, its caption): never inside
+        // structuredContent, so their bytes are sent once.
+        const media = result.ok ? (result.media ?? []).flatMap((m: { label: string; mimeType: string; data: string }) => [
+          { type: "text" as const, text: m.label },
+          { type: "image" as const, data: m.data, mimeType: m.mimeType },
+        ]) : []
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(structured) }, ...media],
+          structuredContent: structured,
+          ...(result.ok ? {} : { isError: true }),
+        }
+      } finally {
+        await limits.release()
       }
     })
   }
@@ -121,6 +138,30 @@ export async function serveMcp(req: Request, learner: ConnectLearner | Blocked, 
 
 // A call the MCP allowance refused, as a structured tool error the assistant
 // can read: which allowance, what is left, when it renews, what still works.
+// A rate-limit refusal as a tool result: the assistant reads the message and
+// the retry time; nothing in Kivo was changed.
+function limitedCall(r: Refusal) {
+  const structured = { ok: false, error: r.kind === "rate_limited" ? "rate_limited" : "temporarily_unavailable", message: `${refusalMessage(r)} Nothing in Kivo was changed.`, retryAfterSeconds: r.retryAfterSeconds, temporary: true }
+  return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
+}
+
+async function mcpLimits(userId: string, toolName: string, kind: string, args: Record<string, unknown>): Promise<{ refused: ReturnType<typeof limitedCall>; release?: undefined } | { refused?: undefined; release: () => Promise<void> }> {
+  const cls = classifyMcpCall(toolName, args)
+  const write = cls.kind !== "read" || kind !== "read"
+  if (write && readOnly()) {
+    return { refused: limitedCall({ allowed: false, kind: "disabled", status: 503, policy: "mcp.write", retryAfterSeconds: 300 }) }
+  }
+  const who = await whoOf({ userId })
+  for (const [policy, weight] of [["mcp.account", 1], ...(cls.items > 1 ? [["mcp.items", cls.items]] : [])] as Array<[string, number]>) {
+    const d = await checkRate(policy, who, { weight })
+    if (!d.allowed) return { refused: limitedCall(d) }
+  }
+  if (!write) return { release: async () => {} }
+  const slot = await acquireSlot("mcp.write", who, randomUUID())
+  if (!slot.decision.allowed) return { refused: limitedCall(slot.decision as Refusal) }
+  return { release: slot.release }
+}
+
 function refusedCall(gate: McpCallAccounted) {
   const a = gate.allowance
   const renews = a.readOnlyResetsAt ? new Date(a.readOnlyResetsAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null

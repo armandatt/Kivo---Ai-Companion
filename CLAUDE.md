@@ -529,7 +529,7 @@ Held by `nova-quick-focus.itest.ts`. Home's Quick focus starts the ordinary `sta
 
 ## Usage allowances (four, enforced by a switch)
 
-Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the only reader and writer of `UsageBalance`, `UsageReservation`, `UsageLedger` and `RateLimitWindow` (additive; `prisma db push` before the API). Held by `accounting-rules.test.ts`, `usage-class.test.ts`, `interaction-tally.test.ts`, `usage-accounting.itest.ts` and `usage-enforcement.itest.ts`.
+Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the only reader and writer of `UsageBalance`, `UsageReservation` and `UsageLedger` (additive; `prisma db push` before the API); its fair-use `hitLimit` counts through the rate-limit engine's store, the one writer of `RateLimitWindow` (see "Rate limits" below). Held by `accounting-rules.test.ts`, `usage-class.test.ts`, `interaction-tally.test.ts`, `usage-accounting.itest.ts` and `usage-enforcement.itest.ts`.
 
 - **Four independent balances**: Nova credits (cost-based, monthly), browser tasks (monthly, one per task), MCP calls (lifetime, then Free's monthly read-only), storage bytes (a gauge). Kivo-funded and system cost are recorded with no allowance. Never combine them, and never add a second quota system beside them.
 - **`USAGE_ACCOUNTING`**: `off` (nothing; the daily meter decides), `shadow` (default; recorded, nothing refused), `enforce` (the allowances decide; the daily meter only counts, `countOnly`). `USAGE_ENFORCE` narrows enforce to a list of products. Limits come from `rules.ts` and the `USAGE_ALLOWANCES` / `USAGE_FAIR_USE` JSON overrides, read at call time.
@@ -540,6 +540,19 @@ Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the 
 - **Account deletion removes every usage record** keyed by the account or its learner: the ledger tables, rate-limit windows, `AiUsageDay` and `AiUsageEvent` (`deleteAccountUsage`, `deleteUsageDaysIn`, `deleteUsageEventsIn`), each usage-ledger table checked to exist first.
 - **Plan and usage page** (`docs/PLAN_AND_USAGE.md`): every figure comes from `GET /api/billing` (`usageViewFor`, `planCatalog`, `nextOffer` in `billing/offer.ts`); `apps/web/components/billing/usage-model.ts` only words it. A refusal or page names a plan only if `nextOffer`/`upgradeLine` says it is on sale now; never hard-code "upgrade to Plus".
 - **Accounting writes never wake the scheduler** (`runWithoutWriteSignal`) and a fault in accounting admits the request.
+
+## Rate limits and abuse protection
+
+Docs: `docs/RATE_LIMITS.md`. `packages/api/src/rate-limits/` is the only reader and writer of `RateLimitWindow` and `RateLimitLease`. Held by `rate-limits/__tests__/rate-limits.test.ts` and `rate-limits.itest.ts`.
+
+- **Rate limits are not allowances.** A limit is how fast and how much at once; the allowances are how much a period. A rate refusal is `429 rate_limited`, decided before anything is reserved; never `allowance_used`.
+- **Two layers, one engine.** `apps/api/proxy.ts` (Next 16 Proxy) checks every `/api` request against its category's `base.*` policy (`endpoints.ts`); routes that cost something check named policies with the account behind them (`apps/api/lib/rate-limits.ts`: `rateGate`, `concurrencyGate`, `aiAdmission`; `metered()` applies `ai.account`).
+- **A new route** needs an entry in `endpoints.ts`, or the test fails. A route that calls a model, takes a file, runs MCP or an agent must not be classified as an ordinary read or write.
+- **A new limit is a policy** in `policies.ts` (with its reason), never a number in a route, never a per-process `Map` (the test fails on `allowAttempt`).
+- **Counted per account** (billing's `user:<id>`), the same on the web, the extension, Telegram and every MCP client. Addresses count only where there is no account (anonymous, sign-in, OAuth), and only an address Kivo can trust: the web app's signed header (`apps/web/middleware.ts`), else Cloudflare's `CF-Connecting-IP`. Never `X-Forwarded-For`.
+- **Modes**: `RATE_LIMITS_MODE` `shadow` (default; new limits only log `would_refuse`) / `enforce` / `off`; `RATE_LIMITS_ENFORCE` stages categories; `RATE_LIMITS_OVERRIDES` retunes. Limits that existed before Phase 5 (marked `legacy`) are enforced in every mode. Incident switches: `KIVO_DISABLE` (categories or policies → 503), `KIVO_READ_ONLY`.
+- **Concurrency** is a lease per running operation, admitted under an advisory lock in a short transaction, released in `finally`, expired if the holder died. Never hold a transaction open across the work.
+- `scripts/rateLimitReport.ts --hours 24` shows refusals, would-be refusals, subjects near a limit and slots held.
 
 ## Portable maps (.kivo files)
 

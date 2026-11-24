@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server"
 import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
-import { answerPageQuestion, PAGE_QUESTION_BODY_MAX_BYTES, PAGE_QUESTIONS_PER_MINUTE } from "@repo/api/nova/product/page-question"
-import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { answerPageQuestion, PAGE_QUESTION_BODY_MAX_BYTES } from "@repo/api/nova/product/page-question"
+import { eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
 //@ts-ignore
 import { meterLlmUsage } from "@repo/api/services/llm-usage"
 //@ts-ignore
 import { agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
 import { resolveEventLearner } from "@repo/api/nova/product/learning-events"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -37,9 +38,8 @@ async function handlePOST(req: Request): Promise<NextResponse> {
         : eventFail(409, "not_connected", "Finish connecting Nova on the web first.")
     }
     // Per connected browser. Each question is a model call.
-    if (!allowAttempt(`ask:${caller.connectionId}`, PAGE_QUESTIONS_PER_MINUTE, 60_000)) {
-      return eventFail(429, "rate_limited", "That's a lot of questions at once. Give it a minute.")
-    }
+    const limited = await rateGate("extension.ask", { learner: caller.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, PAGE_QUESTION_BODY_MAX_BYTES)
     if (!read.ok) {
       return read.reason === "too_large"

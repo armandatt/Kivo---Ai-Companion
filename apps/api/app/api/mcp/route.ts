@@ -8,7 +8,7 @@
 import { authenticateAccessToken } from "@repo/api/connect/oauth"
 //@ts-ignore
 import { learnerFor } from "@repo/api/connect/learner"
-import { allowAttempt } from "../../../lib/nova/extension-access"
+import { rateGate } from "../../../lib/rate-limits"
 import { connectOrigin, json, mcpUrl, OPEN_CORS, preflight, resourceMetadataUrl } from "../../../lib/connect/config"
 import { serveMcp } from "../../../lib/connect/mcp"
 
@@ -19,8 +19,6 @@ export const maxDuration = 60
 // Room for a call carrying images as base64 (note-images: 2.5 MB each, a
 // third larger as base64); images by url or file are fetched, not sent here.
 const BODY_MAX_BYTES = 8_000_000
-// Per connection: calls a minute. One process (Render), so memory is the answer.
-const CALLS_PER_MINUTE = 120
 
 function unauthorized(error: "invalid_token" | null, description: string) {
   const challenge = [`Bearer resource_metadata="${resourceMetadataUrl()}"`, ...(error ? [`error="${error}"`, `error_description="${description}"`] : [])].join(", ")
@@ -34,8 +32,12 @@ async function handle(req: Request): Promise<Response> {
   const caller = await authenticateAccessToken(token, mcpUrl())
   if (!caller) return unauthorized("invalid_token", "The access token is not valid, has expired or was revoked.")
 
-  if (!allowAttempt(`mcp:${caller.grantId}`, CALLS_PER_MINUTE, 60_000)) {
-    return json({ jsonrpc: "2.0", error: { code: -32000, message: "Too many requests to Kivo; wait a minute." }, id: null }, 429, { "retry-after": "60" })
+  // Per connection (rate-limits mcp.grant, in Postgres). The account-wide
+  // limits apply per tool call, in lib/connect/mcp.ts.
+  const limited = await rateGate("mcp.grant", { client: caller.grantId })
+  if (limited) {
+    const body = await limited.json() as { message?: string; retryAfterSeconds?: number; error?: string }
+    return json({ jsonrpc: "2.0", error: { code: -32000, message: body.message ?? "Too many requests to Kivo; wait a minute.", data: { error: body.error, retryAfterSeconds: body.retryAfterSeconds, temporary: true } }, id: null }, limited.status, { "retry-after": limited.headers.get("retry-after") ?? "60" })
   }
   const declared = Number(req.headers.get("content-length") ?? "0")
   if (Number.isFinite(declared) && declared > BODY_MAX_BYTES) return json({ jsonrpc: "2.0", error: { code: -32600, message: "Request too large." }, id: null }, 413)

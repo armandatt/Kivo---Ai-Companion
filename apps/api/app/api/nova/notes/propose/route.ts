@@ -3,9 +3,10 @@ import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { proposeNewNote } from "@repo/api/nova/product/note-proposal"
 //@ts-ignore
-import { PROPOSAL_BODY_MAX, PROPOSAL_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/note-proposal.types"
+import { PROPOSAL_BODY_MAX } from "@repo/api/nova/product/note-proposal.types"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -23,9 +24,8 @@ export async function POST(req: Request) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
-    if (!allowAttempt(`note-propose:${access.profileId}`, PROPOSAL_REQUESTS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("notes.propose", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, PROPOSAL_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "Files can add up to 3 MB." : "That isn't something Nova can start a note from.")
     const run = await metered(access.platformChatId, () => proposeNewNote(access.profileId, read.body), { feature: "notes_proposal" })

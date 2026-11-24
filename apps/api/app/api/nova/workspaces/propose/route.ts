@@ -3,7 +3,8 @@ import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { proposeWorkspace, usesModel } from "@repo/api/nova/product/workspace-proposal"
 import { requireWorkspaceLearner, workspaceFail } from "../../../../../lib/nova/workspace-access"
-import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -12,7 +13,6 @@ export const maxDuration = 120
 
 // Files travel as base64 inside the JSON: 3 MB of files is about 4 MB here.
 const BODY_MAX = 4_300_000
-const MODEL_PROPOSALS_PER_MINUTE = 4
 
 // POST /api/nova/workspaces/propose
 //   { templateId, inputs }                       a template, as it is (no model)
@@ -31,9 +31,8 @@ export async function POST(req: Request) {
     const body = (read.body ?? {}) as Record<string, unknown>
     if (!usesModel(body)) return NextResponse.json(await proposeWorkspace(access.platformChatId, body), { headers: { "cache-control": "no-store" } })
 
-    if (!allowAttempt(`workspace-propose:${access.platformChatId}`, MODEL_PROPOSALS_PER_MINUTE, 60_000)) {
-      return workspaceFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
-    }
+    const limited = await rateGate("workspaces.propose", { learner: access.platformChatId })
+    if (limited) return limited
     const run = await metered(access.platformChatId, () => proposeWorkspace(access.platformChatId, body), { feature: "create_with_nova" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeWorkspace>>

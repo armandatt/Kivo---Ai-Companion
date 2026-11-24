@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { captureToDraft, currentDraft, listDrafts, CAPTURES_PER_MINUTE } from "@repo/api/nova/product/capture-drafts"
-import { allowAttempt, readSmallJson, requireWebLearner } from "../../../../lib/nova/extension-access"
+import { captureToDraft, currentDraft, listDrafts } from "@repo/api/nova/product/capture-drafts"
+import { readSmallJson, requireWebLearner } from "../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -31,7 +32,8 @@ export async function POST(req: Request) {
     const access = await requireWebLearner()
     if (access.denied) return access.denied
     if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return fail(400, "invalid", "That isn't something Nova can keep.")
-    if (!allowAttempt(`capture:${access.profileId}`, CAPTURES_PER_MINUTE, 60_000)) return fail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    const limited = await rateGate("captures", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 48 * 1024)
     if (!read.ok) return fail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's more than a draft keeps at once." : "That isn't something Nova can keep.")
     const result = await captureToDraft(access.profileId, read.body)

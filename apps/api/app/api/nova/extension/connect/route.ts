@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
 import { TOKEN_IDLE_DAYS, redeemPairingCode } from "@repo/api/nova/product/extension-connection"
-import { allowAttempt, readSmallJson, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { readSmallJson, preflight, withCors } from "../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -11,7 +12,9 @@ const WRONG = "That code didn't work. Codes last ten minutes and work once; get 
 // POST /api/nova/extension/connect  { code, label? }
 // The extension redeems the code the learner typed for a credential of its
 // own. This is the one extension route with no credential, so attempts are
-// limited per address, and every failure gets the same answer: a wrong,
+// limited per address (rate-limits policy extension.connect: the address
+// Cloudflare or the web app's signed header reports, never X-Forwarded-For,
+// which a caller writes itself), and every failure gets the same answer: a wrong,
 // expired and already-used code are indistinguishable.
 // Response: ExtensionConnectResponse (learning-events.types.ts).
 export async function POST(req: Request) {
@@ -20,10 +23,8 @@ export async function POST(req: Request) {
 
 async function handlePOST(req: Request): Promise<NextResponse> {
   try {
-    const from = (req.headers.get("x-forwarded-for") ?? "").split(",")[0]!.trim() || "local"
-    if (!allowAttempt(`connect:${from}`, 10, 60_000)) {
-      return NextResponse.json({ ok: false, error: "rate_limited", message: "Too many tries. Wait a minute and try again." }, { status: 429 })
-    }
+    const limited = await rateGate("extension.connect", { req })
+    if (limited) return limited
     const read = await readSmallJson(req, 1024)
     const body = read.ok && read.body && typeof read.body === "object" ? read.body as { code?: unknown; label?: unknown } : {}
     const result = await redeemPairingCode(body.code, body.label)

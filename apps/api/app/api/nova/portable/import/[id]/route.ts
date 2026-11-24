@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { resumeImport } from "@repo/api/portable/import"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
-import { portableLimit } from "../../../../../../lib/nova/portable-access"
+import { portableLimit, portableSlot } from "../../../../../../lib/nova/portable-access"
 //@ts-ignore
 import { crossSiteProblem } from "@repo/api/auth/request-origin"
 import { connectOrigin } from "../../../../../../lib/connect/config"
@@ -23,7 +23,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (limited) return limited
     const { id } = await ctx.params
     if (typeof id !== "string" || id.length > 40) return noteFail(400, "invalid", "That import doesn't exist.")
-    const r = await resumeImport(access.profileId, id)
+    // The job's own slot: a second tab resuming the same job shares it.
+    const slot = await portableSlot("import", access.platformChatId, `job:${id}`)
+    if (slot.refused) return slot.refused
+    const r = await resumeImport(access.profileId, id).finally(slot.release)
     const status = r.ok ? (r.status === "running" ? 202 : 200) : r.status === "refused" ? 404 : 500
     return NextResponse.json(r, { status, headers: { "cache-control": "no-store" } })
   } catch (err) {

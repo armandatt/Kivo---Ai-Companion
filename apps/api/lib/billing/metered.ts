@@ -15,6 +15,7 @@ import { upgradeLine } from "@repo/api/billing/offer"
 import { recordTokens, withAiAllowance } from "@repo/api/billing/usage"
 //@ts-ignore
 import { meterLlmUsage, startInteraction, type UsageFeature, type UsageSurface } from "@repo/api/services/llm-usage"
+import { aiAdmission } from "../rate-limits"
 
 export interface MeteredUse { feature: UsageFeature; surface?: UsageSurface }
 
@@ -43,7 +44,21 @@ export function allowanceUsed(refusal: Refusal | "free" | "pro") {
   return NextResponse.json({ ok: false, success: false, error: "allowance_used", message, plan: r.plan, planUrl: PLAN_URL }, { status: 429 })
 }
 
+// Before the allowance: the account-wide AI rate and at-once limit
+// (rate-limits ai.account, the same on every surface), held until the work
+// ends. A rate refusal is a temporary 429 `rate_limited`, never
+// `allowance_used`, and is decided before anything is reserved.
 export async function metered<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<{ ok: true; value: T } | { ok: false; response: NextResponse }> {
+  const admission = await aiAdmission(platformChatId)
+  if (admission.refused) return { ok: false, response: admission.refused }
+  try {
+    return await meteredWithin(platformChatId, work, use)
+  } finally {
+    await admission.release()
+  }
+}
+
+async function meteredWithin<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<{ ok: true; value: T } | { ok: false; response: NextResponse }> {
   const entry = { feature: use.feature, surface: use.surface ?? "web", learner: platformChatId }
   let ent: Awaited<ReturnType<typeof entitlementForLearner>>
   try {

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { previewPaper, PAPER_PREVIEWS_PER_MINUTE } from "@repo/api/nova/product/paper-import"
+import { previewPaper } from "@repo/api/nova/product/paper-import"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
-import { allowAttempt, readSmallJson } from "../../../../../../lib/nova/extension-access"
+import { readSmallJson } from "../../../../../../lib/nova/extension-access"
+import { rateGate } from "../../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,9 +19,8 @@ export async function POST(req: Request) {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
     // Per learner: each preview asks the source's API.
-    if (!allowAttempt(`paper-preview:${access.profileId}`, PAPER_PREVIEWS_PER_MINUTE, 60_000)) {
-      return noteFail(429, "rate_limited", "That's a lot of papers at once. Give it a minute.")
-    }
+    const limited = await rateGate("papers.preview", { learner: access.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 8 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "Paste a link to a paper.")
     const result = await previewPaper(access.profileId, read.body)

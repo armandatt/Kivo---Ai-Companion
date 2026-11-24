@@ -40,6 +40,17 @@ export async function createSession(payload: SessionPayload): Promise<string> {
     .sign(sessionSecret())
 }
 
+// The same check for a token read some other way (apps/api/proxy.ts reads
+// the cookie from the request, before any route runs).
+export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, sessionSecret())
+    return payload as unknown as SessionPayload
+  } catch {
+    return null
+  }
+}
+
 export async function getSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies()

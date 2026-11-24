@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 import { exportMap, previewExport } from "@repo/api/portable/export"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
 import { readSmallJson } from "../../../../../lib/nova/extension-access"
-import { portableLimit } from "../../../../../lib/nova/portable-access"
+import { portableLimit, portableSlot } from "../../../../../lib/nova/portable-access"
 //@ts-ignore
 import { crossSiteProblem } from "@repo/api/auth/request-origin"
 import { connectOrigin } from "../../../../../lib/connect/config"
@@ -31,7 +31,9 @@ export async function POST(req: Request) {
     if (body.action !== "export") return noteFail(400, "invalid", "That isn't an export Kivo can make.")
     const limited = await portableLimit("export", access.platformChatId)
     if (limited) return limited
-    const out = await exportMap(access.profileId, body)
+    const slot = await portableSlot("export", access.platformChatId)
+    if (slot.refused) return slot.refused
+    const out = await exportMap(access.profileId, body).finally(slot.release)
     if (!out.ok) return NextResponse.json(out, { status: out.error === "not_found" ? 404 : out.error === "too_large" ? 413 : out.error === "invalid" ? 400 : 500, headers: { "cache-control": "no-store" } })
     return new NextResponse(Buffer.from(out.bytes), {
       status: 200,

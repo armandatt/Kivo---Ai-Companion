@@ -73,18 +73,8 @@ export async function readSmallJson(req: Request, maxBytes: number): Promise<{ o
   try { return { ok: true, body: JSON.parse(text) } } catch { return { ok: false, reason: "invalid" } }
 }
 
-// A small per-key limiter for the one route that takes no credential. The
-// API runs as a single always-on instance (see RENDER_DEPLOYMENT.md), so a
-// process-level map is the same answer every request gets.
-const attempts = new Map<string, number[]>()
-export function allowAttempt(key: string, limit: number, windowMs: number, now = Date.now()): boolean {
-  const recent = (attempts.get(key) ?? []).filter(t => now - t < windowMs)
-  if (recent.length >= limit) { attempts.set(key, recent); return false }
-  recent.push(now)
-  attempts.set(key, recent)
-  if (attempts.size > 5000) for (const [k, v] of attempts) if (v.every(t => now - t >= windowMs)) attempts.delete(k)
-  return true
-}
+// Rate limits for these routes are policies in packages/api/src/rate-limits
+// (rateGate in ../rate-limits.ts), counted per account in Postgres.
 
 // ── Cross-origin answers for the extension ────────────────────────────────────
 // The extension asks for no access to any website, Nova's included, so its

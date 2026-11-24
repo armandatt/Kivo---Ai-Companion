@@ -5,10 +5,11 @@ import { stepOfTask } from "@repo/api/billing/accounting/browser"
 //@ts-ignore
 import { agentStep } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
-import { checkAgentTicket, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS } from "@repo/api/nova/product/agent-ticket"
-import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
+import { checkAgentTicket, AGENT_TASK_STEPS } from "@repo/api/nova/product/agent-ticket"
+import { eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
 //@ts-ignore
 import { meterLlmUsage } from "@repo/api/services/llm-usage"
+import { rateGate, renewGate } from "../../../../../../lib/rate-limits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -20,7 +21,6 @@ export const maxDuration = 60
 // names the task, and a task gets AGENT_TASK_STEPS steps at most. Its tokens
 // are metered on the account. Nothing is stored: the task's state lives in
 // the learner's browser, and the page text sent is read for this answer only.
-const STEPS_PER_MINUTE = 30
 
 export async function POST(req: Request) {
   return withCors(req, await handle(req))
@@ -30,18 +30,24 @@ async function handle(req: Request): Promise<NextResponse> {
   try {
     const who = await requireExtensionLearner(req)
     if (who.denied) return who.denied
-    if (!allowAttempt(`agent-step:${who.connectionId}`, STEPS_PER_MINUTE, 60_000)) return eventFail(429, "rate_limited", "Nova is working faster than it may. Give it a minute, then resume.")
+    // Each step is a model call: the account's AI rate and the step rate
+    // (rate-limits ai.account, agent.step), the same whichever browser asks.
+    const limited = await rateGate(["ai.account", "agent.step"], { learner: who.platformChatId })
+    if (limited) return limited
     const read = await readSmallJson(req, 96 * 1024)
     if (!read.ok) return eventFail(read.reason === "too_large" ? 413 : 400, "invalid", "That step was too large to send.")
     const ticket = checkAgentTicket((read.body as { ticket?: unknown } | null)?.ticket, who.connectionId)
     if (!ticket.ok) return eventFail(409, "task_expired", ticket.reason === "expired" ? "This task has run for too long. Ask again to start a new one." : "Start the task again.")
     // The step cap: counted on the task's reservation, so it holds across
     // restarts; a task with none (accounting off, or started before it) uses
-    // the in-memory cap as before. Never the month's tasks: a running task is
-    // not stopped by them.
+    // the task's own counter in Postgres (agent.task-steps). Never the month's
+    // tasks: a running task is not stopped by them.
     const step = await stepOfTask(ticket.taskId, AGENT_TASK_STEPS)
-    const withinCap = step ? step.allowed : allowAttempt(`agent-task:${ticket.taskId}`, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS)
+    const withinCap = step ? step.allowed : (await rateGate("agent.task-steps", { task: ticket.taskId })) === null
     if (!withinCap) return eventFail(429, "task_limit", "This task has used all its steps. Ask again to continue.")
+    // A step keeps the task's running slot (agent.tasks); one idle longer
+    // than the slot's time frees it, and the task itself carries on.
+    await renewGate("agent.tasks", { learner: who.platformChatId }, ticket.taskId)
     // This step's own tokens, returned so the extension can measure a whole task.
     const usage = { inputTokens: 0, outputTokens: 0, calls: 0 }
     const result = await withinCountedTask(who.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => agentStep(read.body)), { feature: "extension_agent", surface: "extension" }, ticket.taskId) as Awaited<ReturnType<typeof agentStep>>

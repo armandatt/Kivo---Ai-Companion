@@ -25,9 +25,8 @@ import { fairUse } from "@repo/api/billing/accounting/rules"
 //@ts-ignore
 import { hitLimit } from "@repo/api/billing/accounting/limiter"
 import { randomUUID } from "crypto"
-import { allowAttempt } from "./extension-access"
+import { concurrencyGate, rateGate } from "../rate-limits"
 
-export const TURNS_PER_MINUTE = 8
 
 export const builderFail = (status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   NextResponse.json({ ok: false, error, message, ...extra }, { status, headers: { "cache-control": "no-store" } })
@@ -37,15 +36,27 @@ export const builderFail = (status: number, error: string, message: string, extr
 // the job's usage events, and `reservationId` is the job's Nova credits when
 // they are enforced (USAGE_ACCOUNTING=enforce): reserved here, before anything
 // is claimed, so a learner out of credits is refused before work starts.
-export type Turn = { refused: NextResponse } | { refused: null; counted: boolean; reservationId: string | null }
+export type Turn = { refused: NextResponse } | { refused: null; counted: boolean; reservationId: string | null; release?: () => Promise<void> }
 
+// Jobs running at once per account (rate-limits builder.jobs): the slot is
+// taken here, kept while the job runs after the response, and given back by
+// startJob when it ends or by releaseTurn when no job starts.
 export async function spendForTurn(platformChatId: string): Promise<Turn> {
-  if (!allowAttempt(`builder-turn:${platformChatId}`, TURNS_PER_MINUTE, 60_000)) {
-    return { refused: builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.") }
-  }
+  const slot = await concurrencyGate("builder.jobs", { learner: platformChatId })
+  if (slot.refused) return { refused: slot.refused }
+  const turn = await spendForTurnWithin(platformChatId).catch(async (err: unknown) => { await slot.release(); throw err })
+  if (turn.refused) { await slot.release(); return turn }
+  return { ...turn, release: slot.release }
+}
+
+async function spendForTurnWithin(platformChatId: string): Promise<Turn> {
+  // The account's AI rate and Build with Nova's own (rate-limits ai.account,
+  // builder.turn), persistent and the same on every surface.
+  const limited = await rateGate(["ai.account", "builder.turn"], { learner: platformChatId })
+  if (limited) return { refused: limited }
   const credits = enforcing("nova_credits")
   if (credits) {
-    // Persistent: holds across restarts (the in-memory limit above is per process).
+    // Usage accounting's fair use (USAGE_FAIR_USE novaJobsPerMinute), enforced with the credits.
     const hit = await hitLimit(`builder-turn:${platformChatId}`, fairUse().novaJobsPerMinute, 60_000)
     if (!hit.allowed) return { refused: builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.", { retryAfterSeconds: hit.retryAfterSeconds }) }
   }
@@ -72,6 +83,7 @@ export async function spendForTurn(platformChatId: string): Promise<Turn> {
 // failed): its reserved credits go back.
 export function releaseTurn(turn: Turn | null | undefined, reason = "job_not_started"): void {
   if (turn && !turn.refused && turn.reservationId) void releaseReservation(turn.reservationId, reason)
+  if (turn && !turn.refused && turn.release) void turn.release()
 }
 
 export function startJob(platformChatId: string, job: BuilderJob | null, turn: Turn | boolean): void {
@@ -95,6 +107,8 @@ export function startJob(platformChatId: string, job: BuilderJob | null, turn: T
       )
     } catch (err) {
       console.error("[nova/builder] job crashed:", (err as Error)?.name ?? "error")
+    } finally {
+      if (t && !t.refused && t.release) await t.release()
     }
   })
 }

@@ -13,6 +13,8 @@ import { createHousekeepingGate } from "@repo/api/services/schedulerGate";
 //@ts-ignore
 import { reconcileUsage } from "@repo/api/billing/accounting/reconcile";
 //@ts-ignore
+import { purgeRateLimits } from "@repo/api/billing/accounting/limiter";
+//@ts-ignore
 import type { ProactiveOutlook } from "@repo/api/nova/proactive/proactive-outlook";
 
 // The scheduled jobs, one tick. Nova only: Nova's proactive messages, the
@@ -62,6 +64,9 @@ async function runTick(now: Date): Promise<CheckinCronResult> {
     // Usage accounting: reservations left open past their time (a crash, a
     // deploy) are settled from what is on record (billing/accounting/reconcile.ts).
     await reconcileUsage(now).catch((err: unknown) => console.error("[CHECKIN] usage reconciliation failed", (err as Error)?.name ?? err));
+    // Rate limits (rate-limits/): windows that ended a day ago, leases a
+    // crashed holder never gave back. Runs whatever USAGE_ACCOUNTING says.
+    await purgeRateLimits(now).catch((err: unknown) => console.error("[CHECKIN] rate-limit purge failed", (err as Error)?.name ?? err));
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;

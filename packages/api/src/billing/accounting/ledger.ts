@@ -19,6 +19,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@repo/db/client";
 import { runWithoutWriteSignal } from "@repo/db/write-signal";
+import { deleteRateLimitRows } from "../../rate-limits/cleanup";
 import { RESERVATION_TTL_MS, DEFAULT_RESERVATION_TTL_MS, type Period, type Product, type Tier } from "./rules";
 
 export type Mode = "shadow" | "enforce";
@@ -372,4 +373,6 @@ export async function deleteAccountUsage(tx: Tx, accountKeys: string[]): Promise
   if (has?.reservation) await tx.$executeRaw`DELETE FROM "UsageReservation" WHERE "accountKey" = ANY(${accountKeys})`;
   if (has?.balance) await tx.$executeRaw`DELETE FROM "UsageBalance" WHERE "accountKey" = ANY(${accountKeys})`;
   if (has?.limits) await tx.$executeRaw`DELETE FROM "RateLimitWindow" WHERE split_part(key, ':', 2) || ':' || split_part(key, ':', 3) = ANY(${accountKeys})`;
+  // The rate-limit engine's counters and concurrency leases for the account.
+  await deleteRateLimitRows(tx, accountKeys);
 }
