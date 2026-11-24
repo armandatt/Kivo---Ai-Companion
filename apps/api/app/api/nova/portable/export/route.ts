@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { exportMap, previewExport } from "@repo/api/portable/export"
+import { attachmentHeader, exportMap, previewExport } from "@repo/api/portable/export"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
 import { readSmallJson } from "../../../../../lib/nova/extension-access"
 import { portableLimit, portableSlot } from "../../../../../lib/nova/portable-access"
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       status: 200,
       headers: {
         "content-type": "application/vnd.kivo.map+zip",
-        "content-disposition": `attachment; filename="${out.filename}"`,
+        "content-disposition": attachmentHeader(out.filename),
         "cache-control": "no-store",
         "x-kivo-package-id": out.manifest.packageId,
       },

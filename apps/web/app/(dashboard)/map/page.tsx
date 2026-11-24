@@ -37,7 +37,7 @@ function Actions() {
     {said && <span role="status" className="text-xs text-foreground/70" data-trash-said>{said}</span>}
     <PageAction href="/notes/new">New note</PageAction>
     {/* On a phone, the map comes first: these are in the navigation. */}
-    <Link href="/map/portable" className={cn(BUTTON_QUIET, 'h-9')} data-portable-maps><span className="max-sm:sr-only">Import / export</span><span className="sm:hidden">.kivo</span></Link>
+    <Link href="/map/portable" className={cn(BUTTON_QUIET, 'h-9')} data-portable-maps><span className="max-sm:sr-only">Share maps</span><span className="sm:hidden">Share</span></Link>
     <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Browser Extension</Link>
     <Link href="/knowledge" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Topic list</Link>
   </>

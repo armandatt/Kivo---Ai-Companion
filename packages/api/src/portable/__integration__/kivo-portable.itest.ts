@@ -70,7 +70,7 @@ test("export reads only, takes only the ticked notes, and the file carries no id
   assert.equal(preview.topics, 4);
   const out = await exportMap(A.profileId, { rootSubjectId: root.id, noteIds: [sharedNoteId], license: "cc-by-4.0", credit: "Kivo" });
   assert.ok(out.ok);
-  assert.equal(out.filename, "b-tech-cse.kivo");
+  assert.equal(out.filename, "B.Tech CSE.kivo");
   assert.equal((await loadStudyStructure(A.profileId)).version, before.version, "export changed nothing");
   const files = unzipSync(out.bytes);
   const all = Object.values(files).map(f => new TextDecoder().decode(f)).join("\n");
