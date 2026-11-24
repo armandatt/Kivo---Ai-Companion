@@ -535,3 +535,19 @@ function fullContext(understanding: AcademicUnderstanding): NovaContext {
     operatingStyle: [], conversationHistory: [], decision: null,
   };
 }
+
+// Founder review #08: Telegram's plan states an exam shortfall, as Today does.
+describe("Telegram plan reply and the exam shortfall", () => {
+  const { shortfallView } = require("../product/shortfall") as typeof import("../product/shortfall");
+  const short = shortfallView({ examTitle: "OS midterm", daysUntil: 3, topicsRemaining: 6, topicsThatFit: 4, minutesNeeded: 180, minutesAvailable: 120, dailyMinutes: 40, minutesPerTopic: 30, studyDays: 3 } as never, { dailyMinutesStated: true, availableMinutes: null });
+  it("says the same sentence Today shows, and how to change it", () => {
+    const v = view(); v.plan.shortfall = short;
+    const text = todayReply(v, null).text;
+    expect(text).toContain(short!.summary);
+    expect(text).toMatch(/how long you have today/);
+    expect(text).not.toMatch(/\/focus|\/today/);
+  });
+  it("says nothing when the work fits", () => {
+    expect(todayReply(view(), null).text).not.toMatch(/not at a solid level/);
+  });
+});
