@@ -65,7 +65,7 @@ function Preview({ r, grid }: { r: LearningResource; grid: boolean }) {
     <span className={`relative block overflow-hidden bg-white/[0.04] ${box}`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- a page's own preview image from its site, with no referrer */}
       <img src={r.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} className="size-full object-cover" data-preview-image />
-      {type === 'video' && r.durationSeconds ? <span className="absolute bottom-1 right-1 rounded bg-black/75 px-1 py-px text-[10px] font-medium text-white">{durationLabel(r.durationSeconds)}</span> : null}
+      {type === 'video' && r.durationSeconds ? <span className={`absolute rounded bg-black/75 font-medium text-white ${grid ? 'bottom-2 right-2 px-1.5 py-px text-[11px]' : 'bottom-1 right-1 px-1 py-px text-[10px]'}`} data-duration>{durationLabel(r.durationSeconds)}</span> : null}
     </span>
   )
   // No picture: the site's initial on its own colour, with what kind it is.
@@ -74,6 +74,7 @@ function Preview({ r, grid }: { r: LearningResource; grid: boolean }) {
       style={{ background: `oklch(0.62 0.09 ${hue} / 0.16)`, color: `oklch(0.78 0.1 ${hue})` }} data-site-tile>
       <span className={grid ? 'text-4xl font-semibold opacity-90' : 'text-lg font-semibold'}>{initialOf(r)}</span>
       {type !== 'page' && <span className={`absolute grid place-items-center rounded-md bg-background/80 text-foreground/70 ${grid ? 'bottom-2 right-2 size-7' : '-bottom-px -right-px size-5'}`}><Icon className={grid ? 'size-4' : 'size-3'} /></span>}
+      {grid && type === 'video' && r.durationSeconds ? <span className="absolute bottom-2 left-2 rounded bg-black/75 px-1.5 py-px text-[11px] font-medium text-white" data-duration>{durationLabel(r.durationSeconds)}</span> : null}
     </span>
   )
 }
