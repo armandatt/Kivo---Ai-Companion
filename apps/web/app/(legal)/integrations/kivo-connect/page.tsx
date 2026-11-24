@@ -4,7 +4,8 @@ import type { ReactNode } from "react"
 import { KivoMark, KivoWordmark } from "@/components/brand/kivo-brand"
 import { CONTACT_EMAIL } from "@/lib/site-links"
 import { CopyField } from "@/components/connect/copy-field"
-import { MCP_CLIENTS, MCP_PERMISSIONS, MCP_TOOLS, MCP_URL } from "@/components/connect/mcp-clients"
+import { CONNECT_VIDEO, MCP_CLIENTS, MCP_PERMISSIONS, MCP_TOOLS, MCP_URL } from "@/components/connect/mcp-clients"
+import { DemoVideo } from "@/components/media/demo-video"
 import { DEFAULT_ALLOWANCES } from "@repo/api/billing/accounting/rules"
 
 // Public documentation for Kivo Connect (the MCP server at /api/mcp): what it
@@ -68,10 +69,36 @@ export default function KivoConnectDocs() {
         <p className="text-xs font-medium uppercase tracking-[0.14em] text-subtle">Integration</p>
         <h1 className="mt-2 text-[2.1rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[2.8rem]">Kivo Connect</h1>
         <p className="mt-6 text-[17px] leading-relaxed text-foreground/85">
-          Kivo Connect lets Claude and ChatGPT work with your Kivo knowledge base, with your permission: search and read your notes,
-          explore your Knowledge Map, spot gaps and missing links, and save what you learn in a conversation as organised notes.
+          Use Claude or ChatGPT with what you have already learned. Kivo Connect lets your assistant read your Kivo notes and
+          Knowledge Map, so its answers start from your material, and lets it save what you work out in a chat back into Kivo,
+          filed in the right place. It only does what you allow.
         </p>
-        <div className="mt-6"><CopyField label="Server address" value={MCP_URL} /></div>
+
+        {/* Value before setup (founder review #03). Every line here is a tool in packages/api/src/connect/tools.ts. */}
+        <div className="mt-8 grid gap-3 sm:grid-cols-2" data-connect-value>
+          {[
+            ["It reads", "Your notes, subjects and topics, the Knowledge Map and your saved pages: search them, open one, see what connects to what and where a topic has no material yet."],
+            ["It writes", "New notes and additions to notes, new subjects and topics, links between notes and topics, and saved web pages filed under a topic. Each change is read back and reported."],
+            ["You approve the big changes", "Deleting, moving, renaming or refiling, and anything touching more than 12 items, waits for you: the assistant gives you a link, you see each change by name in Kivo, and choose Approve or Decline."],
+            ["It all lands in your Kivo", "What it saves is ordinary Kivo notes, topics and saved pages: on your Knowledge Map, in Notes and in search, yours to edit like anything you write."],
+          ].map(([t, d]) => (
+            <div key={t} className="rounded-xl border border-white/8 bg-card/60 p-4">
+              <p className="text-sm font-semibold text-foreground">{t}</p>
+              <p className="mt-1 text-sm leading-relaxed text-foreground/70">{d}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-8 rounded-xl border border-white/8 bg-card/60 p-4 sm:p-5" data-connect-start>
+          <p className="text-sm font-semibold text-foreground">Get started</p>
+          <ol className="mt-3 space-y-2 text-sm text-foreground/80 [&_a]:text-action-ink [&_a]:underline">
+            <li><strong className="text-foreground">1.</strong> Have a Kivo account with at least one subject (<Link href="/signup">sign up</Link>).</li>
+            <li><strong className="text-foreground">2.</strong> Copy Kivo&apos;s address below. Kivo can&apos;t add itself to Claude or ChatGPT: you paste it into the assistant&apos;s connector settings (<a href="#connect">where, exactly</a>).</li>
+            <li><strong className="text-foreground">3.</strong> The assistant sends you to Kivo: sign in, look at what it asks for, and choose Allow. Signed in already? <Link href="/assistants">Set it up step by step</Link>; Kivo notices the moment it connects.</li>
+          </ol>
+          <div className="mt-4"><CopyField label="Server address" value={MCP_URL} /></div>
+        </div>
+        {CONNECT_VIDEO && <div className="mt-6"><DemoVideo video={CONNECT_VIDEO} /></div>}
 
         <nav aria-label="On this page" className="mt-8 rounded-xl border border-white/8 bg-card/60 p-4">
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-subtle">On this page</p>
@@ -102,7 +129,7 @@ export default function KivoConnectDocs() {
           </Section>
 
           <Section id="connect" title="Connect your assistant">
-            <p>Every assistant connects the same way on Kivo&apos;s side: it sends you to Kivo to sign in, Kivo shows what it may do, and you choose Allow. There is no API key and nothing to install.</p>
+            <p>Every assistant connects the same way on Kivo&apos;s side: it sends you to Kivo to sign in, Kivo shows what it may do, and you choose Allow. There is no API key and nothing to install. Neither Claude nor ChatGPT has a link that adds a connector for you, so the one thing you do on their side is paste Kivo&apos;s address into the field named below.</p>
             <CopyField label="Server address" value={MCP_URL} />
             {MCP_CLIENTS.map(c => (
               <div key={c.id} id={c.id} className="scroll-mt-24 pt-2">

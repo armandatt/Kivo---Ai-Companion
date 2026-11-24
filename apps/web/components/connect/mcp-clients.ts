@@ -9,6 +9,13 @@
 
 export const MCP_URL = 'https://www.thekivo.in/api/mcp'
 
+// The setup-and-use demonstration on the guide (founder review #04): a real
+// recording of adding Kivo in Claude or ChatGPT, signing in, allowing, a read
+// and a write that reaches Kivo. None exists yet (it needs the owner's own
+// Claude or ChatGPT account), so none is shown: never put another video here.
+// When recorded: public/connect/kivo-connect-demo.{webm,png,vtt}, then set this.
+export const CONNECT_VIDEO: import('@/components/media/demo-video').DemoVideoSource | null = null
+
 export interface McpClient {
   id: string
   name: string
@@ -23,25 +30,27 @@ export interface McpClient {
 export const MCP_CLIENTS: McpClient[] = [
   {
     id: 'claude', name: 'Claude', status: 'supported',
-    intro: 'On claude.ai and in the Claude desktop app.',
+    intro: 'On claude.ai and in the Claude desktop app. Works on every Claude plan; Free allows one custom connector.',
     steps: [
-      'In Claude, open Settings › Connectors. If Kivo is listed in the directory, choose it. Otherwise choose Add custom connector and name it Kivo.',
-      'Paste the server address above as the connector URL.',
-      'Select Connect. A Kivo page opens; sign in if asked.',
-      'Kivo shows which assistant is asking and what it may do. Select Allow.',
+      'Open Claude’s connectors page (claude.ai/customize/connectors). Choose Add, then Add custom connector. (Team and Enterprise: an Owner adds it under Organization settings › Connectors; members then choose Connect.)',
+      'Name it Kivo and paste the server address above as the MCP server URL. Choose Continue, keep the authentication Claude detects, then Add.',
+      'Choose Connect. A Kivo page opens; sign in if asked.',
+      'Kivo shows which assistant is asking and what it may do. Choose Allow.',
       'In a conversation, turn Kivo on from the tools menu.',
     ],
-    note: 'Which Claude plans include custom connectors is up to Anthropic.',
+    note: 'There is no link that adds Kivo to Claude for you: Claude does not offer one, so the address has to be pasted. Claude’s own guide: claude.com/docs/connectors/custom/add-unlisted.',
   },
   {
     id: 'chatgpt', name: 'ChatGPT', status: 'supported',
+    intro: 'On chatgpt.com, on the web.',
     steps: [
-      'In ChatGPT settings, under Apps / Connectors, turn on developer mode, then create a connector.',
-      'Paste the server address above as the MCP server URL and choose OAuth for authentication.',
-      'Connect, sign in to Kivo if asked, and select Allow.',
-      'In a conversation, choose the Kivo connector.',
+      'Open ChatGPT’s plugins page (chatgpt.com/plugins), choose the + button, then Add custom MCP server.',
+      'Name it Kivo. Under Connection, paste the server address above as the Server URL, and choose OAuth for authentication.',
+      'Read ChatGPT’s warning, choose I understand and want to continue, then Create as a plugin, and install it.',
+      'Sign in to Kivo if asked, and choose Allow.',
+      'In a conversation, type @ and choose Kivo.',
     ],
-    note: 'Which ChatGPT plans include developer-mode connectors is up to OpenAI. Menu names change from time to time; the steps on Kivo’s side stay the same.',
+    note: 'Which ChatGPT plans and workspaces may add custom MCP servers is up to OpenAI, and its menu names change from time to time; the steps on Kivo’s side stay the same. OpenAI’s own guide: developers.openai.com/api/docs/guides/developer-mode.',
   },
   {
     id: 'other', name: 'Other MCP clients', status: 'untested',

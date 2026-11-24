@@ -38,3 +38,22 @@ test('every assistant here is one the Kivo Connect guide lists as supported', ()
   for (const a of ASSISTANTS) assert.equal(MCP_CLIENTS.find(m => m.id === a.id)?.status, 'supported')
   for (const a of ASSISTANTS) assert.match(a.settingsUrl, /^https:\/\//)
 })
+
+// Founder review #17: links are the vendors' documented pages, never invented deep links.
+test('each assistant opens its documented connectors page, with no undocumented parameters', () => {
+  const byId = Object.fromEntries(ASSISTANTS.map(a => [a.id, a]))
+  assert.equal(byId.claude!.settingsUrl, 'https://claude.ai/customize/connectors')
+  assert.equal(byId.chatgpt!.settingsUrl, 'https://chatgpt.com/plugins')
+  for (const a of ASSISTANTS) {
+    const u = new URL(a.settingsUrl)
+    assert.equal(u.search, '', `${a.name}: no query parameters`)
+    assert.equal(u.hash, '', `${a.name}: no fragment`)
+    assert.ok(a.path.some(p => /paste/i.test(p)), `${a.name}: says where the link is pasted`)
+    assert.ok(new URL(a.docsUrl).protocol === 'https:')
+  }
+})
+
+test('no setup text claims Kivo configures the assistant by itself', () => {
+  const words = JSON.stringify([ASSISTANTS, MCP_CLIENTS])
+  assert.doesNotMatch(words, /automatically (adds|configures|sets up)|one[- ]click/i)
+})
