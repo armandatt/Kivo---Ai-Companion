@@ -30,7 +30,7 @@ function whole(): MapPackage {
     rootSubjectIds: ["S-os", "S-dbms", "S-math"], subjects: SUBJECTS, topics: TOPICS.map(t => ({ ...t })), notes: [], resources: LINKS,
     title: "2nd year roadmap", description: null, license: "all-rights-reserved",
     attribution: { creator: "CSE 2nd year", source: null, packageId: null, exportedAt: null }, privateNotesLeftOut: 0,
-  });
+  }).pkg;
 }
 
 describe("whole-map packages (format 2)", () => {
@@ -44,8 +44,8 @@ describe("whole-map packages (format 2)", () => {
     expect(validatePackage(pkg).ok).toBe(true);
   });
 
-  it("one subject is still format 1, so older Kivo can open it", () => {
-    const one = buildPackage({ rootSubjectId: "S-os", subjects: SUBJECTS, topics: TOPICS.map(t => ({ ...t })), notes: [], resources: LINKS, title: "OS", description: null, license: "all-rights-reserved", attribution: { creator: null, source: null, packageId: null, exportedAt: null }, privateNotesLeftOut: 0 });
+  it("buildPackage still makes format 1 for one subject when no format is asked (V1 fixtures)", () => {
+    const one = buildPackage({ rootSubjectId: "S-os", subjects: SUBJECTS, topics: TOPICS.map(t => ({ ...t })), notes: [], resources: LINKS, title: "OS", description: null, license: "all-rights-reserved", attribution: { creator: null, source: null, packageId: null, exportedAt: null }, privateNotesLeftOut: 0 }).pkg;
     expect(one.format).toBe(MAP_FORMAT_V1);
     expect(packageRoots(one)).toHaveLength(1);
     expect(one.resources.map(r => r.title).sort()).toEqual(["Banker's notes", "Deadlock lecture", "Fork man page"]);

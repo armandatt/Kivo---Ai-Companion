@@ -318,6 +318,33 @@ export async function createNote(profileId: string, raw: unknown): Promise<Write
   return { ok: true, note: toDetail(row, await linksOf(profileId, row)) };
 }
 
+// One note made inside the caller's transaction (an import records that it
+// made it in the same transaction, so a stopped import never makes it twice).
+// Checked as createNote checks one; the subject must be the learner's.
+export async function createNoteIn(
+  tx: Pick<typeof prisma, "novaNote" | "novaSubject">,
+  profileId: string,
+  raw: { title: string; body: string; subjectId: string | null; topicName: string | null },
+): Promise<{ ok: true; id: string } | { ok: false; error: string; message: string }> {
+  const parsed = parseNoteInput(raw, true);
+  if (!parsed.ok) return parsed;
+  const { title, body, subjectId, topicName } = parsed.changes;
+  if (subjectId && (await tx.novaSubject.count({ where: { id: subjectId, profileId } })) !== 1) return UNKNOWN_SUBJECT;
+  const row = await tx.novaNote.create({ data: { profileId, title: title!, body: body ?? "", subjectId: subjectId ?? null, topicName: topicName ?? null }, select: { id: true } });
+  return { ok: true, id: row.id };
+}
+
+/** Notes of the learner's, whole, by id (an import reading back what it made). */
+export async function notesByIds(profileId: string, ids: string[]): Promise<Array<{ id: string; title: string; body: string; subjectId: string | null; topicName: string | null }>> {
+  if (ids.length === 0) return [];
+  return prisma.novaNote.findMany({ where: { profileId, id: { in: ids } }, select: { id: true, title: true, body: true, subjectId: true, topicName: true } });
+}
+
+/** The learner's notes filed nowhere (a whole-map export says how many it leaves out). */
+export async function unfiledNoteCount(profileId: string): Promise<number> {
+  return prisma.novaNote.count({ where: { profileId, subjectId: null } });
+}
+
 // A workspace's notes (product/workspaces.ts), inside its transaction, with
 // the learner's approval of the plan they were in. Each is checked as
 // createNote checks one. A note never replaces another: one whose title the
@@ -444,6 +471,16 @@ export async function notesForExport(profileId: string, noteIds: string[], subje
   return prisma.novaNote.findMany({
     where:   { profileId, id: { in: ids }, subjectId: { in: subjectIds } },
     orderBy: { createdAt: "asc" },
+    select:  { id: true, title: true, body: true, subjectId: true, topicName: true },
+  });
+}
+
+/** Every note of the learner's filed under these subjects, whole, oldest first (a full map export). */
+export async function notesInSubjectsForExport(profileId: string, subjectIds: string[], take: number): Promise<Array<{ id: string; title: string; body: string; subjectId: string | null; topicName: string | null }>> {
+  if (subjectIds.length === 0) return [];
+  return prisma.novaNote.findMany({
+    where:   { profileId, subjectId: { in: subjectIds } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }], take,
     select:  { id: true, title: true, body: true, subjectId: true, topicName: true },
   });
 }

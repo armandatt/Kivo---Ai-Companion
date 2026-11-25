@@ -89,7 +89,9 @@ test("import makes an independent copy: new ids, the same nesting, notes filed, 
 
   const preview = await previewImport(B.profileId, file.bytes);
   assert.ok(preview.ok);
-  assert.deepEqual(preview.counts, { subjects: 3, topics: 4, notes: 1, links: 0, edges: 2 + 4 + 2 + 1, nestedSubjects: 2 });
+  assert.deepEqual(preview.counts, { subjects: 3, topics: 4, notes: 1, links: 0, edges: 2 + 4 + 2 + 1, nestedSubjects: 2, images: 0, files: 0, tasks: 0, topicDetails: 0 });
+  assert.equal(preview.format, "kivo.map/2");
+  assert.equal(preview.storageBytes, 0);
   assert.deepEqual(preview.renames, [{ from: "B.Tech CSE", to: "B.Tech CSE (imported)" }]);
   assert.equal(preview.job, null);
   assert.equal(await prisma.novaImportJob.count({ where: { profileId: B.profileId } }), 0, "a preview stores nothing");
@@ -112,7 +114,7 @@ test("import makes an independent copy: new ids, the same nesting, notes filed, 
   const about = notes.find(x => x.title.startsWith("About this map"))!;
   assert.equal(about.subjectId, top.id);
   const aboutRow = await prisma.novaNote.findUnique({ where: { id: about.id }, select: { body: true } });
-  assert.match(aboutRow!.body, /Made by: Kivo/); assert.match(aboutRow!.body, /CC BY 4\.0/); assert.match(aboutRow!.body, /1 image in notes/);
+  assert.match(aboutRow!.body, /Made by: Kivo/); assert.match(aboutRow!.body, /CC BY 4\.0/); assert.match(aboutRow!.body, /1 image the creator's notes named but that could not be carried/);
   assert.equal((await loadStudyStructure(A.profileId)).version, sourceBefore.version, "the source never changes");
   const job = await prisma.novaImportJob.findFirstOrThrow({ where: { profileId: B.profileId } });
   assert.equal(job.status, "complete"); assert.equal(job.pkg, null, "the package is not kept once done");
@@ -168,14 +170,14 @@ test("a stopped import resumes where it stopped and makes nothing twice; another
   // Wind the job back to "failed in the notes stage after the first note",
   // as if the server stopped there: the second note and the source note go.
   const job = await prisma.novaImportJob.findFirstOrThrow({ where: { profileId: D.profileId } });
-  const progress = job.progress as { notesDone: string[]; aboutNoteId: string | null };
+  const progress = job.progress as { notesDone: string[]; noteIds: Record<string, string>; aboutNoteId: string | null };
   const notesNow = (await listNotes(D.profileId)).notes;
   await prisma.novaNote.deleteMany({ where: { id: { in: notesNow.filter(x => x.title === "Parsers" || x.title.startsWith("About this map")).map(x => x.id) } } });
   const unpacked = await previewImport(D.profileId, file.bytes);
   assert.ok(unpacked.ok);
   const { unpackArchive } = await import("../kivo-archive.js");
   const pkg = (unpackArchive(file.bytes) as { pkg: unknown }).pkg;
-  await prisma.novaImportJob.update({ where: { id: job.id }, data: { status: "failed", stage: "notes", pkg: pkg as never, progress: { ...progress, notesDone: [progress.notesDone[0]!], aboutNoteId: null } as never, completedAt: null } });
+  await prisma.novaImportJob.update({ where: { id: job.id }, data: { status: "failed", stage: "notes", pkg: pkg as never, progress: { ...progress, notesDone: [progress.notesDone[0]!], noteIds: { [progress.notesDone[0]!]: progress.noteIds[progress.notesDone[0]!]! }, aboutNoteId: null } as never, completedAt: null } });
 
   const E = await learner();
   const stranger = await resumeImport(E.profileId, job.id);
@@ -196,7 +198,7 @@ test("a map larger than one batch of edits is made in several, and read back who
     subjects.push({ id: `s${i}`, name: `Unit ${i + 1}`, parentId: "root" });
     for (let j = 0; j < 3; j++) topics.push({ id: `t${i}_${j}`, subjectId: `s${i}`, name: `Topic ${i + 1}.${j + 1}`, parentId: j === 0 ? null : `t${i}_0`, kind: null, position: j, archived: false });
   }
-  const pkg = buildPackage({ rootSubjectId: "root", subjects, topics, notes: [], resources: [], title: "Big Map", description: null, license: "all-rights-reserved", attribution: { creator: null, source: null, packageId: null, exportedAt: null }, privateNotesLeftOut: 0 });
+  const pkg = buildPackage({ rootSubjectId: "root", subjects, topics, notes: [], resources: [], title: "Big Map", description: null, license: "all-rights-reserved", attribution: { creator: null, source: null, packageId: null, exportedAt: null }, privateNotesLeftOut: 0 }).pkg;
   const { bytes } = packArchive(pkg);
   const F = await learner();
   const r = await startImport(F.profileId, bytes);

@@ -29,7 +29,7 @@ function sample(): MapPackage {
     title: "Bennett B.Tech CSE · Year 3", description: "Third-year subjects.", license: "cc-by-4.0",
     attribution: { creator: "Kivo", source: "Kivo curated maps", packageId: null, exportedAt: null },
     privateNotesLeftOut: 1,
-  });
+  }).pkg;
 }
 
 describe("map package (graph and content)", () => {

@@ -9,6 +9,8 @@
 import { prisma } from "@repo/db/client";
 import { ownsNote } from "./notes";
 import { isClientKey } from "./pdf-highlights";
+import { imageInfo, type ImageType } from "./image-info";
+export { imageInfo };
 
 export const NOTE_IMAGE_BYTES_MAX = 2_500_000;
 export const NOTE_IMAGE_SIDE_MAX = 8_000;
@@ -16,37 +18,6 @@ export const NOTE_IMAGE_REQUESTS_PER_MINUTE = 20;
 // Base64 is a third larger, plus the few fields beside it.
 export const NOTE_IMAGE_BODY_MAX = Math.ceil(NOTE_IMAGE_BYTES_MAX * 4 / 3) + 8_000;
 export const NOTE_IMAGE_SCHEME = "kivo-image:";
-
-type ImageType = "image/png" | "image/jpeg" | "image/webp";
-
-// The type and size the bytes say, or null when they are none of the three.
-export function imageInfo(b: Buffer): { type: ImageType; width: number; height: number } | null {
-  if (b.length >= 24 && b[0] === 0x89 && b.subarray(1, 4).toString("latin1") === "PNG" && b.subarray(12, 16).toString("latin1") === "IHDR") {
-    return { type: "image/png", width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
-  }
-  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
-    // The first start-of-frame marker holds the size.
-    let at = 2;
-    while (at + 9 < b.length) {
-      if (b[at] !== 0xff) { at++; continue; }
-      const marker = b[at + 1]!;
-      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { at += 2; continue; }
-      const length = b.readUInt16BE(at + 2);
-      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-        return { type: "image/jpeg", height: b.readUInt16BE(at + 5), width: b.readUInt16BE(at + 7) };
-      }
-      at += 2 + length;
-    }
-    return null;
-  }
-  if (b.length >= 30 && b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") {
-    const chunk = b.subarray(12, 16).toString("latin1");
-    if (chunk === "VP8X") return { type: "image/webp", width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3) };
-    if (chunk === "VP8 ") return { type: "image/webp", width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
-    if (chunk === "VP8L") { const bits = b.readUInt32LE(21); return { type: "image/webp", width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) }; }
-  }
-  return null;
-}
 
 export interface NoteImageInput { noteId: string; data: string; clientKey: string; sourceUrl?: string | null; sourceTitle?: string | null; page?: number | null }
 export type NoteImageResult =
@@ -247,4 +218,30 @@ export async function noteImageBytesForAccount(userId: string): Promise<number> 
     WHERE m."platformChatId" = ${`web:${userId}`}
        OR m."platformChatId" = (SELECT "telegramChatId" FROM "UserProfile" WHERE "userId" = ${userId})`;
   return Number(rows[0]?.bytes ?? 0);
+}
+
+// The images on these notes of the learner's, with their bytes (an export of
+// the notes), oldest first.
+export async function imagesOfNotes(profileId: string, noteIds: string[]): Promise<Array<{ id: string; noteId: string; mimeType: string; width: number; height: number; bytes: Uint8Array; sourceUrl: string | null; sourceTitle: string | null; page: number | null }>> {
+  if (noteIds.length === 0) return [];
+  const rows = await prisma.novaNoteImage.findMany({
+    where: { profileId, noteId: { in: noteIds } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, noteId: true, mimeType: true, width: true, height: true, bytes: true, sourceUrl: true, sourceTitle: true, page: true },
+  });
+  return rows.map(r => ({ ...r, bytes: new Uint8Array(r.bytes) }));
+}
+
+/** The sizes of the images on these notes (an export preview), without the bytes. */
+export async function imageSizesOfNotes(profileId: string, noteIds: string[]): Promise<Array<{ id: string; noteId: string; bytes: number }>> {
+  if (noteIds.length === 0) return [];
+  const rows = await prisma.$queryRaw<Array<{ id: string; noteId: string; bytes: number }>>`
+    SELECT id, "noteId", octet_length(bytes)::int AS bytes FROM "NovaNoteImage" WHERE "profileId" = ${profileId} AND "noteId" = ANY(${noteIds})`;
+  return rows;
+}
+
+/** Images made by these keys (reading an import back), with their bytes' fingerprint. */
+export async function imagesByKeys(profileId: string, clientKeys: string[]): Promise<Array<{ id: string; noteId: string; clientKey: string; bytes: Uint8Array }>> {
+  if (clientKeys.length === 0) return [];
+  const rows = await prisma.novaNoteImage.findMany({ where: { profileId, clientKey: { in: clientKeys } }, select: { id: true, noteId: true, clientKey: true, bytes: true } });
+  return rows.map(r => ({ ...r, bytes: new Uint8Array(r.bytes) }));
 }

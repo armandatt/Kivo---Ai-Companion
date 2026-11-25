@@ -3,8 +3,11 @@
 // Import and export Knowledge Maps as .kivo files (docs/KIVO_PACKAGES.md).
 // Two pages, two actions (founder review #10): /map/share and /map/import.
 // Import: choose a file → Kivo checks it → preview → Import → open the map.
-// Export: the whole map or one subject → a name → Download. Notes, links,
-// licence and credit are under "More options" with safe defaults (#14).
+// Export: the whole map or one subject → a name → Download. Everything in it
+// goes in by default (kivo.map/2: notes with their images and files, saved
+// pages, task definitions, what each topic's plan says); what doesn't is said
+// before the download. Notes, links, tasks, licence and credit are under
+// "More options" (#14).
 // Everything is decided on the server (packages/api/src/portable); this page
 // sends the file or the choices and shows what comes back.
 
@@ -33,16 +36,43 @@ const LICENCE_NAMES: Record<string, string> = {
   'cc0-1.0': 'Free for anyone (CC0)',
 }
 
+type Excluded = {
+  noteImages: number; privateNotes: number; archivedTopics?: number; unfiledNotes?: number; unfiledPages?: number; passages?: number
+  pagesOverLimit?: number; imagesNotCarried?: number; filesNotCarried?: number; taskProgress?: true; pagePersonalState?: true
+}
 type Preview = {
   ok: true; packageId: string; title: string; description: string | null; creator: string | null; source: string | null; license: string; exportedAt: string | null
-  counts: { subjects: number; topics: number; notes: number; links: number; edges: number; nestedSubjects: number }
-  excluded: { noteImages: number; privateNotes: number }
+  format?: string
+  counts: { subjects: number; topics: number; notes: number; links: number; edges: number; nestedSubjects: number; images?: number; files?: number; tasks?: number; topicDetails?: number }
+  excluded: Excluded
   renames: Array<{ from: string; to: string }>; outline: Array<{ name: string; depth: number; topics: number }>
+  storageBytes?: number; taskRoom?: number; copies?: number
   job: { id: string; status: string; rootSubjectId: string | null } | null
 }
-type ImportResult = { ok: true; status: 'complete'; jobId: string; rootSubjectId: string; rootSubjectIds?: string[]; already: boolean; counts: { subjects: number; topics: number; notes: number; links?: number; linksAlreadySaved?: number } }
+type Counts = { subjects: number; topics: number; notes: number; links?: number; linksAlreadySaved?: number; images?: number; files?: number; tasks?: number; topicDetails?: number }
+type ImportResult = { ok: true; status: 'complete'; jobId: string; rootSubjectId: string; rootSubjectIds?: string[]; already: boolean; counts: Counts }
   | { ok: true; status: 'running'; jobId: string }
-  | { ok: false; status?: string; jobId?: string; message: string }
+  | { ok: false; status?: string; jobId?: string; reason?: string; found?: 'map' | 'note'; message: string }
+
+/** Bytes as people read them: "640 KB", "3.4 MB". */
+export const size = (b: number) => b >= 1_000_000 ? `${(b / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(b / 1000)).toLocaleString()} KB`
+
+/** What a map file leaves out, in words (import preview and export summary). */
+export function leftOutLines(x: Excluded): string[] {
+  return [
+    x.noteImages ? `${plural(x.noteImages, 'image')} in notes (older file)` : null,
+    x.imagesNotCarried ? `${plural(x.imagesNotCarried, 'image')} a note named but couldn’t carry` : null,
+    x.filesNotCarried ? `${plural(x.filesNotCarried, 'file')} that couldn’t be carried` : null,
+    x.archivedTopics ? plural(x.archivedTopics, 'archived topic') : null,
+    x.unfiledNotes ? `${plural(x.unfiledNotes, 'note')} filed under no subject` : null,
+    x.unfiledPages ? `${plural(x.unfiledPages, 'saved page')} filed under no subject` : null,
+    x.passages ? `${plural(x.passages, 'saved passage')} (highlights from pages)` : null,
+    x.pagesOverLimit ? `${plural(x.pagesOverLimit, 'saved page')} past what one file holds` : null,
+    x.taskProgress ? 'whether tasks were done, and their due dates' : null,
+    x.pagePersonalState ? 'reading status, collections and personal notes on saved pages' : null,
+    'anyone’s progress or scores',
+  ].filter((v): v is string => Boolean(v))
+}
 
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
@@ -85,26 +115,28 @@ function ImportSection() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  // The file is a single note, not a map: say where it goes.
+  const [wrongKind, setWrongKind] = useState(false)
 
   const check = async (f: File) => {
-    setFile(f); setPreview(null); setResult(null); setMessage(null)
-    if (!/\.kivo$/i.test(f.name)) { setState('error'); setMessage('Choose a .kivo file.'); return }
-    if (f.size > 10_000_000) { setState('error'); setMessage('That file is too large for a Kivo map (10 MB at most).'); return }
+    setFile(f); setPreview(null); setResult(null); setMessage(null); setWrongKind(false)
+    if (!/\.kivo$/i.test(f.name)) { setState('error'); setMessage(/\.pdf$/i.test(f.name) ? 'That’s a PDF. Import it as a note from Notes → More → Import a note or PDF.' : 'Choose a .kivo file.'); return }
+    if (f.size > 50_000_000) { setState('error'); setMessage('That file is too large for a Kivo map (50 MB at most).'); return }
     setState('checking')
     try {
       const res = await send('/api/nova/portable/import/preview', f)
       if (res.status === 401) { window.location.href = '/signin?from=/map/import'; return }
-      const body = await res.json() as Preview | { ok: false; message: string }
-      if (!body.ok) { setState('error'); setMessage(body.message); return }
+      const body = await res.json() as Preview | { ok: false; message: string; found?: 'map' | 'note' }
+      if (!body.ok) { setState('error'); setMessage(body.message); setWrongKind(body.found === 'note'); return }
       setPreview(body); setState('ready')
     } catch { setState('error'); setMessage('Could not reach Kivo. Check your connection and try again.') }
   }
 
-  const run = async () => {
+  const run = async (copy = false) => {
     if (!file) return
     setState('importing'); setMessage(null)
     try {
-      let res = await send('/api/nova/portable/import', file)
+      let res = await send(`/api/nova/portable/import${copy ? '?copy=1' : ''}`, file)
       let body = await res.json() as ImportResult
       // Another tab is running the same import: wait for it.
       for (let i = 0; i < 20 && body.ok && body.status === 'running'; i++) {
@@ -120,7 +152,8 @@ function ImportSection() {
 
   const retry = async () => {
     const jobId = result && 'jobId' in result ? result.jobId : preview?.job?.id
-    if (!jobId) return run()
+    // The same file finishes it (its images and files are read from the file).
+    if (!jobId || file) return run()
     setState('importing'); setMessage(null)
     try {
       const res = await fetch(`/api/nova/portable/import/${jobId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
@@ -143,7 +176,7 @@ function ImportSection() {
       </div>
 
       {state === 'checking' && <p role="status" className="mt-4 flex items-center gap-2 text-sm text-foreground/70"><Loader2 className="size-4 animate-spin" /> Looking inside the file…</p>}
-      {message && <p role="alert" className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/8 px-3 py-2 text-sm text-foreground/85">{message}</p>}
+      {message && <p role="alert" className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/8 px-3 py-2 text-sm text-foreground/85">{message}{wrongKind && <> <Link href="/notes/import" className="font-medium text-keppel-300 underline" data-open-note-import>Import it as a note</Link></>}</p>}
 
       {preview && state !== 'done' && (
         <div className="mt-5 space-y-4">
@@ -153,7 +186,9 @@ function ImportSection() {
             <p className="mt-1 text-xs text-foreground/50">{[preview.creator && `By ${preview.creator}`, preview.source, preview.exportedAt && `Exported ${new Date(preview.exportedAt).toLocaleDateString()}`, licenceName(preview.license)].filter(Boolean).join(' · ')}</p>
           </div>
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            {([['Subjects', preview.counts.subjects], ['Topics', preview.counts.topics], ['Notes', preview.counts.notes], ['Links', preview.counts.links]] as const).map(([k, v]) => (
+            {([['Subjects', preview.counts.subjects], ['Topics', preview.counts.topics], ['Notes', preview.counts.notes], ['Saved pages', preview.counts.links],
+              ...(preview.counts.images || preview.counts.files ? [['Images & files', (preview.counts.images ?? 0) + (preview.counts.files ?? 0)] as const] : []),
+              ...(preview.counts.tasks ? [['Tasks', preview.counts.tasks] as const] : [])] as const).map(([k, v]) => (
               <div key={k} className="rounded-xl border border-white/6 px-3 py-2"><dt className="text-[11px] text-foreground/50">{k}</dt><dd className="text-base font-semibold tabular-nums text-foreground">{v.toLocaleString()}</dd></div>
             ))}
           </dl>
@@ -164,9 +199,14 @@ function ImportSection() {
             </ul>
           </details>
           {preview.renames.length > 0 && <p className="text-xs text-foreground/60">You already have {preview.renames.length === 1 ? 'a subject' : 'subjects'} with {preview.renames.length === 1 ? 'this name' : 'these names'}, so the new one will be called {preview.renames.map(r => `“${r.to}”`).join(', ')}. Yours stays exactly as it is.</p>}
-          <p className="text-xs text-foreground/50">Not included: {[preview.excluded.noteImages ? `${preview.excluded.noteImages} photos in notes` : null, 'anyone’s progress or scores'].filter(Boolean).join(' and ')}.</p>
+          {preview.storageBytes ? <p className="text-xs text-foreground/60" data-import-storage>Its images and files use {size(preview.storageBytes)} of your storage.</p> : null}
+          {preview.counts.topicDetails ? <p className="text-xs text-foreground/60">{plural(preview.counts.topicDetails, 'topic')} come{preview.counts.topicDetails === 1 ? 's' : ''} with an explanation from the plan.</p> : null}
+          {preview.counts.tasks && preview.taskRoom !== undefined && preview.counts.tasks > preview.taskRoom
+            ? <p className="text-xs text-amber-200/90">This map has {plural(preview.counts.tasks, 'task')}; you have room for {preview.taskRoom} more open tasks. Finish or remove some first.</p> : null}
+          <p className="text-xs text-foreground/50" data-import-left-out>Not included: {leftOutLines(preview.excluded).join('; ')}.</p>
           {preview.job?.status === 'complete'
-            ? <p className="text-sm text-foreground/75">You’ve already added this map. <Link className="text-keppel-300 underline" href={importedMapHref(preview.job.rootSubjectId)}>Open it</Link></p>
+            ? <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground/75">You’ve already added this map. <Link className="text-keppel-300 underline" href={importedMapHref(preview.job.rootSubjectId)}>Open it</Link>
+                <button type="button" onClick={() => void run(true)} disabled={state === 'importing'} className="text-foreground/60 underline hover:text-foreground" data-import-copy>Add another copy</button></p>
             : <button type="button" onClick={() => void (preview.job ? retry() : run())} disabled={state === 'importing'} className={BUTTON_PRIMARY}>
                 {state === 'importing' ? <><Loader2 className="size-4 animate-spin" /> Adding to your Kivo…</> : preview.job ? 'Finish adding it' : 'Add to my Kivo'}
               </button>}
@@ -176,7 +216,9 @@ function ImportSection() {
       {state === 'done' && result?.ok && result.status === 'complete' && (
         <div role="status" className="mt-5 rounded-xl border border-keppel-400/30 bg-keppel-400/8 px-4 py-3 text-sm text-foreground/85">
           <p className="font-medium text-foreground">{result.already ? 'This map is already in your Kivo.' : 'Added to your Kivo 🎉'}</p>
-          <p className="mt-1">{[plural(result.counts.subjects, 'subject'), plural(result.counts.topics, 'topic'), plural(result.counts.notes, 'note'), result.counts.links ? `${plural(result.counts.links, 'link')} (in your Saved pages too)` : null].filter(Boolean).join(', ')}. It’s your copy now, so change anything you like.</p>
+          <p className="mt-1">{[plural(result.counts.subjects, 'subject'), plural(result.counts.topics, 'topic'), plural(result.counts.notes, 'note'),
+            result.counts.images ? plural(result.counts.images, 'image') : null, result.counts.files ? plural(result.counts.files, 'file') : null,
+            result.counts.links ? `${plural(result.counts.links, 'saved page')}` : null, result.counts.tasks ? plural(result.counts.tasks, 'task') : null].filter(Boolean).join(', ')}. It’s your copy now, so change anything you like.</p>
           {result.counts.linksAlreadySaved ? <p className="mt-1 text-foreground/65">{plural(result.counts.linksAlreadySaved, 'link')} you’d already saved stayed where you filed {result.counts.linksAlreadySaved === 1 ? 'it' : 'them'}.</p> : null}
           <Link href={importedMapHref(result.rootSubjectId, result.rootSubjectIds)} className={cn(BUTTON_PRIMARY, 'mt-3 inline-flex')} data-open-imported>Open the map</Link>
         </div>
@@ -192,7 +234,10 @@ const licenceName = (id: string) => LICENCE_NAMES[id] ?? id
 type Subject = { id: string; name: string; parentId?: string | null }
 type ExportPreview = {
   ok: true; scope?: 'subject' | 'map'; root: { id: string; name: string }; roots?: Array<{ id: string; name: string }>
-  subjects: Array<{ id: string; name: string; depth: number }>; topics: number; notes: Array<{ id: string; title: string; subjectId: string | null }>; links: number; linksLeftOut?: number
+  subjects: Array<{ id: string; name: string; depth: number }>; topics: number; notes: Array<{ id: string; title: string; subjectId: string | null; images?: number; files?: number }>; links: number; linksLeftOut?: number
+  topicDetails?: number; images?: number; files?: number; storageBytes?: number; tasks?: number
+  leftOut?: { archivedTopics: number; unfiledNotes: number; unfiledPages: number; passages: number; notesOverLimit: number; tasksOverLimit: number; tooLarge: boolean }
+  limits?: { resources: number; notes: number; assetBytes: number }
 }
 const WHOLE_MAP = 'map'
 
@@ -203,6 +248,7 @@ function ExportSection() {
   const [preview, setPreview] = useState<ExportPreview | null>(null)
   const [noteIds, setNoteIds] = useState<Set<string>>(new Set())
   const [links, setLinks] = useState(true)
+  const [tasks, setTasks] = useState(true)
   const [license, setLicense] = useState('all-rights-reserved')
   const [credit, setCredit] = useState('')
   // The file's name, and the map's title when someone opens it.
@@ -224,7 +270,8 @@ function ExportSection() {
     try {
       const res = await fetch('/api/nova/portable/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'preview', rootSubjectId: id }) })
       const body = await res.json() as ExportPreview | { ok: false; message: string }
-      if (body.ok) setPreview(body); else setMessage(body.message)
+      // Everything is in by default: every note ticked.
+      if (body.ok) { setPreview(body); setNoteIds(new Set(body.notes.map(n => n.id))) } else setMessage(body.message)
     } catch { setMessage('Could not reach Kivo. Try again.') }
     setBusy(null)
   }, [subjects, named])
@@ -239,7 +286,7 @@ function ExportSection() {
     if (!preview) return
     setBusy('exporting'); setMessage(null)
     try {
-      const res = await fetch('/api/nova/portable/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'export', rootSubjectId: rootId, noteIds: [...noteIds], includeLinks: links, license, credit, title: name.trim() || undefined }) })
+      const res = await fetch('/api/nova/portable/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'export', rootSubjectId: rootId, noteIds: allNotes ? undefined : [...noteIds], includeLinks: links, includeTasks: tasks, license, credit, title: name.trim() || undefined }) })
       if (!res.ok) { const b = await res.json().catch(() => null) as { message?: string } | null; setMessage(b?.message ?? 'The file couldn’t be made. Try again.'); setBusy(null); return }
       const blob = await res.blob()
       const cd = res.headers.get('content-disposition') ?? ''
@@ -254,6 +301,10 @@ function ExportSection() {
   }
 
   const whole = rootId === WHOLE_MAP
+  // Every note ticked: the server takes every note in the scope (no list sent).
+  const allNotes = !!preview && noteIds.size === preview.notes.length
+  const chosen = preview ? preview.notes.filter(n => noteIds.has(n.id)) : []
+  const media = chosen.reduce((m, n) => ({ images: m.images + (n.images ?? 0), files: m.files + (n.files ?? 0) }), { images: 0, files: 0 })
   const choice = (on: boolean) => cn('rounded-lg px-3 py-1.5 text-sm transition-colors', on ? 'bg-white/10 font-medium text-foreground' : 'text-foreground/65 hover:text-foreground')
   return (
     <section aria-labelledby="export-h" className={CARD}>
@@ -278,9 +329,19 @@ function ExportSection() {
           {busy === 'loading' && <p role="status" className="flex items-center gap-2 text-sm text-foreground/70"><Loader2 className="size-4 animate-spin" /> Getting your map ready…</p>}
           {preview && (
             <p className="text-sm text-foreground/70" data-export-summary>
-              {whole && preview.roots ? `${plural(preview.roots.length, 'top-level subject')} · ` : ''}{plural(preview.subjects.length, 'subject')} · {plural(preview.topics, 'topic')}{links && preview.links ? ` · ${plural(preview.links, 'saved link')}` : ''}{noteIds.size ? ` · ${plural(noteIds.size, 'note')}` : ''}
+              {[whole && preview.roots ? plural(preview.roots.length, 'top-level subject') : null, plural(preview.subjects.length, 'subject'), plural(preview.topics, 'topic'),
+                noteIds.size ? plural(noteIds.size, 'note') : null, media.images ? plural(media.images, 'image') : null, media.files ? plural(media.files, 'file') : null,
+                links && preview.links ? plural(preview.links, 'saved page') : null, tasks && preview.tasks ? plural(preview.tasks, 'task') : null].filter(Boolean).join(' · ')}
+              {allNotes && preview.storageBytes ? <span className="text-foreground/50"> · {size(preview.storageBytes)}</span> : null}
             </p>
           )}
+          {preview?.leftOut && (
+            <p className="text-xs text-foreground/50" data-export-left-out>
+              Not included: {leftOutLines({ noteImages: 0, privateNotes: 0, archivedTopics: preview.leftOut.archivedTopics, unfiledNotes: preview.leftOut.unfiledNotes, unfiledPages: preview.leftOut.unfiledPages, passages: preview.leftOut.passages, pagesOverLimit: preview.linksLeftOut, taskProgress: true, pagePersonalState: true }).join('; ')}.
+            </p>
+          )}
+          {preview?.leftOut?.tooLarge && <p role="alert" className="text-sm text-amber-200">The images and files in this map are more than one file can hold ({preview.limits ? size(preview.limits.assetBytes) : '40 MB'}). Share one subject at a time, or untick some notes.</p>}
+          {preview?.leftOut?.notesOverLimit ? <p role="alert" className="text-sm text-amber-200">This map has more notes than one file holds. Share one subject at a time.</p> : null}
 
           <label className="block text-xs text-foreground/60" htmlFor="export-name">File name
             <span className="mt-1 flex items-center rounded-xl border border-white/10 bg-background focus-within:border-keppel-400/60">
@@ -294,13 +355,13 @@ function ExportSection() {
           {preview && (
             <details className="group rounded-xl border border-white/8 px-3 py-2" data-export-more>
               <summary className="flex cursor-pointer list-none items-center justify-between text-sm text-foreground/75">
-                <span>More options <span className="text-foreground/45">· notes, links, licence, credit</span></span>
+                <span>More options <span className="text-foreground/45">· notes, saved pages, tasks, licence, credit</span></span>
                 <ChevronDown aria-hidden className="size-4 transition-transform group-open:rotate-180" />
               </summary>
               <div className="mt-3 space-y-4 pb-1">
                 <fieldset>
                   <legend className="flex w-full items-center justify-between text-xs text-foreground/60">
-                    <span>Notes to include · {noteIds.size} of {preview.notes.length}</span>
+                    <span>Notes · {noteIds.size} of {preview.notes.length}</span>
                     {preview.notes.length > 1 && (
                       <button type="button" onClick={() => setNoteIds(noteIds.size === preview.notes.length ? new Set() : new Set(preview.notes.map(n => n.id)))} className="text-keppel-300 hover:underline" data-export-all-notes>
                         {noteIds.size === preview.notes.length ? 'Clear all' : 'Select all'}
@@ -314,12 +375,15 @@ function ExportSection() {
                       ))}
                     </ul>
                   )}
-                  <p className="mt-1 text-[11px] text-foreground/45">Notes stay private unless you tick them. Share only notes you wrote or may share; photos in notes aren’t included yet.</p>
+                  <p className="mt-1 text-[11px] text-foreground/45">Every note on this part of your map is included, with its images and files. Kivo has no private-note setting, so untick anything you’d rather keep to yourself.</p>
                 </fieldset>
                 {preview.links > 0 && (
                   <label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={links} onChange={e => setLinks(e.target.checked)} data-export-links /> Include my {plural(preview.links, 'saved link')}</label>
                 )}
-                {preview.linksLeftOut ? <p className="text-[11px] text-amber-200/90">A file holds up to 500 links, so {plural(preview.linksLeftOut, 'link')} won’t be included. Share one subject at a time to include them all.</p> : null}
+                {preview.linksLeftOut ? <p className="text-[11px] text-amber-200/90">A file holds up to {(preview.limits?.resources ?? 2000).toLocaleString()} saved pages, so {plural(preview.linksLeftOut, 'page')} won’t be included. Share one subject at a time to include them all.</p> : null}
+                {preview.tasks ? (
+                  <label className="flex items-center gap-2 text-sm text-foreground/80"><input type="checkbox" checked={tasks} onChange={e => setTasks(e.target.checked)} data-export-tasks /> Include {plural(preview.tasks, 'task')} (what to do, not whether you did it)</label>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-xs text-foreground/60">Can others pass it on?
                     <select value={license} onChange={e => setLicense(e.target.value)} className="mt-1 w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground" data-export-licence>

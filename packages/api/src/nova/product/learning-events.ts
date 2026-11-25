@@ -701,14 +701,27 @@ export async function listResourceLinks(profileId: string, take: number): Promis
 export async function listFiledLinks(profileId: string, subjectIds: string[], take: number): Promise<Array<{
   id: string; title: string; url: string; domain: string; subjectId: string; topicName: string | null;
   description: string | null; resourceType: string | null; siteName: string | null;
+  canonicalUrl: string | null; imageUrl: string | null; author: string | null; publishedAt: Date | null; durationSeconds: number | null; tags: string[];
 }>> {
   if (subjectIds.length === 0) return [];
   const rows = await prisma.novaLearningEvent.findMany({
     where:   { profileId, subjectId: { in: subjectIds }, eventType: "resource_saved" },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take,
-    select:  { id: true, title: true, url: true, domain: true, subjectId: true, topicName: true, description: true, resourceType: true, siteName: true },
+    select:  {
+      id: true, title: true, url: true, domain: true, subjectId: true, topicName: true, description: true, resourceType: true, siteName: true,
+      canonicalUrl: true, imageUrl: true, author: true, publishedAt: true, durationSeconds: true, tags: true,
+    },
   });
   return rows.map(r => ({ ...r, subjectId: r.subjectId! }));
+}
+
+/** What a map export leaves out of the learner's saved pages: pages filed nowhere, and passages (selection saves) under these subjects. */
+export async function savedPagesLeftOut(profileId: string, subjectIds: string[]): Promise<{ unfiledPages: number; passages: number }> {
+  const [unfiledPages, passages] = await Promise.all([
+    prisma.novaLearningEvent.count({ where: { profileId, eventType: "resource_saved", subjectId: null } }),
+    subjectIds.length ? prisma.novaLearningEvent.count({ where: { profileId, eventType: "selection_saved", subjectId: { in: subjectIds } } }) : 0,
+  ]);
+  return { unfiledPages, passages };
 }
 
 export interface ImportedLink {
@@ -716,6 +729,9 @@ export interface ImportedLink {
   url: string; title: string; domain: string;
   subjectId: string; topicName: string | null;
   description: string | null; resourceType: string | null; siteName: string | null;
+  // Optional (kivo.map/2): the rest of what the page said about itself, and
+  // the creator's tags. Each is checked here as on any save.
+  canonicalUrl?: string | null; imageUrl?: string | null; author?: string | null; publishedAt?: string | null; durationSeconds?: number | null; tags?: string[];
   provenance: string;                 // where it came from, kept as the page's note
 }
 export type ImportedLinkOutcome = "created" | "already_imported" | "already_saved" | "filed_existing" | "invalid";
@@ -753,8 +769,13 @@ export async function importSavedLink(profileId: string, link: ImportedLink, now
     return { outcome: done.count ? "filed_existing" : "already_saved", id: existing.id };
   }
 
-  const meta: PageMeta = { ...NO_META, description: link.description?.slice(0, 600) || null, siteName: link.siteName?.slice(0, 120) || null };
+  // What the page said about itself, checked as the extension's own words are on a save.
+  const read = readPageMeta({ description: link.description, imageUrl: link.imageUrl, author: link.author, siteName: link.siteName, publishedAt: link.publishedAt, duration: link.durationSeconds }, now);
+  const meta: PageMeta = { ...NO_META, ...read, description: read.description?.slice(0, 600) || null, siteName: read.siteName?.slice(0, 120) || null };
   const cols = metaColumns(url, meta);
+  const canonical = typeof link.canonicalUrl === "string" ? normalizeResourceUrl(link.canonicalUrl) : null;
+  const canonicalUrl = canonical && canonical.url !== url ? canonical.url : null;
+  const tags = link.tags?.length ? mergeTags(link.tags, (await learnerTags(profileId)).map(t => t.tag)) : [];
   const kind = (RESOURCE_TYPES as readonly string[]).includes(link.resourceType ?? "") && cols.resourceType === "page" ? link.resourceType as ResourceType : cols.resourceType;
   const domain = normal.domain || link.domain;
   try {
@@ -763,6 +784,7 @@ export async function importSavedLink(profileId: string, link: ImportedLink, now
         profileId, eventType: "resource_saved", source: "kivo_import", clientEventId: link.clientEventId, url, domain: domain.slice(0, 255),
         title: oneLine(link.title).slice(0, EVENT_TITLE_MAX) || domain, subjectId: subject.id, topicName, occurredAt: now,
         filedBy: "learner", processingStatus: "none", ...cols, resourceType: kind, dedupeKey: dedupeKey(url),
+        canonicalUrl, tags,
         personalNote: link.provenance.slice(0, PERSONAL_NOTE_MAX),
       },
       select: { id: true },

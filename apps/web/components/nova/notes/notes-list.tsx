@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { FileText, Inbox, LayoutGrid, MoreHorizontal, Plus, Rows3, Search, Upload } from 'lucide-react'
+import { FileDown, FileText, Inbox, LayoutGrid, MoreHorizontal, Plus, Rows3, Search, Upload } from 'lucide-react'
 import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
@@ -175,6 +175,9 @@ function Ready({ view, onReload, search, onSearch, subjectId, onSubject, topic, 
               </button>
               <Link href="/notes/capture" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-foreground/85 hover:bg-white/5" data-notes-capture>
                 <Upload aria-hidden className="size-4" /> Paste or import a file
+              </Link>
+              <Link href="/notes/import" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-foreground/85 hover:bg-white/5" data-notes-import-kivo>
+                <FileDown aria-hidden className="size-4" /> Import a shared note or PDF
               </Link>
             </div>
           </details>

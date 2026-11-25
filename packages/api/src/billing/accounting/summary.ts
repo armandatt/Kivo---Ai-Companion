@@ -4,6 +4,7 @@
 // credits, tasks, calls, bytes — never tokens.
 
 import { noteImageBytesForAccount } from "../../nova/product/note-images";
+import { noteAttachmentBytesForAccount } from "../../nova/product/note-attachments";
 import { draftFileBytesForAccount } from "../../nova/product/builder";
 import { balancesOf } from "./ledger";
 import { mcpAllowanceOf, type McpAllowanceView } from "./mcp";
@@ -28,16 +29,17 @@ export async function usageViewFor(userId: string, now = new Date()): Promise<Us
   const [nova, browser, storageT] = await Promise.all([
     targetFor(accountKey, "nova_credits", now), targetFor(accountKey, "browser_tasks", now), targetFor(accountKey, "storage_bytes", now),
   ]);
-  const [b, mcp, images, files] = await Promise.all([
+  const [b, mcp, images, files, attachments] = await Promise.all([
     balancesOf(accountKey, [{ product: "nova_credits", periodKey: nova.period.key }, { product: "browser_tasks", periodKey: browser.period.key }]),
     mcpAllowanceOf(userId, now),
     noteImageBytesForAccount(userId),
     draftFileBytesForAccount(userId),
+    noteAttachmentBytesForAccount(userId),
   ]);
   // Held in reservations counts as used: it is not available.
   const novaUsed = (b.get(`nova_credits|${nova.period.key}`)?.committed ?? 0) + (b.get(`nova_credits|${nova.period.key}`)?.reserved ?? 0);
   const tasksUsed = (b.get(`browser_tasks|${browser.period.key}`)?.committed ?? 0) + (b.get(`browser_tasks|${browser.period.key}`)?.reserved ?? 0);
-  const usedBytes = images + files;
+  const usedBytes = images + files + attachments;
   const limitBytes = storageT.limit ?? 0;
   return {
     mode: accountingMode(),

@@ -60,6 +60,8 @@ export const ROUTES: readonly Route[] = [
   { pattern: r("/api/nova/portable/import(?:/preview)?"), category: "import", methods: ["POST"], note: ".kivo upload and import" },
   { pattern: r(`/api/nova/portable/import/${ID}`), category: "import", note: "Resume an import" },
   { pattern: r("/api/nova/portable/export"), category: "export", note: ".kivo export" },
+  { pattern: r("/api/nova/portable/notes/import"), category: "import", methods: ["POST"], note: "A .kivo note or a PDF: preview and import" },
+  { pattern: r("/api/nova/portable/notes/export"), category: "export", note: "One note as .kivo or PDF" },
 
   { pattern: /^\/api\/billing(?:\/(?:checkout|portal|trial))?\/?$/, category: "billing", note: "Plan, checkout, portal" },
 
