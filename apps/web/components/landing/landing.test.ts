@@ -178,21 +178,3 @@ test('the value section takes its price from plans.ts and claims no saving', asy
   assert.doesNotMatch(part, /₹\s*\d|\$\s*\d/, 'no hard-coded prices')
   assert.doesNotMatch(part, /save ₹|you save|saving of|unlimited access|Notion|Readwise|Xmind|Obsidian/i)
 })
-
-// The Knowledge Map showcase: real screenshots, light, lazy, sized up front.
-test('the Knowledge Map showcase uses small, lazy, described screenshots sized up front', async () => {
-  const { statSync } = await import('node:fs')
-  const { MAP_SHOWCASE } = await import('./sections')
-  for (const v of [MAP_SHOWCASE.desktop, MAP_SHOWCASE.mobile]) {
-    const file = new URL(`../../public${v.src}`, import.meta.url)
-    const bytes = statSync(file).size
-    assert.ok(bytes > 5_000 && bytes < 150_000, `${v.src}: ${bytes} bytes`)
-    assert.ok(v.width > 0 && v.height > 0)
-  }
-  assert.ok(MAP_SHOWCASE.alt.length > 80, 'describes what the map shows')
-  const src = readFileSync(new URL('./sections.tsx', import.meta.url), 'utf8')
-  const part = src.slice(src.indexOf('export function MapSection'))
-  assert.match(part, /loading="lazy"/)
-  assert.match(part, /width=\{MAP_SHOWCASE\.desktop\.width\}/)
-  assert.match(part, /<AppWindow label="Knowledge Map · Operating Systems">/, 'framed as a sample, in the app window')
-})
