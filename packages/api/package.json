@@ -106,6 +106,7 @@
     "./nova/product/tone": "./src/nova/product/tone.ts",
     "./nova/types/understanding.types": "./src/nova/types/understanding.types.ts",
     "./nova/product/calendar.types": "./src/nova/product/calendar.types.ts",
+    "./nova/product/calendar-plan.types": "./src/nova/product/calendar-plan.types.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

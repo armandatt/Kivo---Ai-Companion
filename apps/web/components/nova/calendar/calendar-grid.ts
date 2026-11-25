@@ -5,8 +5,8 @@
 
 import type { CalendarDeadlineItem, CalendarEventItem, CalendarTaskItem } from '@repo/api/nova/product/calendar.types'
 
-export type CalendarMode = 'month' | 'week' | 'agenda'
-export const CALENDAR_MODES: readonly CalendarMode[] = ['month', 'week', 'agenda']
+export type CalendarMode = 'day' | 'week' | 'month' | 'agenda'
+export const CALENDAR_MODES: readonly CalendarMode[] = ['day', 'week', 'month', 'agenda']
 export const AGENDA_DAYS = 28
 
 const DAY_MS = 86_400_000
@@ -26,6 +26,7 @@ export function isDay(value: unknown): value is string {
 
 // The days a view shows, first and last, inclusive.
 export function rangeFor(mode: CalendarMode, anchor: string): { from: string; to: string } {
+  if (mode === 'day') return { from: anchor, to: anchor }
   if (mode === 'week') { const from = mondayOf(anchor); return { from, to: addDays(from, 6) } }
   if (mode === 'agenda') return { from: anchor, to: addDays(anchor, AGENDA_DAYS - 1) }
   // A month is drawn as whole weeks, six of them, so the grid never jumps.
@@ -35,6 +36,7 @@ export function rangeFor(mode: CalendarMode, anchor: string): { from: string; to
 
 // The anchor one period earlier (-1) or later (+1).
 export function shift(mode: CalendarMode, anchor: string, by: -1 | 1): string {
+  if (mode === 'day') return addDays(anchor, by)
   if (mode === 'week') return addDays(anchor, 7 * by)
   if (mode === 'agenda') return addDays(anchor, AGENDA_DAYS * by)
   const [y, m] = anchor.split('-').map(Number) as [number, number]
@@ -57,6 +59,7 @@ export const shortDay = (day: string) => fmt(day, { weekday: 'short', day: 'nume
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
 
 export function periodTitle(mode: CalendarMode, anchor: string): string {
+  if (mode === 'day') return dayTitle(anchor)
   if (mode === 'month') return monthTitle(anchor)
   const { from, to } = rangeFor(mode, anchor)
   const sameMonth = from.slice(0, 7) === to.slice(0, 7)
