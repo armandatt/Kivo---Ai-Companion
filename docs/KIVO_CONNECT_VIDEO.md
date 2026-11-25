@@ -28,3 +28,39 @@ Do not show email addresses, other connectors, chat history or personal data. Bl
 4. In `mcp-clients.ts`, set `CONNECT_VIDEO = { src: '/connect/kivo-connect-demo.webm', type: 'video/webm', poster: '/connect/kivo-connect-demo.png', captions: '/connect/kivo-connect-demo.vtt', seconds: <length>, title: 'Connect Claude to Kivo', summary: 'Add, allow, read and save' }`.
 
 The player never autoplays, loads nothing until opened, and carries the captions.
+
+## 25 Nov 2026: page redesigned, recording still blocked
+
+The redesigned guide (`app/(legal)/integrations/kivo-connect/page.tsx`) puts the demonstration in the hero, beside the headline. While `CONNECT_VIDEO` is null it shows **Kivo's real consent screen** (`public/connect/consent-screen.webp`, captured from `/connect/authorize` after a genuine OAuth dynamic registration, for the synthetic local learner "Riya"), captioned as that screen. Setting `CONNECT_VIDEO` swaps the hero to the player; nothing else changes.
+
+**Why the video isn't recorded:** claude.ai and chatgpt.com must reach a public MCP address, so the recording needs (a) production Kivo with a dedicated test account holding only synthetic material, and (b) the owner's own Claude or ChatGPT login to add the connector. Neither was available to the agent, and adding a connector to the owner's personal assistant account was not authorised. No recording was fabricated.
+
+**To record (about 10 minutes):**
+1. Sign up a test Kivo account (an address you control, e.g. a `+kivo-demo` alias). Name it "Riya". Add the subject *Operating Systems* with topics *Paging*, *Deadlocks*, *Memory management*, and one note *Paging cheat sheet* filed under *Paging* (two or three lines; nothing personal).
+2. In a clean browser profile, signed in to that Kivo account and to Claude, record 1920×1080, browser chrome hidden, following the six steps above.
+3. Read: "What do my Kivo notes say about paging?" (the assistant calls `search_notes`/`get_note`). Write: "Save the key points of this chat as a note in Kivo under Deadlocks" (`capture_knowledge`). Optional approval beat: "Move Paging cheat sheet under Memory management" → open the approval link → Approve (`move_note`, `check_approval`).
+4. Finish on the note open in Kivo, filed under Deadlocks.
+
+**Caption script (WebVTT, one cue per beat):**
+```
+WEBVTT
+
+00:00.000 --> 00:06.000
+Kivo Connect: your Kivo knowledge in Claude.
+
+00:06.000 --> 00:18.000
+In Claude, add a custom connector and paste Kivo's address.
+
+00:18.000 --> 00:28.000
+Kivo asks you first: here is exactly what Claude may do. Allow.
+
+00:28.000 --> 00:44.000
+Ask about your own notes. Claude searches Kivo and answers from them.
+
+00:44.000 --> 01:00.000
+Ask it to save what you worked out. It lands in Kivo, filed under the topic.
+
+01:00.000 --> 01:10.000
+Bigger changes wait for your approval in Kivo. Disconnect any time.
+```
+The transcript is the same text; publish it beside the video on the guide.

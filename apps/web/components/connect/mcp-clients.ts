@@ -125,3 +125,34 @@ export const MCP_PERMISSIONS: Array<[scope: string, what: string]> = [
   ['knowledge:write', 'add, describe and connect subjects and topics'],
   ['pages:write', 'save web pages to Kivo and file them on your Knowledge Map'],
 ]
+
+// The guide's three things an assistant can do with Kivo, by tool name: each
+// line on the page is that tool's own description from MCP_TOOLS (never
+// written twice), and each example is something those tools answer.
+// mcp-clients.test.ts checks every name is a tool.
+export const MCP_CAPABILITIES: Array<{ id: string; title: string; summary: string; tools: string[]; asks: string[] }> = [
+  {
+    id: 'find', title: 'Find your knowledge',
+    summary: 'Search your notes, your Knowledge Map and the pages you saved, and open exactly the one you need.',
+    tools: ['search_notes', 'get_note', 'search_saved_pages', 'search_knowledge_nodes', 'global_search'],
+    asks: ['Find my notes about paging', 'What have I saved about LangGraph?'],
+  },
+  {
+    id: 'understand', title: 'Understand where you stand',
+    summary: 'See how a subject is structured, what connects to what, and which topics still have nothing written.',
+    tools: ['get_workspace_structure', 'get_node_connections', 'find_related_content', 'find_knowledge_gaps', 'recommend_connections'],
+    asks: ['Which topics in Operating Systems have no notes yet?', 'What connects to Deadlocks?'],
+  },
+  {
+    id: 'work', title: 'Work with your knowledge',
+    summary: 'Turn a good conversation into notes, add topics, file saved pages and link ideas, all as ordinary Kivo records.',
+    tools: ['capture_knowledge', 'create_note', 'update_note', 'add_knowledge_node', 'save_page', 'link_notes'],
+    asks: ['Save the key ideas from this chat under Operating Systems', 'Add these five topics to my DBMS subject'],
+  },
+]
+
+/** A tool's description and kind, from MCP_TOOLS. */
+export function toolInfo(name: string): { what: string; kind: ToolKind } | null {
+  for (const g of MCP_TOOLS) for (const [n, what, kind] of g.items) if (n === name) return { what, kind }
+  return null
+}
