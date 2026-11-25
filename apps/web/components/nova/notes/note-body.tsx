@@ -9,7 +9,7 @@
 import Link from 'next/link'
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
-  AlertTriangle, BookOpen, BookOpenText, Check, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
+  AlertTriangle, BookOpen, BookOpenText, Check, ChevronRight, ExternalLink, FileDown, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
 } from 'lucide-react'
 import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
@@ -203,6 +203,17 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
           <div className="min-w-0 flex-1 text-foreground/90" role="math" aria-label={`Equation: ${b.tex}`}><Tex tex={b.tex} display /></div>
           {b.tag && <span className="pt-2 font-mono text-xs text-subtle">{b.tag}</span>}
         </div>
+      )
+      case 'file': return (
+        <p key={k} className={`my-4 font-sans ${edge}`} {...span} data-note-file={b.id}>
+          <a href={`/api/nova/notes/files/${encodeURIComponent(b.id)}`} download
+            className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-3 py-2 text-sm text-foreground/85 transition-colors hover:border-keppel-400/50 hover:bg-white/5"
+            title="Download the original file">
+            <FileDown aria-hidden className="size-4 shrink-0 text-keppel-300" />
+            <span className="min-w-0 truncate">{b.name}</span>
+            <span className="shrink-0 text-xs text-subtle">PDF · original</span>
+          </a>
+        </p>
       )
       case 'image': return (
         <figure key={k} className={`my-5 ${edge}`} {...span} data-note-image={b.id}>

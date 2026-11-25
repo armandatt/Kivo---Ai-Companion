@@ -12,7 +12,7 @@ import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { toneStyle } from '../subject-color'
 import { CardFace, CardGround, CardSurface, FILL, MapDefs, plural, short, type At, type CardDetail } from './card-face'
 import { CARD, TREE_EDGES, boundsOf, layoutMap, treeOf, withPositions, type MapLayout } from './layout'
-import { MapCamera } from './map-camera'
+import { MapCamera, snapView } from './map-camera'
 import { MapColors } from './map-colors'
 import { GraphCanvas, type DotPrim, type GlowPrim, type MoverPrim, type Scene, type StrokePrim } from './map-canvas'
 import { subjectColor } from '../subject-color'
@@ -22,6 +22,8 @@ import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
 import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
+import { planFarLabels, type Blocker, type LabelCandidate } from './far-labels'
+import { ARRIVE_PARAM, arrivedFromImport, openingView, opensWithEntrance } from './opening-view'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
@@ -73,8 +75,6 @@ const LENS_BAR = 48
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
 // How far Alt and an arrow key move a card, in map units (Shift for more).
-// The zoom a map too large to fit at a readable size opens at: titles and every link are seen.
-const OPEN_K = 0.44
 // How long leaving a card waits before the focus goes, so moving to the next card does not flicker.
 const HOVER_HOLD_MS = 140
 // How far past the screen, on every side, cards are kept in the page: a share of the screen.
@@ -941,7 +941,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // Depth and motion: the learner's choice on this device (Show menu), and
   // the entrance being played, if any (depth.ts).
   const [motion, setMotion]     = useState<Motion>(() => chosenMotion(store))
-  const [entrance, setEntrance] = useState<(Entrance & { mode: Exclude<EntranceMode, 'none'>; key: string; glide?: boolean; at: number }) | null>(null)
+  const [entrance, setEntrance] = useState<(Entrance & { mode: Exclude<EntranceMode, 'none'>; key: string; glide?: boolean; opening?: boolean; at: number }) | null>(null)
   // Cards and lines that arrived in this visit (an add, a link), and a card
   // just deleted here, drawn leaving while the map is read again.
   const [fresh, setFresh]       = useState<{ nodes: Set<string>; edges: Set<string>; at: number } | null>(null)
@@ -1260,7 +1260,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       camera.moving = false
       camera.settle()
       setGlideCover(null)
-      // The movement rests: the view is committed (the cards are drawn again only for a new zoom).
+      // The movement rests on whole device pixels (snapView: no soft text at a
+      // sub-pixel offset), and the view is committed (the cards are drawn again only for a new zoom).
+      const snapped = snapView(tNow.current, window.devicePixelRatio || 1)
+      if (snapped !== tNow.current) { tNow.current = snapped; camera.set(snapped) }
       if (tNow.current !== drawnView.current) setT(tNow.current)
       // What the pointer rests on now (cards slid under it while the view moved).
       const pt = lastPointer.current
@@ -1391,6 +1394,20 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     return () => window.clearTimeout(id)
   }, [layout.load])
   const entered = useRef<string | null>(null)
+  // Opened from the import page (?arrive=import): read once, then taken out of
+  // the address so a reload or Back is an ordinary visit.
+  // Decided at the first render, before the first fitted view could be remembered.
+  const freshArrival = useRef<boolean | null>(null)
+  if (freshArrival.current === null && typeof window !== 'undefined') {
+    freshArrival.current = arrivedFromImport(window.location.search) && recallView(store, where, picture) === null
+  }
+  useEffect(() => {
+    if (!freshArrival.current) return
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has(ARRIVE_PARAM)) return
+    url.searchParams.delete(ARRIVE_PARAM)
+    window.history.replaceState(window.history.state, '', url.toString())
+  }, [])
   useLayoutEffect(() => {
     if (layoutWait || entered.current === where) return
     const first = entered.current === null
@@ -1399,7 +1416,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const calm = reducedMotion() || motion === 'reduced'
     // Opening the map (Everything or a workspace) always plays the full
     // entrance; going into a card, the brief one. Calm and reduced motion: none.
-    const top = focus === null
+    // A just-imported map opened inside its subject opens as the map does (founder review #16).
+    const top = opensWithEntrance({ top: focus === null, first, arrivedFromImport: freshArrival.current === true, remembered: false })
     const mode = calm ? 'none' : top ? entranceMode({ seen: false, reduced: calm, motion, count: drawn.length, opening: true }) : first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : 'brief'
     markEntered(session, where)
     if (mode === 'none') { setEntrance(null); return }
@@ -1409,16 +1427,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     // picture of all of it; the rest is a pan or a zoom away.
     const el = frame.current
     let to = top ? fitTarget() : null
-    if (to && el && !portrait && to.k < OPEN_K) {
-      const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
-      const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
-      let best = mid, near = Infinity
-      for (const n of drawn) {
-        const p = n.type === 'subject' ? placed.at.get(n.id) : undefined
-        const d = p ? Math.hypot(p.x - mid.x, p.y - mid.y) : Infinity
-        if (p && d < near) { near = d; best = p }
-      }
-      to = { k: OPEN_K, x: Math.round(cw - best.x * OPEN_K), y: Math.round(ch - best.y * OPEN_K) }
+    if (to && el) {
+      const subjectsAt = drawn.flatMap(n => { const p = n.type === 'subject' ? placed.at.get(n.id) : undefined; return p ? [p] : [] })
+      to = openingView(to, { width: el.clientWidth - besidePanel(el), height: el.clientHeight }, subjectsAt, portrait)
     }
     // The cascade (cards rising in level by level, lines drawing) is played by
     // the cards the opening view shows; the rest are simply there. So a map
@@ -1431,7 +1442,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     // drawing (CSS, map-cam-glide): no card is repainted for it. A smaller
     // map's camera is moved frame by frame, as before.
     const glide = mode === 'full' && top && drawn.length > LARGE_MAP
-    setEntrance({ ...plan, total: glide ? Math.max(plan.total, CAMERA_MS) : plan.total, mode: played, key: where, glide, at: performance.now() })
+    setEntrance({ ...plan, total: glide ? Math.max(plan.total, CAMERA_MS) : plan.total, mode: played, key: where, glide, opening: top, at: performance.now() })
     if (to && el && top) {
       cameraEntrance.current = true
       stopAnim()
@@ -2181,6 +2192,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // A hover or a selection wakes what travels along the lines.
   useEffect(() => { if (focusId) wakeRef.current() }, [focusId])
 
+  // Far out, which subjects' regions are wide enough for a plate (name and
+  // facts), and where each plate sits on screen (at the map's origin).
+  const plated = useMemo(() => {
+    const out = new Map<string, Blocker>()
+    if (detail !== 0) return out
+    for (const r of regions) {
+      const wPx = r.w * t.k - 20, hPx = r.h * t.k
+      if (wPx < 70 || hPx < 34) continue
+      const x = r.x * t.k + 10, y = r.y * t.k + 10
+      out.set(r.id, { minX: x, minY: y, maxX: x + Math.min(wPx, 260), maxY: y + (hPx >= 76 ? 48 : 30) })
+    }
+    return out
+  }, [regions, detail, t.k])
   // Far out, each subject's plate, over its cards (drawn after them).
   const regionLabelLayer = useMemo(() => (detail !== 0 ? null : regions.map(r => {
     const s = byId.get(r.id)
@@ -2292,19 +2316,28 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     )
   }), [markers, byId, focusId, detail, goOutside])
 
-  // Far out, the subjects' names over their cards, at a size that can be read.
-  const regionRoots = new Set(regions.map(r => r.id))
-  const farLabels = detail === 0 ? drawn.filter(n => n.type === 'subject' && !regionRoots.has(n.id)).map(n => {
-    const p = placed.at.get(n.id)
-    if (!p) return null
-    const size = 13 * Math.min(textScale, 4)
-    return (
-      <text key={`far-${n.id}`} x={p.x} y={p.y - CARD.subject.h / 2 - size * 0.6} textAnchor="middle" fontSize={size}
-        className="pointer-events-none fill-foreground" style={{ fontFamily: 'var(--font-display)', paintOrder: 'stroke', stroke: 'var(--background)', strokeWidth: 4 * Math.min(textScale, 4), strokeLinejoin: 'round' }}>
-        {short(n.label, 26)}
+  // Far out, names over the cards at a fixed size on screen (far-labels.ts,
+  // founder review #02): every subject without a plate and every topic drawn,
+  // most important first, each only where it overlaps no other name or plate.
+  // Planned once per resting zoom; a pan changes nothing here.
+  const farLabels = useMemo(() => {
+    if (detail !== 0) return null
+    const candidates: LabelCandidate[] = []
+    for (const n of drawn) {
+      const p = placed.at.get(n.id)
+      if (!p) continue
+      const subject = n.type === 'subject'
+      // A subject with a plate is named there; its own card still carries its name when wide enough.
+      candidates.push({ id: n.id, x: p.x, y: p.y, text: n.label, kind: subject ? 'subject' : 'topic', rank: (subject ? 0 : n.type === 'topic' ? 100 : 200) + depthOf(n.id) * 10, card: CARD[n.type], insideOnly: plated.has(n.id) || (!subject && n.type !== 'topic') })
+    }
+    const ks = 1 / Math.max(t.k, 0.0001)
+    return planFarLabels(candidates, t.k, [...plated.values()]).map(l => (
+      <text key={`far-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={l.kind === 'subject' ? 650 : 500} data-far-label={l.inside ? 'inside' : l.kind}
+        className="map-far-label pointer-events-none fill-foreground" style={{ fontFamily: l.kind === 'subject' ? 'var(--font-display)' : undefined, paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: 4 * ks, strokeLinejoin: 'round' }}>
+        {l.text}
       </text>
-    )
-  }) : null
+    ))
+  }, [detail, drawn, plated, placed, t.k, depthOf])
 
   // ── Around the canvas ──────────────────────────────────────────────────────
   const saver = layout.saver
@@ -2596,7 +2629,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
         ) : (
           // The camera: on the first visit the map tilts up into place as it settles.
-          <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.glide ? 'map-cam-glide' : entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
+          <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.glide ? 'map-cam-glide' : entrance.mode === 'full' && entrance.opening ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
           {/* The graph, painted at the camera's view (map-canvas.ts): each subject's light, the lines and their ports; then what travels along them while the map is in use. */}
           <canvas ref={baseCanvas} aria-hidden className="map-canvas pointer-events-none absolute inset-0 size-full" data-map-canvas="graph" />
           <canvas ref={liveCanvas} aria-hidden className="map-canvas pointer-events-none absolute inset-0 size-full" data-map-canvas="signals" />

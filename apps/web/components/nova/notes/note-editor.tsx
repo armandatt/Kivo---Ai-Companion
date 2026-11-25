@@ -18,6 +18,7 @@ import { minutesLabel, relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
 import { useStartSession } from '../use-start-session'
 import { NoteBody, linkHref } from './note-body'
+import { NoteShare } from './note-share'
 import { InsertPreview, type InsertWhere, type PendingInsert } from './insert-preview'
 import { NovaTutor, type Passage } from './nova-tutor'
 import { NovaEditor, type ApplyResult, type EditAsk } from './nova-editor'
@@ -870,6 +871,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <Pencil className="size-3.5" /> Edit
         </button>
       )}
+      {note && <NoteShare noteId={note.id} title={note.title} unsaved={editing && (dirty || saving)} />}
       <button type="button" onClick={commands.openImport} className={`${iconButton()} max-sm:hidden`} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-label="Import a research paper" aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'} data-note-import-paper>
         <FileText className="size-4" />
       </button>

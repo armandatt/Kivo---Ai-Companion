@@ -706,6 +706,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    selection's pulse are painted on canvases (map-canvas.ts), which follow Calm
    and reduced motion themselves. */
 .map-cam { transform-origin: 0 0; will-change: transform; }
+/* Map text scales with the zoom: no font hinting, so a name keeps its shape
+   and does not jump between sizes as the zoom changes (founder review #02). */
+.map-cam text { text-rendering: geometricPrecision; }
 .map-canvas { display: block; }
 /* What floats over a card is placed from the view as drawn: out of the way while the view moves. */
 .map-moving [data-node-bar], .map-moving [data-map-peek] { visibility: hidden; }

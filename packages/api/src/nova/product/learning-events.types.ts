@@ -17,7 +17,8 @@ export type LearningEventType   = "resource_saved" | "selection_saved" | "study_
 // "Save a link" box (which the bookmarklet also opens). Set by the server from
 // the kind of credential the request carried, never read from the request.
 // "kivo_connect": saved by an assistant the learner connected (ChatGPT, Claude: packages/api/src/connect).
-export type LearningEventSource = "browser_extension" | "web" | "kivo_connect";
+// "kivo_import": a link that came with a Knowledge Map the learner imported (portable/import.ts).
+export type LearningEventSource = "browser_extension" | "web" | "kivo_connect" | "kivo_import";
 
 export const EVENT_URL_MAX   = 2048;
 export const EVENT_TITLE_MAX = 300;

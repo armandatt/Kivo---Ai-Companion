@@ -1,8 +1,7 @@
-import type { Metadata } from 'next'
-import { PortableMaps } from '@/components/nova/portable/portable-maps'
+import { redirect } from 'next/navigation'
 
-export const metadata: Metadata = { title: 'Share Knowledge Maps' }
-
+// The old combined page: sharing and importing are now separate pages
+// (/map/share, /map/import). Links to this address keep working.
 export default function PortableMapsPage() {
-  return <PortableMaps />
+  redirect('/map/share')
 }

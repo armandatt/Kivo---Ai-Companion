@@ -27,17 +27,7 @@ import {
 } from './pdf-geometry'
 import { clientKey } from './reader-send'
 
-type Pdfjs = typeof import('pdfjs-dist')
-let loading: Promise<Pdfjs> | null = null
-function pdfjs(): Promise<Pdfjs> {
-  loading ??= import('pdfjs-dist').then(m => {
-    if (!m.GlobalWorkerOptions.workerPort) {
-      m.GlobalWorkerOptions.workerPort = new Worker(new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url), { type: 'module' })
-    }
-    return m
-  })
-  return loading
-}
+import { pdfjs } from './pdfjs-loader'
 
 export type Highlight = { id: string; page: number; rects: Rect[]; text: string; color: string; pending?: boolean }
 export type Captured = { blob: Blob; url: string; page: number; width: number; height: number; region: boolean; key: string }

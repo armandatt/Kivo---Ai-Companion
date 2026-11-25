@@ -16,6 +16,8 @@
 //                         text after the closing $$ is its number, "(1)"
 //   ![caption](kivo-image:id)  an image in the note (a capture from a PDF),
 //                         on a line of its own; only Kivo's own images are drawn
+//   [name.pdf](kivo-file:id)   a file kept with the note (an imported PDF), on
+//                         a line of its own: shown as the file, to download
 //   > [!paper] Title      an imported research paper's card (paper-source.ts)
 // Inside a line (inlineTokens): **bold**, *italic*, ==highlight==, `code`,
 // #tag, $maths$, \(maths\), $$maths$$ (shown as a display) and bare web addresses. [[Links]] are read first, by note-links.ts.
@@ -46,6 +48,7 @@ export type Block = Span & (
   | { kind: 'code'; text: string }
   | { kind: 'math'; tex: string; tag: string | null }
   | { kind: 'image'; alt: string; id: string }
+  | { kind: 'file'; name: string; id: string }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'rule' }
   | { kind: 'table'; head: string[]; rows: string[][] }
@@ -200,6 +203,9 @@ function parseLines(lines: string[], uniqueId: (text: string) => string, starts?
     // An image of the learner's own, on a line of its own.
     const image = imageLine(trimmed)
     if (image) { flush(i); blocks.push({ kind: 'image', ...image, ...span(i, i) }); continue }
+    // A file kept with the note, on a line of its own.
+    const file = fileLine(trimmed)
+    if (file) { flush(i); blocks.push({ kind: 'file', ...file, ...span(i, i) }); continue }
 
     if (trimmed.startsWith('>')) {
       flush(i)
@@ -274,6 +280,19 @@ export function imageLine(line: string): { alt: string; id: string } | null {
   if (!ref.startsWith(IMAGE_SCHEME)) return null
   const id = ref.slice(IMAGE_SCHEME.length)
   return /^[a-z0-9]{8,40}$/i.test(id) ? { alt: t.slice(2, mid).trim(), id } : null
+}
+// "[Lecture 4.pdf](kivo-file:abc123)" → { name, id }. Only Kivo's own file ids.
+export const FILE_SCHEME = 'kivo-file:'
+export function fileLine(line: string): { name: string; id: string } | null {
+  const t = line.trim()
+  if (!t.startsWith('[') || !t.endsWith(')')) return null
+  const mid = t.indexOf('](')
+  if (mid < 2) return null
+  const ref = t.slice(mid + 2, -1).trim()
+  if (!ref.startsWith(FILE_SCHEME)) return null
+  const id = ref.slice(FILE_SCHEME.length)
+  const name = t.slice(1, mid).trim()
+  return /^[a-z0-9]{8,40}$/i.test(id) && name && !name.includes('[') ? { name, id } : null
 }
 export const imageMarkdown = (alt: string, id: string) => `![${alt.split(']').join(')').split('\n').join(' ').trim()}](${IMAGE_SCHEME}${id})`
 

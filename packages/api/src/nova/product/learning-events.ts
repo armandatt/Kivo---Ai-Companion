@@ -694,6 +694,118 @@ export async function listResourceLinks(profileId: string, take: number): Promis
   return { resources, total };
 }
 
+// ── For a .kivo export and import (portable/export.ts, portable/import.ts) ────
+// The saved pages filed under some of the learner's subjects, oldest first:
+// every one of them, not the newest N of everything (an export used to read
+// only the newest 1,000 events, so a learner who saved more lost older links).
+export async function listFiledLinks(profileId: string, subjectIds: string[], take: number): Promise<Array<{
+  id: string; title: string; url: string; domain: string; subjectId: string; topicName: string | null;
+  description: string | null; resourceType: string | null; siteName: string | null;
+  canonicalUrl: string | null; imageUrl: string | null; author: string | null; publishedAt: Date | null; durationSeconds: number | null; tags: string[];
+}>> {
+  if (subjectIds.length === 0) return [];
+  const rows = await prisma.novaLearningEvent.findMany({
+    where:   { profileId, subjectId: { in: subjectIds }, eventType: "resource_saved" },
+    orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take,
+    select:  {
+      id: true, title: true, url: true, domain: true, subjectId: true, topicName: true, description: true, resourceType: true, siteName: true,
+      canonicalUrl: true, imageUrl: true, author: true, publishedAt: true, durationSeconds: true, tags: true,
+    },
+  });
+  return rows.map(r => ({ ...r, subjectId: r.subjectId! }));
+}
+
+/** What a map export leaves out of the learner's saved pages: pages filed nowhere, and passages (selection saves) under these subjects. */
+export async function savedPagesLeftOut(profileId: string, subjectIds: string[]): Promise<{ unfiledPages: number; passages: number }> {
+  const [unfiledPages, passages] = await Promise.all([
+    prisma.novaLearningEvent.count({ where: { profileId, eventType: "resource_saved", subjectId: null } }),
+    subjectIds.length ? prisma.novaLearningEvent.count({ where: { profileId, eventType: "selection_saved", subjectId: { in: subjectIds } } }) : 0,
+  ]);
+  return { unfiledPages, passages };
+}
+
+export interface ImportedLink {
+  clientEventId: string;              // stable per package and link: a resumed import makes nothing twice
+  url: string; title: string; domain: string;
+  subjectId: string; topicName: string | null;
+  description: string | null; resourceType: string | null; siteName: string | null;
+  // Optional (kivo.map/2): the rest of what the page said about itself, and
+  // the creator's tags. Each is checked here as on any save.
+  canonicalUrl?: string | null; imageUrl?: string | null; author?: string | null; publishedAt?: string | null; durationSeconds?: number | null; tags?: string[];
+  provenance: string;                 // where it came from, kept as the page's note
+}
+export type ImportedLinkOutcome = "created" | "already_imported" | "already_saved" | "filed_existing" | "invalid";
+
+// One link of an imported map, saved as the learner's own saved page and
+// filed where the map had it. Not an extension save: no per-minute limit
+// (an import is one request the learner made, admitted by its own route
+// limits), no processing queued (it is already filed, and a queue of model
+// calls would spend the learner's credits on pages they did not save).
+// A page the learner had already saved is never duplicated and its filing is
+// never changed, except that one they had filed nowhere is filed here.
+export async function importSavedLink(profileId: string, link: ImportedLink, now: Date): Promise<{ outcome: ImportedLinkOutcome; id: string | null }> {
+  const normal = normalizeResourceUrl(link.url);
+  if (!normal || !isClientEventId(link.clientEventId)) return { outcome: "invalid", id: null };
+  const url = normal.url;
+  const mine = await prisma.novaLearningEvent.findUnique({ where: { profileId_clientEventId: { profileId, clientEventId: link.clientEventId } }, select: { id: true } });
+  if (mine) return { outcome: "already_imported", id: mine.id };
+  const subject = await prisma.novaSubject.findFirst({ where: { id: link.subjectId, profileId }, select: { id: true } });
+  if (!subject) return { outcome: "invalid", id: null };
+
+  // A topic the learner has keeps its spelling, as on any save.
+  let topicName = link.topicName ? normalizeTopicName(oneLine(link.topicName)).slice(0, EVENT_TOPIC_MAX) || null : null;
+  if (topicName) {
+    const known = await prisma.novaTopicMastery.findFirst({ where: { subjectId: subject.id, archivedAt: null, name: { equals: likeLiteral(topicName), mode: "insensitive" } }, select: { name: true } });
+    topicName = known?.name ?? topicName;
+  }
+
+  const existing = await prisma.novaLearningEvent.findFirst({
+    where: { profileId, eventType: "resource_saved", OR: samePageWhere(url, null) },
+    orderBy: { occurredAt: "asc" }, select: { id: true, subjectId: true },
+  });
+  if (existing) {
+    if (existing.subjectId) return { outcome: "already_saved", id: existing.id };
+    const done = await prisma.novaLearningEvent.updateMany({ where: { id: existing.id, profileId, subjectId: null }, data: { subjectId: subject.id, topicName, filedBy: "learner" } });
+    return { outcome: done.count ? "filed_existing" : "already_saved", id: existing.id };
+  }
+
+  // What the page said about itself, checked as the extension's own words are on a save.
+  const read = readPageMeta({ description: link.description, imageUrl: link.imageUrl, author: link.author, siteName: link.siteName, publishedAt: link.publishedAt, duration: link.durationSeconds }, now);
+  const meta: PageMeta = { ...NO_META, ...read, description: read.description?.slice(0, 600) || null, siteName: read.siteName?.slice(0, 120) || null };
+  const cols = metaColumns(url, meta);
+  const canonical = typeof link.canonicalUrl === "string" ? normalizeResourceUrl(link.canonicalUrl) : null;
+  const canonicalUrl = canonical && canonical.url !== url ? canonical.url : null;
+  const tags = link.tags?.length ? mergeTags(link.tags, (await learnerTags(profileId)).map(t => t.tag)) : [];
+  const kind = (RESOURCE_TYPES as readonly string[]).includes(link.resourceType ?? "") && cols.resourceType === "page" ? link.resourceType as ResourceType : cols.resourceType;
+  const domain = normal.domain || link.domain;
+  try {
+    const row = await prisma.novaLearningEvent.create({
+      data: {
+        profileId, eventType: "resource_saved", source: "kivo_import", clientEventId: link.clientEventId, url, domain: domain.slice(0, 255),
+        title: oneLine(link.title).slice(0, EVENT_TITLE_MAX) || domain, subjectId: subject.id, topicName, occurredAt: now,
+        filedBy: "learner", processingStatus: "none", ...cols, resourceType: kind, dedupeKey: dedupeKey(url),
+        canonicalUrl, tags,
+        personalNote: link.provenance.slice(0, PERSONAL_NOTE_MAX),
+      },
+      select: { id: true },
+    });
+    return { outcome: "created", id: row.id };
+  } catch (err) {
+    // The same link at once from a second run: that run made it.
+    if (isUniqueViolation(err)) {
+      const again = await prisma.novaLearningEvent.findUnique({ where: { profileId_clientEventId: { profileId, clientEventId: link.clientEventId } }, select: { id: true } });
+      if (again) return { outcome: "already_imported", id: again.id };
+    }
+    throw err;
+  }
+}
+
+/** Reading back an import: the learner's saved pages made from these ids, with where each is filed. */
+export async function linksByClientIds(profileId: string, clientEventIds: string[]): Promise<Array<{ clientEventId: string; url: string; subjectId: string | null; topicName: string | null }>> {
+  if (clientEventIds.length === 0) return [];
+  return prisma.novaLearningEvent.findMany({ where: { profileId, clientEventId: { in: clientEventIds } }, select: { clientEventId: true, url: true, subjectId: true, topicName: true } });
+}
+
 // ── For Nova's help on a note (product/note-assist.ts) ────────────────────────
 // Saved pages filed under a subject (and, first, the ones under its topic):
 // title, site, address and the passage the learner selected, if any. Nova

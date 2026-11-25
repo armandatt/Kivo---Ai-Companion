@@ -6,8 +6,8 @@
 // (notes, maps, saved pages) is not counted: it has abuse limits, not a
 // storage allowance (master brief §6).
 //
-// What counts: the bytes of note images (stored in Postgres, NovaNoteImage)
-// and of files waiting in Build with Nova conversations (deleted when the
+// What counts: the bytes of note images (stored in Postgres, NovaNoteImage),
+// of files kept with notes (PDFs, NovaNoteAttachment) and of files waiting in Build with Nova conversations (deleted when the
 // draft is built or cancelled). Not counted: note text, maps, tasks, saved
 // pages' metadata, or anything else ordinary.
 //
@@ -22,6 +22,7 @@
 
 import { noteImageBytes } from "../../nova/product/note-images";
 import { draftFileBytes } from "../../nova/product/builder";
+import { noteAttachmentBytes } from "../../nova/product/note-attachments";
 import { entitlementForLearner } from "../entitlements";
 import { randomUUID } from "crypto";
 import { gauge, refund, reserve } from "./ledger";
@@ -32,11 +33,11 @@ export async function measureStorage(input: { platformChatId: string; profileId:
   if (accountingMode() === "off") return null;
   try {
     const now = input.now ?? new Date();
-    const [images, files] = await Promise.all([noteImageBytes(input.profileId), draftFileBytes(input.profileId)]);
-    const bytes = images + files;
+    const [images, files, attachments] = await Promise.all([noteImageBytes(input.profileId), draftFileBytes(input.profileId), noteAttachmentBytes(input.profileId)]);
+    const bytes = images + files + attachments;
     const ent = await entitlementForLearner(input.platformChatId, now);
     const t = await targetFor(ent.usageKey, "storage_bytes", now);
-    const { over } = await gauge(t, { units: bytes, key: `measure:${input.profileId}:${now.getTime()}`, detail: `images=${images};draft_files=${files}` });
+    const { over } = await gauge(t, { units: bytes, key: `measure:${input.profileId}:${now.getTime()}`, detail: `images=${images};draft_files=${files};note_files=${attachments}` });
     return { bytes, over };
   } catch (err) {
     accountingFault("storage.measure", err);
