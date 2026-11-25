@@ -3,7 +3,7 @@
 import { KnowledgeViews } from '../knowledge-views'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Waypoints } from 'lucide-react'
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Search, Waypoints } from 'lucide-react'
 import type { KnowledgeSubject, KnowledgeTopic, NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import type { WorkspacesView } from '@repo/api/nova/product/workspaces.types'
@@ -381,6 +381,79 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 }
 
 // With nothing chosen: the subjects at a glance, what is due, what happened lately.
+// The subjects, sized to how many there are: a few get roomy cards that show
+// what is inside them; many get compact cards in more columns, and past a
+// screenful a filter, so the page is never a long wall or a near-empty one.
+const COMPACT_FROM = 7
+const FILTER_FROM = 13
+const PREVIEW = 4
+
+function SubjectGrid({ roots, onGo }: { roots: TreeNode[]; onGo: (s: Selection) => void }) {
+  const [q, setQ] = useState('')
+  const compact = roots.length >= COMPACT_FROM
+  const shown = q.trim() ? roots.filter(r => r.name.toLowerCase().includes(q.trim().toLowerCase())) : roots
+  return (
+    <section aria-labelledby="kn-subjects" className="mt-8" data-subject-grid={compact ? 'compact' : 'roomy'}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 id="kn-subjects" className="text-[13px] font-semibold text-foreground/80">Subjects <span className="font-normal text-foreground/45">· {roots.length}</span></h2>
+        {roots.length >= FILTER_FROM && (
+          <label className="relative block w-full sm:w-64">
+            <span className="sr-only">Filter subjects</span>
+            <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-foreground/35" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter subjects" className="h-8 w-full rounded-lg border border-white/10 bg-transparent pl-8 pr-2 text-[13px] text-foreground placeholder:text-foreground/35 focus:border-keppel-400/60 focus:outline-none" data-subject-filter />
+          </label>
+        )}
+      </div>
+      {shown.length === 0 ? <p className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-foreground/55">No subject matches “{q}”.</p> : (
+        <ul aria-label="Subjects" className={cn('grid gap-3', compact ? 'sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4' : roots.length === 1 ? 'max-w-xl' : 'sm:grid-cols-2 2xl:grid-cols-3')}>
+          {shown.map(r => <li key={r.key}><SubjectCard node={r} compact={compact} onGo={onGo} /></li>)}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function SubjectCard({ node: r, compact, onGo }: { node: TreeNode; compact: boolean; onGo: (s: Selection) => void }) {
+  const inside = r.children
+  const preview = inside.slice(0, PREVIEW)
+  const more = inside.length - preview.length
+  const studied = studiedBelow(r)
+  const solid = studied.filter(t => t.level === 'solid').length
+  return (
+    <button type="button" onClick={() => onGo({ kind: r.kind, id: r.id })} style={toneStyle(r.name)} data-subject-card={r.name}
+      className={cn('subject-tone group flex h-full w-full flex-col rounded-xl border border-white/8 bg-card/60 text-left transition-colors hover:border-[var(--sc-edge)] hover:bg-[var(--sc-faint)] focus-visible:outline-2 focus-visible:outline-keppel-400', compact ? 'p-3.5' : 'p-4')}>
+      <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <span aria-hidden className={cn('size-2.5 shrink-0 rounded-[3px]', subjectColor(r.name).dot)} />
+        <span className="min-w-0 flex-1 truncate">{r.name}</span>
+        <ChevronRight aria-hidden className="size-4 shrink-0 text-foreground/30 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground/60 motion-reduce:transition-none" />
+      </span>
+      <span className="mt-1 block text-xs text-foreground/55">
+        {r.topicCount === 0 ? 'No topics yet' : plural(r.topicCount, 'topic', 'topics')}
+        {solid > 0 && <> · {solid} solid</>}
+        {r.dueCount > 0 && <> · <span className="font-medium text-amber-300">{r.dueCount} due</span></>}
+      </span>
+      {compact && preview.length > 0 && (
+        <span className="mt-2 line-clamp-1 text-xs text-foreground/45" data-subject-preview>
+          {preview.slice(0, 3).map(c => c.name).join(' · ')}{inside.length > 3 ? ` · +${inside.length - 3}` : ''}
+        </span>
+      )}
+      {!compact && preview.length > 0 && (
+        <span className="mt-3 flex flex-col gap-1" data-subject-preview>
+          {preview.map(c => (
+            <span key={c.key} className="flex min-w-0 items-center gap-2 text-[13px] text-foreground/70">
+              <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', c.topic ? (c.topic.level === 'unverified' ? 'bg-white/20' : LEVEL_TONE[c.topic.level]) : 'bg-white/25')} />
+              <span className="min-w-0 flex-1 truncate">{c.name}</span>
+              {c.children.length > 0 && <span className="shrink-0 text-[11px] text-foreground/40">{c.topicCount}</span>}
+            </span>
+          ))}
+          {more > 0 && <span className="pl-3.5 text-xs text-foreground/45">+{more} more</span>}
+        </span>
+      )}
+      <LevelsBar topics={studied} className="mt-auto pt-3" />
+    </button>
+  )
+}
+
 function Overview({ view, roots, onGo, start, starting, error, onChanged }: {
   view: NovaKnowledgeReady; roots: TreeNode[]; onGo: (s: Selection) => void
   start: ReturnType<typeof useStartSession>['start']; starting: string | null; error: string | null; onChanged?: () => void
@@ -411,24 +484,14 @@ function Overview({ view, roots, onGo, start, starting, error, onChanged }: {
         </div>
       ) : (
         <>
-          <ul aria-label="Subjects" className="mt-6 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-            {roots.map(r => (
-              <li key={r.key}>
-                <button type="button" onClick={() => onGo({ kind: r.kind, id: r.id })} style={toneStyle(r.name)} data-subject-card={r.name}
-                  className="subject-tone group block w-full rounded-xl border border-white/8 bg-card/60 p-4 text-left transition-colors hover:border-[var(--sc-edge)] hover:bg-[var(--sc-faint)] focus-visible:outline-2 focus-visible:outline-keppel-400">
-                  <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <span aria-hidden className={cn('size-2.5 shrink-0 rounded-[3px]', subjectColor(r.name).dot)} />
-                    <span className="truncate">{r.name}</span>
-                  </span>
-                  <span className="mt-1 block text-xs text-foreground/55">
-                    {r.topicCount === 0 ? 'No topics yet' : plural(r.topicCount, 'topic', 'topics')}
-                    {r.dueCount > 0 && <> · <span className="font-medium text-amber-300">{r.dueCount} due</span></>}
-                  </span>
-                  <LevelsBar topics={studiedBelow(r)} className="mt-3" />
-                </button>
-              </li>
-            ))}
-          </ul>
+          {/* Where everything stands, before the subjects (only once something is studied). */}
+          {totals.topicCount > 0 && (
+            <div className="mt-6" data-knowledge-summary>
+              <LevelSummary topics={roots.flatMap(studiedBelow)} due={totals.dueCount} />
+            </div>
+          )}
+
+          <SubjectGrid roots={roots} onGo={onGo} />
 
           {view.dueReviews.length > 0 && (
             <div className="mt-8">

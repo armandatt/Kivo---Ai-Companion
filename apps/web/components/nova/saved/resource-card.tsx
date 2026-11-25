@@ -296,10 +296,12 @@ export function ResourceCard({ resource: initial, view, collections, knownTags, 
   const tags = (resource.tags?.length || tagging) ? <TagEditor tags={resource.tags ?? []} known={knownTags} busy={busy} startOpen={tagging} onDone={() => setTagging(false)} onChange={tags => organize({ tags })} /> : null
 
   return (
+    // A card with its menu open sits above its neighbours (its hover lift makes
+    // it a stacking context, so the menu alone could not), and stays lifted.
     <article ref={row} data-resource={resource.id} data-resource-title={resource.title} data-resource-kind={passage ? 'passage' : 'page'} data-resource-type={type} data-status={status} data-linked={linked || undefined}
       className={grid
-        ? `group flex flex-col overflow-visible rounded-2xl border bg-card/50 transition-[border-color,transform] hover:-translate-y-0.5 hover:border-white/16 motion-reduce:hover:translate-y-0 ${linked ? 'border-nova/40' : 'border-white/8'}`
-        : `group border-b border-white/6 px-3 py-3 transition-colors last:border-b-0 hover:bg-white/[0.02] sm:px-4 ${linked ? 'bg-nova/[0.05]' : ''}`}>
+        ? `group relative flex flex-col overflow-visible rounded-2xl border bg-card/50 transition-[border-color,transform] hover:-translate-y-0.5 hover:border-white/16 has-[[role=menu]]:z-40 has-[[role=menu]]:-translate-y-0.5 has-[[role=menu]]:border-white/16 motion-reduce:hover:translate-y-0 motion-reduce:has-[[role=menu]]:translate-y-0 ${linked ? 'border-nova/40' : 'border-white/8'}`
+        : `group relative border-b border-white/6 px-3 py-3 transition-colors last:border-b-0 hover:bg-white/[0.02] has-[[role=menu]]:z-40 sm:px-4 ${linked ? 'bg-nova/[0.05]' : ''}`}>
       {grid ? (
         <a href={resource.url} target="_blank" rel="noopener noreferrer" tabIndex={-1} aria-hidden className="block overflow-hidden rounded-t-2xl"><Preview r={resource} grid /></a>
       ) : null}

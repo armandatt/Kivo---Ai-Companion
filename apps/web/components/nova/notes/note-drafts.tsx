@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowDown, ArrowUp, Check, ExternalLink, FilePlus2, FolderClosed, Inbox, Loader2, NotebookPen, Pencil, Search, Trash2, Undo2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ExternalLink, FilePlus2, FolderClosed, Inbox, Layers, Loader2, NotebookPen, Pencil, Search, Sparkles, Trash2, Undo2, X } from 'lucide-react'
 import type { NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { sourceGroups } from '@repo/api/nova/product/capture-draft-rules'
 import { PageFrame, PageHeader } from '@/components/dashboard/page-states'
@@ -23,7 +23,7 @@ import { NO_SUBJECT, destinationFor, destinationsOf, type Destination } from './
 import { NoteBody } from './note-body'
 import { fetchNotes } from './notes-api'
 import {
-  choosePlace, discardDraft, editDraft, fetchDraft, fetchDrafts, keepInDrafts, mergeDraft, newKey, placeItem, restoreDraft, today,
+  choosePlace, dayGroup, discardDraft, editDraft, fetchDraft, fetchDrafts, keepInDrafts, mergeDraft, newKey, placeItem, restoreDraft, today,
   type CaptureItem, type DraftDetail, type DraftEdit, type DraftSummary, type MergePreview, type MergeTarget,
 } from './drafts-api'
 
@@ -40,6 +40,58 @@ const counts = (d: { passages: number; sources: number }) =>
   `${d.passages} passage${d.passages === 1 ? '' : 's'}${d.sources ? ` from ${d.sources} page${d.sources === 1 ? '' : 's'}` : ''}`
 
 type Notice = { text: string; undo?: () => void; tone?: 'error' } | null
+
+const GROUP_ORDER = ['Today', 'Yesterday', 'This week', 'Earlier'] as const
+const siteOf = (url: string | null, site: string | null) => site || (url ? (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return null } })() : null)
+
+// The inbox: drafts grouped by when they were last added to, searchable once
+// there are more than a handful. Each row says what it holds.
+function DraftInbox({ list, selected, onOpen, hidden }: { list: DraftSummary[]; selected: string | null; onOpen: (id: string) => void; hidden: boolean }) {
+  const [q, setQ] = useState('')
+  const term = q.trim().toLowerCase()
+  const shown = term ? list.filter(d => d.title.toLowerCase().includes(term) || d.sourceTitles.some(t => t.toLowerCase().includes(term))) : list
+  const groups = GROUP_ORDER.map(g => ({ g, items: shown.filter(d => dayGroup(d.lastCaptureAt) === g) })).filter(x => x.items.length)
+  return (
+    <nav aria-label="Your drafts" className={cn('lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-1', hidden && 'max-lg:hidden')} data-drafts-list>
+      <div className="mb-2 flex items-center justify-between px-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-subtle">Inbox <span className="ml-1 font-medium normal-case tracking-normal text-foreground/45">{list.length}</span></p>
+      </div>
+      {list.length > 5 && (
+        <label className="relative mb-2 block">
+          <span className="sr-only">Find a draft</span>
+          <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-foreground/35" />
+          <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Find a draft or page"
+            className="h-9 w-full rounded-lg border border-white/10 bg-transparent pl-8 pr-2 text-[13px] text-foreground placeholder:text-foreground/35 focus:border-nova/50 focus:outline-none" data-drafts-search />
+        </label>
+      )}
+      {groups.length === 0 && <p className="px-2 py-3 text-[13px] text-subtle">No draft matches “{q}”.</p>}
+      {groups.map(({ g, items }) => (
+        <div key={g} className="mb-3" data-drafts-group={g}>
+          <p className="px-2 pb-1 pt-1 text-[11px] font-medium text-foreground/40">{g}</p>
+          <ul className="space-y-0.5">
+            {items.map(d => {
+              const on = d.id === selected
+              return (
+                <li key={d.id}>
+                  <button type="button" onClick={() => onOpen(d.id)} aria-current={on ? 'true' : undefined} title={d.title}
+                    className={cn('relative block w-full rounded-lg py-2.5 pl-3.5 pr-3 text-left transition-colors', on ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]')} data-draft-row={d.id}>
+                    {on && <span aria-hidden className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-nova" />}
+                    <span className={cn('line-clamp-2 text-[13.5px] leading-snug', on ? 'font-semibold text-foreground' : 'font-medium text-foreground/85')}>{d.title}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11.5px] text-subtle">
+                      <span>{d.passages} passage{d.passages === 1 ? '' : 's'}</span>
+                      {d.sources > 1 && <span className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-px text-[10.5px] font-medium text-foreground/60" data-draft-multipage><Layers aria-hidden className="size-3" />{d.sources} pages</span>}
+                      <span aria-hidden>·</span><span>{ago(d.lastCaptureAt)}</span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  )
+}
 
 // A passage pasted on Drafts, kept as a draft (POST /api/nova/drafts, the
 // extension's capture route for the web session): a new draft, the address
@@ -130,16 +182,8 @@ export function NoteDrafts() {
       )}
 
       {list && (list.length > 0 || chosen) && (
-        <div className="mt-6 grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <nav aria-label="Your drafts" className={cn('space-y-1', selected && 'max-lg:hidden')} data-drafts-list>
-            {list.map(d => (
-              <button key={d.id} type="button" onClick={() => open(d.id)} aria-current={d.id === selected ? 'true' : undefined}
-                className={cn('block w-full rounded-xl px-3 py-2.5 text-left transition-colors', d.id === selected ? 'bg-white/7' : 'hover:bg-white/4')} data-draft-row={d.id}>
-                <span className="line-clamp-2 text-sm font-medium text-foreground">{d.title}</span>
-                <span className="mt-0.5 block text-xs text-subtle">{counts(d)} · {ago(d.lastCaptureAt)}</span>
-              </button>
-            ))}
-          </nav>
+        <div className="mt-6 grid items-start gap-6 lg:grid-cols-[18.5rem_minmax(0,1fr)] xl:gap-10">
+          <DraftInbox list={list} selected={selected} onOpen={id => open(id)} hidden={Boolean(selected)} />
           {selected && (
             <DraftReview key={selected} id={selected} onBack={() => open(null)}
               onChanged={() => void load()}
@@ -182,6 +226,7 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
   const [saving, setSaving] = useState(false)
   const [merging, setMerging] = useState<'new' | 'existing' | null>(null)
   const [done, setDone] = useState<{ noteId: string; noteTitle: string } | null>(null)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const latest = useRef<DraftDetail | null>(null)
   const [subjects, setSubjects] = useState<NoteSubjectOption[]>([])
   const asked = useRef(new Set<string>())
@@ -257,25 +302,45 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
     void apply([{ op: 'move', id: item.id, to: draft.items.findIndex(i => i.id === other.id) }])
   }
 
+  const filed = draft.items.filter(i => i.placement).length
+  const suggested = draft.items.filter(i => !i.placement && i.suggestion).length
+  const unfiled = draft.items.length - filed - suggested
+  const discard = async () => { const r = await discardDraft(draft.id); setConfirmDiscard(false); if (r.ok) onGone(draft, 'discarded'); else onNotice({ text: r.message, tone: 'error' }) }
+
   return (
     <article className="min-w-0" aria-labelledby="draft-title" data-draft={draft.id}>
       <button type="button" onClick={onBack} className="mb-3 text-xs text-subtle hover:text-foreground lg:hidden">← All drafts</button>
-      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b border-white/8 pb-4">
-        <div className="min-w-0 basis-full">
-          <TitleField draft={draft} onRename={title => void apply([{ op: 'rename', title }])} />
-          <p className="mt-1 text-xs text-subtle" data-draft-counts>
-            {counts(draft)} · captured {ago(draft.lastCaptureAt)}{saving && <span className="ml-2 inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Saving</span>}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setMerging('new')} disabled={!draft.items.length} className={BUTTON_PRIMARY} data-merge-new><FilePlus2 className="size-4" /> Create note</button>
-          <button type="button" onClick={() => setMerging('existing')} disabled={!draft.items.length} className={cn(BUTTON_QUIET, 'h-10 text-sm')} data-merge-existing><NotebookPen className="size-4" /> Add to note</button>
-          <button type="button" onClick={async () => { const r = await discardDraft(draft.id); if (r.ok) onGone(draft, 'discarded'); else onNotice({ text: r.message, tone: 'error' }) }}
-            className="inline-flex h-10 items-center gap-1.5 rounded-lg px-3 text-sm text-foreground/60 hover:bg-white/5 hover:text-foreground" data-draft-discard>
-            <Trash2 className="size-4" /> Discard
-          </button>
-        </div>
+      <header className="min-w-0">
+        <TitleField draft={draft} onRename={title => void apply([{ op: 'rename', title }])} />
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-subtle" data-draft-counts>
+          <span>{counts(draft)}</span><span aria-hidden>·</span><span>captured {ago(draft.lastCaptureAt)}</span>
+          {draft.items.length > 0 && <>
+            <span aria-hidden>·</span>
+            <span data-draft-filing>{[filed ? `${filed} filed` : null, suggested ? `${suggested} with a suggestion` : null, unfiled ? `${unfiled} to organise later` : null].filter(Boolean).join(', ')}</span>
+          </>}
+          {saving && <span className="ml-1 inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Saving</span>}
+        </p>
       </header>
+
+      {/* The actions stay in reach while reading a long draft. */}
+      <div className="sticky top-0 z-20 -mx-1 mt-4 flex flex-wrap items-center gap-2 border-b border-white/8 bg-background/90 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/75" data-draft-actions>
+        <button type="button" onClick={() => setMerging('new')} disabled={!draft.items.length} className={BUTTON_PRIMARY} data-merge-new><FilePlus2 className="size-4" /> Create note</button>
+        <button type="button" onClick={() => setMerging('existing')} disabled={!draft.items.length} className={cn(BUTTON_QUIET, 'h-10 text-sm')} data-merge-existing><NotebookPen className="size-4" /> Add to note</button>
+        {draft.items.length > 1 && <span className="text-xs text-subtle max-sm:hidden" data-draft-scope>Uses all {draft.items.length} passages, in this order</span>}
+        <span className="ml-auto" />
+        {confirmDiscard ? (
+          <span className="flex items-center gap-1.5" role="group" aria-label="Discard this draft?" data-draft-discard-confirm>
+            <span className="text-xs text-foreground/70">Discard this draft?</span>
+            <button type="button" onClick={() => void discard()} className="inline-flex h-8 items-center gap-1 rounded-lg bg-rose-500/90 px-2.5 text-xs font-semibold text-white hover:bg-rose-500" data-draft-discard-yes><Trash2 className="size-3.5" /> Discard</button>
+            <button type="button" onClick={() => setConfirmDiscard(false)} className="h-8 rounded-lg px-2 text-xs text-foreground/65 hover:text-foreground">Keep</button>
+          </span>
+        ) : (
+          <button type="button" onClick={() => setConfirmDiscard(true)} title="Discard this draft (you can undo)"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[13px] text-foreground/50 transition-colors hover:bg-white/5 hover:text-foreground" data-draft-discard>
+            <Trash2 className="size-3.5" /> Discard
+          </button>
+        )}
+      </div>
 
       {merging && (
         <MergePanel draft={draft} mode={merging} onMode={setMerging} onClose={() => setMerging(null)}
@@ -284,20 +349,29 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
 
       {draft.items.length === 0 && <p className="mt-6 text-sm text-foreground/60">This draft is empty. Capture a passage, or discard it.</p>}
 
-      <div className="mt-5 space-y-8">
-        {groups.map(g => (
+      <div className="mt-6 space-y-10">
+        {groups.map(g => {
+          const site = siteOf(g.url, g.site)
+          return (
           <section key={g.url ?? 'own'} aria-label={g.title} data-draft-source={g.url ?? 'own'}>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <h3 className="min-w-0 text-sm font-semibold text-foreground"><span className="line-clamp-2">{g.title}</span></h3>
-              {g.url && (
-                <a href={g.url} target="_blank" rel="noopener noreferrer" title={g.url} className="inline-flex shrink-0 items-center gap-1 text-xs text-foreground/60 hover:text-foreground" data-open-source>
-                  {g.site} <ExternalLink aria-hidden className="size-3" />
-                </a>
-              )}
+            <div className="flex items-start gap-3">
+              <span aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-[13px] font-semibold uppercase text-foreground/60">{(site ?? '✎').slice(0, 1)}</span>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[15px] font-semibold leading-snug text-foreground" title={g.title}>{g.title}</h3>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-subtle">
+                  {site && <span>{site}</span>}
+                  <span>{g.items.length} passage{g.items.length === 1 ? '' : 's'}</span>
+                  {g.url && (
+                    <a href={g.url} target="_blank" rel="noopener noreferrer" title={g.url} className="inline-flex items-center gap-1 font-medium text-nova-ink hover:underline" data-open-source>
+                      Open original <ExternalLink aria-hidden className="size-3" />
+                    </a>
+                  )}
+                </p>
+              </div>
             </div>
-            <ol className="mt-2.5 space-y-3">
+            <ol className="mt-3 space-y-3 sm:pl-11">
               {g.items.map((item, n) => (
-                <Passage key={item.id} item={item} first={n === 0} last={n === g.items.length - 1}
+                <Passage key={item.id} item={item} index={n + 1} total={g.items.length} first={n === 0} last={n === g.items.length - 1}
                   subjects={subjects} onPlace={dest => setPlace(item, dest)}
                   onSubjectsChanged={async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }}
                   onEdit={(text, note) => apply([{ op: 'edit', id: item.id, ...(text !== undefined ? { text } : {}), ...(note !== undefined ? { note } : {}) }])}
@@ -306,7 +380,8 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
               ))}
             </ol>
           </section>
-        ))}
+          )
+        })}
       </div>
     </article>
   )
@@ -318,17 +393,17 @@ function TitleField({ draft, onRename }: { draft: DraftDetail; onRename: (title:
   return (
     <label className="block">
       <span className="sr-only">Draft name</span>
-      <input id="draft-title" value={shown} placeholder={draft.title} maxLength={120}
-        onChange={e => setValue(e.target.value)}
+      <textarea id="draft-title" value={shown} placeholder={draft.title} maxLength={120} rows={1}
+        onChange={e => setValue(e.target.value.replace(/\n/g, ' '))}
         onBlur={() => { if (value !== null && value.trim() !== (draft.named ? draft.title : '')) onRename(value.trim() || null); setValue(null) }}
-        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setValue(null); e.currentTarget.blur() } }}
-        className="w-full text-ellipsis rounded-md bg-transparent font-serif text-2xl font-semibold tracking-tight text-foreground placeholder:text-foreground/80 focus:bg-white/4 focus:outline-none focus:ring-1 focus:ring-white/15" data-draft-title />
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } if (e.key === 'Escape') { setValue(null); e.currentTarget.blur() } }}
+        className="block w-full resize-none overflow-hidden rounded-md bg-transparent font-serif text-[1.6rem] font-semibold leading-tight tracking-tight text-foreground [field-sizing:content] placeholder:text-foreground/85 focus:bg-white/4 focus:outline-none focus:ring-1 focus:ring-white/15" data-draft-title />
     </label>
   )
 }
 
-function Passage({ item, first, last, onEdit, onMove, onRemove, subjects, onPlace, onSubjectsChanged }: {
-  item: CaptureItem; first: boolean; last: boolean
+function Passage({ item, index, total, first, last, onEdit, onMove, onRemove, subjects, onPlace, onSubjectsChanged }: {
+  item: CaptureItem; index: number; total: number; first: boolean; last: boolean
   subjects: NoteSubjectOption[]
   onPlace: (dest: { subjectId: string | null; topicName: string | null }) => Promise<boolean>
   onSubjectsChanged: () => Promise<NoteSubjectOption[] | null>
@@ -344,7 +419,8 @@ function Passage({ item, first, last, onEdit, onMove, onRemove, subjects, onPlac
   const icon = 'grid size-8 place-items-center rounded-md text-foreground/50 transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-30'
 
   return (
-    <li className="group rounded-xl border border-white/8 bg-card/50 px-4 py-3" data-draft-item={item.id}>
+    <li className="group relative rounded-xl border border-white/8 bg-card/50 px-4 pb-2.5 pt-3.5 transition-colors focus-within:border-white/15 hover:border-white/14" data-draft-item={item.id}>
+      {total > 1 && <span className="absolute -left-2.5 top-3.5 grid size-5 place-items-center rounded-full border border-white/10 bg-background text-[10px] font-semibold tabular-nums text-foreground/55 max-sm:hidden" aria-label={`Passage ${index} of ${total}`}>{index}</span>}
       {editing ? (
         <div>
           <label className="sr-only" htmlFor={`text-${item.id}`}>Passage</label>
@@ -356,21 +432,21 @@ function Passage({ item, first, last, onEdit, onMove, onRemove, subjects, onPlac
           </div>
         </div>
       ) : item.text ? (
-        <blockquote className="whitespace-pre-wrap border-l-2 border-[var(--sem-source,theme(colors.sky.400))]/50 pl-3 text-sm leading-relaxed text-foreground/85" data-passage-text>{item.text}</blockquote>
+        <blockquote className="whitespace-pre-wrap border-l-[3px] border-sky-400/45 pl-3.5 font-serif text-[15.5px] leading-[1.7] text-foreground/90" data-passage-text>{item.text}</blockquote>
       ) : (
         <p className="text-sm text-foreground/60">The page itself, with no passage selected.</p>
       )}
 
       <label className="mt-2 block">
         <span className="sr-only">Your thoughts on this passage</span>
-        <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Add your thoughts (optional)" rows={note ? Math.min(8, note.split('\n').length + 1) : 1}
+        <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Add your own note (optional)" rows={note ? Math.min(8, note.split('\n').length + 1) : 1}
           onBlur={() => { if (note.trim() !== item.note) void onEdit(undefined, note.trim()) }}
           className="w-full resize-none rounded-lg bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground/80 placeholder:text-foreground/35 focus:bg-white/3 focus:px-2 focus:outline-none" data-passage-note />
       </label>
 
       <PlaceRow item={item} subjects={subjects} onPlace={onPlace} onSubjectsChanged={onSubjectsChanged} />
 
-      <div className="mt-1 flex items-center gap-0.5">
+      <div className="mt-1 flex items-center gap-0.5 text-foreground/40 transition-colors group-hover:text-foreground/60">
         <span className="mr-auto text-[11px] text-subtle">{new Date(item.capturedAt).toLocaleString(undefined, { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}</span>
         {!editing && item.text && <button type="button" onClick={() => setEditing(true)} className={icon} aria-label="Edit passage" title="Edit passage" data-passage-edit><Pencil className="size-3.5" /></button>}
         <button type="button" onClick={() => onMove(-1)} disabled={first} className={icon} aria-label="Move up" title="Move up" data-passage-up><ArrowUp className="size-3.5" /></button>
@@ -400,14 +476,22 @@ function PlaceRow({ item, subjects, onPlace, onSubjectsChanged }: {
   const current = p ? destinationFor(all, p.subjectId, p.topicName) : suggested && suggested !== NO_SUBJECT ? suggested : NO_SUBJECT
   return (
     <div className="mt-2" data-passage-place={p ? (item.placedBy === 'learner' ? 'yours' : p.confidence) : s ? 'suggested' : item.placedBy === 'learner' ? 'unfiled' : 'waiting'}>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-foreground/65">
-        <FolderClosed aria-hidden className="size-3.5 text-foreground/40" />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
         {p ? (
-          <span>Filed under <strong className={cn('font-medium', p.confidence === 'medium' && item.placedBy !== 'learner' ? 'text-amber-300' : 'text-foreground/90')} title={p.path.join(' › ')}>{words(p)}</strong>{p.confidence === 'medium' && item.placedBy !== 'learner' && <span className="text-subtle"> (Kivo’s guess)</span>}</span>
+          <span className={cn('inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1', p.confidence === 'medium' && item.placedBy !== 'learner' ? 'bg-amber-400/10 text-amber-200' : 'bg-keppel-400/10 text-foreground/85')} title={p.path.join(' › ')}>
+            <FolderClosed aria-hidden className="size-3.5 shrink-0 opacity-70" />
+            <span className="truncate">{words(p)}</span>
+            {p.confidence === 'medium' && item.placedBy !== 'learner' && <span className="shrink-0 opacity-75">· Kivo’s guess</span>}
+          </span>
         ) : s ? (
-          <span>Not filed. Suggested: <strong className="font-medium text-foreground/90" title={s.path.join(' › ')}>{words(s)}</strong></span>
-        ) : item.placedBy === 'learner' ? <span>Left unfiled</span> : <span className="inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Filing…</span>}
-        {s && !p && <button type="button" className={link} disabled={busy} onClick={() => void choose({ subjectId: s.subjectId, topicName: s.topicName })} data-place-accept>File here</button>}
+          <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-dashed border-white/15 px-2 py-1 text-foreground/70" title={s.path.join(' › ')}>
+            <Sparkles aria-hidden className="size-3.5 shrink-0 text-nova-ink" />
+            <span className="truncate">Suggested: <span className="font-medium text-foreground/90">{words(s)}</span></span>
+          </span>
+        ) : item.placedBy === 'learner'
+          ? <span className="inline-flex items-center gap-1.5 rounded-md bg-white/[0.04] px-2 py-1 text-foreground/55"><FolderClosed aria-hidden className="size-3.5" /> Not filed · organise later</span>
+          : <span className="inline-flex items-center gap-1 text-foreground/55"><Loader2 className="size-3 animate-spin" /> Finding where it belongs…</span>}
+        {s && !p && <button type="button" className={cn(link, 'font-medium')} disabled={busy} onClick={() => void choose({ subjectId: s.subjectId, topicName: s.topicName })} data-place-accept>File here</button>}
         <button type="button" className={link} onClick={() => setOpen(o => !o)} aria-expanded={open} data-place-change>{p ? 'Change' : 'Choose'}</button>
       </div>
       {open && (
