@@ -13,11 +13,14 @@ import { TaskEditor } from '@/components/nova/tasks/task-editor'
 import { useTasks } from '@/components/nova/tasks/use-tasks'
 import { cn } from '@/lib/utils'
 import {
-  CALENDAR_MODES, WEEKDAYS, countOf, dayTitle, daysOf, emptyDay, itemsByDay, periodTitle, placeTimed, rangeFor, shift, shortDay,
+  CALENDAR_MODES, WEEKDAYS, countOf, dayTitle, daysOf, emptyDay, itemsByDay, minuteIn, periodTitle, placeTimed, rangeFor, shift, shortDay,
   timeLabel, type CalendarMode, type DayItems,
 } from './calendar-grid'
 import { DeadlineDetail, DeadlineEditor, EventEditor, Modal, ReminderBadge, channelNote, repeatSummary } from './calendar-dialogs'
 import { addDeadline, useCalendar } from './use-calendar'
+import { useCalendarPlan, type DayLoad } from './use-calendar-plan'
+import { PlanPanel } from './plan-panel'
+import { useStartSession } from '@/components/nova/use-start-session'
 
 // The learner's calendar: their events, their tasks on the day they are due,
 // and their dated deadlines, in one place. The page draws what the server
@@ -26,7 +29,7 @@ import { addDeadline, useCalendar } from './use-calendar'
 // their own page, so each record keeps one place it is changed.
 
 const MODE_KEY = 'kivo-calendar-view'
-const MODE_LABEL: Record<CalendarMode, string> = { month: 'Month', week: 'Week', agenda: 'Agenda' }
+const MODE_LABEL: Record<CalendarMode, string> = { day: 'Day', week: 'Week', month: 'Month', agenda: 'Agenda' }
 
 // One restrained colour per kind of event: a thin bar and a dot, never a fill.
 const CATEGORY_TONE: Record<EventCategory, string> = {
@@ -56,6 +59,9 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
   const range = rangeFor(mode, anchor)
   const cal = useCalendar(range)
   const tasks = useTasks()
+  // What needs time and when it could go; read again whenever the calendar is.
+  const plan = useCalendarPlan(cal.view)
+  const focus = useStartSession()
 
   useEffect(() => {
     const stored = readMode()
@@ -71,6 +77,27 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
 
   const goToday = () => { setAnchor(today); setSelected(today) }
   const go = (by: -1 | 1) => setAnchor(a => shift(mode, a, by))
+
+  // Keys: ← → move, T today, D W M A the views (never while typing or in a dialog).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (dialog || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
+      const k = e.key.toLowerCase()
+      if (k === 'arrowleft') go(-1)
+      else if (k === 'arrowright') go(1)
+      else if (k === 't') goToday()
+      else if (k === 'd') choose('day')
+      else if (k === 'w') choose('week')
+      else if (k === 'm') choose('month')
+      else if (k === 'a') choose('agenda')
+      else return
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }) // eslint-disable-line react-hooks/exhaustive-deps
 
   // An account that is not a set-up Nova learner is told so, not shown an empty grid.
   if (cal.view && cal.view.status !== 'ready') {
@@ -105,7 +132,7 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
         <div className="flex items-center gap-2">
           <button type="button" onClick={goToday} className={cn(BUTTON_QUIET, 'h-9 px-3.5')}>Today</button>
           <div className="flex">
-            <button type="button" onClick={() => go(-1)} aria-label={`Previous ${mode === 'agenda' ? 'four weeks' : mode}`} className="grid size-9 place-items-center rounded-lg text-foreground/70 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            <button type="button" onClick={() => go(-1)} aria-label={`Previous ${mode === 'agenda' ? 'four weeks' : mode}`} title={`Previous ${mode === 'agenda' ? 'four weeks' : mode} (←)`} className="grid size-9 place-items-center rounded-lg text-foreground/70 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
               <ChevronLeft aria-hidden className="size-4" />
             </button>
             <button type="button" onClick={() => go(1)} aria-label={`Next ${mode === 'agenda' ? 'four weeks' : mode}`} className="grid size-9 place-items-center rounded-lg text-foreground/70 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
@@ -127,6 +154,13 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
 
       <Legend />
 
+      <PlanPanel plan={plan}
+        onAccept={async x => x.day ? cal.create({ title: x.title, category: 'study', taskId: x.taskId, allDay: false, startDay: x.day, startTime: x.startTime, endTime: x.endTime, timezone: plan.plan?.timezone, clientKey: `plan:${x.taskId}:${x.startAt}` }) : false}
+        onDone={async id => { await tasks.update(id, { status: 'done' }); await refreshBoth() }}
+        onOpenTask={openTask}
+        onFocus={(t, minutes) => void focus.start({ topicName: t.topicName!, subjectName: t.subjectName!, durationMinutes: minutes }, t.id)} />
+      {focus.error && <p role="alert" className="mt-2 text-sm text-amber-200">{focus.error}</p>}
+
       {cal.error && <p role="alert" className="mt-4 text-sm text-red-500">{cal.error}</p>}
 
       <div className="mt-4" aria-busy={cal.loading || cal.refreshing}>
@@ -145,8 +179,8 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
                   onSelect={setSelected} onAdd={day => setDialog({ kind: 'choose', day })}
                   onEvent={e => setDialog({ kind: 'event', event: e })} onTask={openTask} onDeadline={d => setDialog({ kind: 'deadline', deadline: d })} />
               )}
-              {mode === 'week' && (
-                <WeekView view={view} from={range.from} byDay={byDay}
+              {(mode === 'week' || mode === 'day') && (
+                <WeekView view={view} days={daysOf(range.from, range.to)} byDay={byDay} workload={plan.workload}
                   onAdd={(day, startTime) => setDialog(startTime ? { kind: 'event', event: null, initial: { startDay: day, startTime, endTime: endOf(startTime) } } : { kind: 'choose', day })}
                   onEvent={e => setDialog({ kind: 'event', event: e })} onTask={openTask} onDeadline={d => setDialog({ kind: 'deadline', deadline: d })} />
               )}
@@ -396,28 +430,35 @@ function DayDetail({ items, timezone, handlers }: { items: DayItems; timezone: s
 
 const HOUR_PX = 44
 
-function WeekView({ view, from, byDay, onAdd, ...handlers }: ItemHandlers & {
-  view: NovaCalendarReady; from: string; byDay: Map<string, DayItems>; onAdd: (day: string, startTime?: string) => void
+function WeekView({ view, days, byDay, workload, onAdd, ...handlers }: ItemHandlers & {
+  view: NovaCalendarReady; days: string[]; byDay: Map<string, DayItems>; workload: DayLoad[]; onAdd: (day: string, startTime?: string) => void
 }) {
-  const days = daysOf(from, rangeFor('week', from).to)
   const scroller = useRef<HTMLDivElement>(null)
-  // Opens on the working day, not at midnight.
-  useEffect(() => { if (scroller.current) scroller.current.scrollTop = 7 * HOUR_PX }, [])
+  // Opens on the working day, not at midnight (or near now, today).
+  useEffect(() => {
+    if (!scroller.current) return
+    const nowMin = days.includes(view.today) ? minuteIn(new Date().toISOString(), view.timezone) : 7 * 60
+    scroller.current.scrollTop = Math.max(0, (nowMin / 60 - 1.5)) * HOUR_PX
+  }, [days.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  const nowMinute = useNowMinute(view.timezone)
+  const one = days.length === 1
+  const loadOf = new Map(workload.map(w => [w.day, w]))
   return (
-    <div className="overflow-x-auto rounded-2xl border border-white/8 bg-card/40">
-      <div className="min-w-[44rem]">
+    <div className="overflow-x-auto rounded-2xl border border-white/8 bg-card/40" data-timeline={one ? 'day' : 'week'}>
+      <div className={one ? '' : 'min-w-[44rem]'}>
         {/* Day heads */}
-        <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] border-b border-white/8">
+        <div className={cn("grid border-b border-white/8", cols(days.length))}>
           <div />
           {days.map(day => (
             <div key={day} className="border-l border-white/8 px-2 py-2 text-center">
               <span className={cn('inline-grid min-w-8 place-items-center rounded-full px-2 py-0.5 text-sm font-medium',
-                day === view.today ? 'bg-action text-action-foreground' : 'text-foreground/80')}>{shortDay(day)}</span>
+                day === view.today ? 'bg-action text-action-foreground' : 'text-foreground/80')}>{one ? dayTitle(day) : shortDay(day)}</span>
+              <DayLoadLine load={loadOf.get(day)} />
             </div>
           ))}
         </div>
         {/* All-day, tasks and deadlines */}
-        <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] border-b border-white/8">
+        <div className={cn("grid border-b border-white/8", cols(days.length))}>
           <div className="px-1 py-2 text-right text-[10px] uppercase tracking-wider text-subtle">All day</div>
           {days.map(day => {
             const items = byDay.get(day) ?? emptyDay()
@@ -430,7 +471,7 @@ function WeekView({ view, from, byDay, onAdd, ...handlers }: ItemHandlers & {
         </div>
         {/* Hours */}
         <div ref={scroller} className="max-h-[36rem] overflow-y-auto">
-          <div className="relative grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]" style={{ height: 24 * HOUR_PX }}>
+          <div className={cn("relative grid", cols(days.length))} style={{ height: 24 * HOUR_PX }}>
             <div className="relative">
               {Array.from({ length: 24 }, (_, h) => (
                 <span key={h} className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-subtle" style={{ top: h * HOUR_PX }}>{h === 0 ? '' : `${String(h).padStart(2, '0')}:00`}</span>
@@ -438,6 +479,11 @@ function WeekView({ view, from, byDay, onAdd, ...handlers }: ItemHandlers & {
             </div>
             {days.map(day => (
               <div key={day} className="relative border-l border-white/8">
+                {day === view.today && nowMinute !== null && (
+                  <div aria-hidden className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: (nowMinute / 60) * HOUR_PX }} data-now-line>
+                    <span className="-ml-1 size-2 rounded-full bg-rose-500" /><span className="h-px flex-1 bg-rose-500/80" />
+                  </div>
+                )}
                 {Array.from({ length: 24 }, (_, h) => (
                   <button key={h} type="button" onClick={() => onAdd(day, `${String(h).padStart(2, '0')}:00`)}
                     aria-label={`Add an event on ${dayTitle(day)} at ${String(h).padStart(2, '0')}:00`}
@@ -504,5 +550,34 @@ function ChooseKind({ day, reminderNote, onPick, onClose }: { day: string; remin
       </div>
       {reminderNote && <p className="mt-4 text-xs text-foreground/60">{reminderNote}</p>}
     </Modal>
+  )
+}
+
+const cols = (n: number) => (n === 1 ? 'grid-cols-[3.5rem_minmax(0,1fr)]' : 'grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]')
+
+// The minute of the day now, in the learner's zone; moves every minute.
+function useNowMinute(timezone: string): number | null {
+  const [m, setM] = useState<number | null>(null)
+  useEffect(() => {
+    const tick = () => setM(minuteIn(new Date().toISOString(), timezone))
+    tick()
+    const id = window.setInterval(tick, 60_000)
+    return () => window.clearInterval(id)
+  }, [timezone])
+  return m
+}
+
+const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)}h${min % 60 ? ` ${min % 60}m` : ''}` : `${min}m`)
+
+// A day's load under its head: planned study time and what is left of the
+// working day (calendar-planner.ts workload; the next seven days only).
+function DayLoadLine({ load }: { load: DayLoad | undefined }) {
+  if (!load) return null
+  const busyShare = Math.min(1, load.busyMinutes / Math.max(1, load.capacityMinutes))
+  return (
+    <span className="mt-1 block" title={`${hm(load.plannedMinutes)} of study planned · ${hm(load.freeMinutes)} free in your working hours`} data-day-load={load.day}>
+      <span className="mx-auto block h-1 w-16 overflow-hidden rounded-full bg-white/8"><span className={cn('block h-full rounded-full', busyShare > 0.85 ? 'bg-amber-400' : 'bg-action/70')} style={{ width: `${busyShare * 100}%` }} /></span>
+      <span className="mt-0.5 block text-[10px] tabular-nums text-subtle">{load.plannedMinutes ? `${hm(load.plannedMinutes)} planned · ` : ''}{hm(load.freeMinutes)} free</span>
+    </span>
   )
 }
