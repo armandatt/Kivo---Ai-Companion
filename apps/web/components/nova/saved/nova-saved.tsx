@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LearningResource, NovaSavedResourcesReady } from '@repo/api/nova/product/learning-events.types'
 import { useExtensionConnection } from './extension-panel'
 import { ExtensionHeader, ExtensionHelp, GetStarted, OtherWays, useIntroVisibility } from './extension-install'
+import { BrowserAgentSection } from './browser-agent-section'
 import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
 import { SavedLibrary } from './saved-library'
@@ -60,6 +61,7 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
           saveLink={<SaveLink subjects={view.subjects} resources={shown} capture={capture} onSaved={saved} />} />
       </section>
 
+      <BrowserAgentSection />
       <OtherWays />
       <ExtensionHelp onShowIntro={intro.show} />
     </div>
