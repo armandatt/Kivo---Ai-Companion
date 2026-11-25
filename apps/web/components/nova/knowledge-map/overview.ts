@@ -8,9 +8,11 @@ export interface Box { minX: number; minY: number; maxX: number; maxY: number }
 export interface View { x: number; y: number; k: number }
 
 // How much a card says at a zoom: shapes and the overview's labels (0),
-// titles (1), titles and facts (2).
+// titles (1), titles and facts (2). A card title is 12.5 map units: under
+// 0.56 it would be under 7px on screen (unreadable, founder review #02), so
+// below that names are drawn at screen size instead (far-labels.ts).
 export type Detail = 0 | 1 | 2
-export const detailAt = (k: number): Detail => (k >= 0.62 ? 2 : k >= 0.36 ? 1 : 0)
+export const detailAt = (k: number): Detail => (k >= 0.62 ? 2 : k >= 0.56 ? 1 : 0)
 
 // A region's label in screen pixels, so it reads the same at any zoom; the
 // map units it takes are those over the zoom.

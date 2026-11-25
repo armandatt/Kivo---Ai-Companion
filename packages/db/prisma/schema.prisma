@@ -767,6 +767,7 @@ model NovaAcademicProfile {
   notes             NovaNote[]
   pdfHighlights     NovaPdfHighlight[]
   noteImages        NovaNoteImage[]
+  noteAttachments   NovaNoteAttachment[]
   masterySnapshots  NovaTopicMasterySnapshot[]
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
@@ -996,6 +997,7 @@ model NovaNote {
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   images  NovaNoteImage[]
+  attachments NovaNoteAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1042,6 +1044,34 @@ model NovaNoteImage {
   sourceUrl   String?
   sourceTitle String?
   page        Int?
+  clientKey String
+  createdAt DateTime @default(now())
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  note    NovaNote            @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, clientKey])
+  @@index([noteId])
+}
+
+// A file kept with a note, byte for byte: today a PDF the learner imported
+// (the original document, never flattened into text) or one carried in a
+// shared .kivo note or map. The note's text holds [name](kivo-file:<id>); the
+// bytes are here, given only to their owner, and counted on their storage
+// allowance (billing/accounting/storage.ts). It goes with its note. Only
+// product/note-attachments.ts reads or writes it.
+model NovaNoteAttachment {
+  id        String   @id @default(cuid())
+  profileId String
+  noteId    String
+  // "document" (a PDF) | "other" (reserved: nothing writes it yet)
+  kind      String
+  fileName  String
+  mimeType  String
+  bytes     Bytes
+  byteSize  Int
+  sha256    String
+  // Made once per key however often it is sent (a retry, a resumed import).
   clientKey String
   createdAt DateTime @default(now())
 
@@ -2130,10 +2160,13 @@ model NovaImportJob {
   profileId     String
   packageId     String              // the package's own uuid (manifest)
   packageSha256 String              // the uploaded file, as checked
+  // "map" (a Knowledge Map or subject tree) | "note" (one note, from a .kivo
+  // note package or a PDF). Rows before 25 Nov are all maps.
+  packageType   String   @default("map")
   title         String
   // "running" | "failed" | "complete"
   status        String
-  // "structure" | "notes" | "about" | "verify" | "done"
+  // "structure" | "notes" | "links" | "about" | "verify" | "done"
   stage         String
   pkg           Json?
   // { subjectNames: {ref: name}, notesDone: [ref], aboutNoteId, counts }

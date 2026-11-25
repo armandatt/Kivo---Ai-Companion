@@ -687,3 +687,8 @@ export async function refileTasksIn(tx: Pick<typeof prisma, "novaTask">, profile
   // left it under the subject with no topic (K-02). Only one still there moves.
   for (const f of filings) await tx.novaTask.updateMany({ where: { id: f.id, profileId, ...(left === "unfiled" ? { subjectId: null } : { subjectId: f.subjectId, topicName: null }) }, data: { subjectId: f.subjectId, topicName: f.topicName } });
 }
+
+/** How many more open tasks the learner can have (an import checks it before it writes anything). */
+export async function openTaskRoom(profileId: string): Promise<number> {
+  return Math.max(0, TASK_OPEN_MAX - await prisma.novaTask.count({ where: { profileId, status: { not: "done" } } }));
+}

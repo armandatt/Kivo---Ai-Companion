@@ -523,3 +523,13 @@ export async function setTopicDetailsIn(tx: TopicTx, topicId: string, change: { 
 export async function removeTopicIn(tx: TopicTx, topicId: string): Promise<void> {
   await tx.novaTopicMastery.delete({ where: { id: topicId } });
 }
+
+/** What the plan says about each topic of these subjects (their `details`), by topic id; the learner's own subjects only. */
+export async function topicDetailsOf(profileId: string, subjectIds: string[]): Promise<Map<string, unknown>> {
+  if (subjectIds.length === 0) return new Map();
+  const rows = await prisma.novaTopicMastery.findMany({
+    where: { subjectId: { in: subjectIds }, subject: { profileId }, NOT: { details: { equals: null as never } } },
+    select: { id: true, details: true },
+  });
+  return new Map(rows.filter(r => r.details !== null).map(r => [r.id, r.details]));
+}
