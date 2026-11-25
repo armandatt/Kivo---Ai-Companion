@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
   alternates: { canonical: PAGE_URL },
-  openGraph: { title: TITLE, description: DESCRIPTION, url: PAGE_URL, type: "website", images: [{ url: "/connect/consent-screen.webp", width: 496, height: 848, alt: "Kivo's consent screen: Allow Claude to use your Kivo?" }] },
+  openGraph: { title: TITLE, description: DESCRIPTION, url: PAGE_URL, type: "website", images: [{ url: "/kivo-connect/consent-screen.webp", width: 496, height: 848, alt: "Kivo's consent screen: Allow Claude to use your Kivo?" }] },
   twitter: { card: "summary", title: TITLE, description: DESCRIPTION },
 }
 
@@ -363,7 +363,7 @@ function HeroVisual() {
     <figure className="relative mx-auto max-w-[17rem] sm:max-w-[22rem] lg:max-w-[26rem]" data-connect-visual="consent">
       <div aria-hidden className="absolute -inset-6 -z-10 rounded-[2rem] bg-[radial-gradient(60%_50%_at_50%_40%,rgb(45_212_191/0.10),transparent_70%)]" />
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/connect/consent-screen.webp" width={496} height={848} alt="Kivo's consent screen asking “Allow Claude to use your Kivo?”, listing what Claude may do, with Don't allow and Allow" className="w-full rounded-2xl border border-white/10 shadow-2xl" />
+      <img src="/kivo-connect/consent-screen.webp" width={496} height={848} alt="Kivo's consent screen asking “Allow Claude to use your Kivo?”, listing what Claude may do, with Don't allow and Allow" className="w-full rounded-2xl border border-white/10 shadow-2xl" />
       <figcaption className="mt-3 text-center text-[13px] text-foreground/55">The real screen Kivo shows when Claude asks to connect. Nothing is shared until you choose Allow.</figcaption>
     </figure>
   )

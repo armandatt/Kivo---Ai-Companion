@@ -24,14 +24,14 @@ Do not show email addresses, other connectors, chat history or personal data. Bl
 
 1. Export as WebM (VP9, 1280×720 or 1920×1080, under 15 MB) with a poster PNG, a frame from step 5.
 2. Write English captions as WebVTT, one cue per step, in the words shown on screen.
-3. Put the three files in `apps/web/public/connect/` as `kivo-connect-demo.webm`, `.png` and `.vtt`.
-4. In `mcp-clients.ts`, set `CONNECT_VIDEO = { src: '/connect/kivo-connect-demo.webm', type: 'video/webm', poster: '/connect/kivo-connect-demo.png', captions: '/connect/kivo-connect-demo.vtt', seconds: <length>, title: 'Connect Claude to Kivo', summary: 'Add, allow, read and save' }`.
+3. Put the three files in `apps/web/public/kivo-connect/` as `kivo-connect-demo.webm`, `.png` and `.vtt`.
+4. In `mcp-clients.ts`, set `CONNECT_VIDEO = { src: '/kivo-connect/kivo-connect-demo.webm', type: 'video/webm', poster: '/kivo-connect/kivo-connect-demo.png', captions: '/kivo-connect/kivo-connect-demo.vtt', seconds: <length>, title: 'Connect Claude to Kivo', summary: 'Add, allow, read and save' }`.
 
 The player never autoplays, loads nothing until opened, and carries the captions.
 
 ## 25 Nov 2026: page redesigned, recording still blocked
 
-The redesigned guide (`app/(legal)/integrations/kivo-connect/page.tsx`) puts the demonstration in the hero, beside the headline. While `CONNECT_VIDEO` is null it shows **Kivo's real consent screen** (`public/connect/consent-screen.webp`, captured from `/connect/authorize` after a genuine OAuth dynamic registration, for the synthetic local learner "Riya"), captioned as that screen. Setting `CONNECT_VIDEO` swaps the hero to the player; nothing else changes.
+The redesigned guide (`app/(legal)/integrations/kivo-connect/page.tsx`) puts the demonstration in the hero, beside the headline. While `CONNECT_VIDEO` is null it shows **Kivo's real consent screen** (`public/kivo-connect/consent-screen.webp`, captured from `/connect/authorize` after a genuine OAuth dynamic registration, for the synthetic local learner "Riya"), captioned as that screen. Setting `CONNECT_VIDEO` swaps the hero to the player; nothing else changes.
 
 **Why the video isn't recorded:** claude.ai and chatgpt.com must reach a public MCP address, so the recording needs (a) production Kivo with a dedicated test account holding only synthetic material, and (b) the owner's own Claude or ChatGPT login to add the connector. Neither was available to the agent, and adding a connector to the owner's personal assistant account was not authorised. No recording was fabricated.
 
