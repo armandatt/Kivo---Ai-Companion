@@ -53,3 +53,11 @@ test('the footer opens social links in a new tab safely and shows the published 
   assert.match(footer, /mailto:\$\{CONTACT_EMAIL\}/)
   assert.match(read('apps/web/lib/site-links.ts'), /CONTACT_EMAIL = LEGAL_CONTACT/)
 })
+
+test('every capability on the guide names a real tool, and examples exist', async () => {
+  const { MCP_CAPABILITIES, toolInfo } = await import('./mcp-clients')
+  for (const c of MCP_CAPABILITIES) {
+    assert.ok(c.asks.length > 0, c.id)
+    for (const t of c.tools) assert.ok(toolInfo(t), `${c.id}: ${t} is not a tool`)
+  }
+})
