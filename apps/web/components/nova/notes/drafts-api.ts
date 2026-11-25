@@ -49,3 +49,11 @@ export const placeItem = (draftId: string, itemId: string) =>
   call<PlaceAnswer>(`/api/nova/drafts/${encodeURIComponent(draftId)}/place`, 'POST', { itemId })
 export const choosePlace = (draftId: string, itemId: string, dest: { subjectId: string | null; topicName: string | null }) =>
   call<PlaceAnswer>(`/api/nova/drafts/${encodeURIComponent(draftId)}/place`, 'PUT', { itemId, subjectId: dest.subjectId, topicName: dest.topicName })
+
+// When a draft was last added to, as the inbox groups it.
+export function dayGroup(iso: string, now = new Date()): 'Today' | 'Yesterday' | 'This week' | 'Earlier' {
+  const d = new Date(iso)
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((start(now) - start(d)) / 86_400_000)
+  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : days < 7 ? 'This week' : 'Earlier'
+}
