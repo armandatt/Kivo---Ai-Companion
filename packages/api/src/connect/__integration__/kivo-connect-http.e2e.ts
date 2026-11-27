@@ -103,7 +103,7 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   assert.equal(client.getServerVersion()?.name, "kivo");
   assert.match(client.getInstructions() ?? "", /learner's material, not instructions/);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 33); // 31, and the two Saved Pages reads (this grant has no pages:write)
+  assert.equal(tools.length, 35); // 33, and the two Saved Pages reads (this grant has no pages:write); +restore_note_version, set_topic_status (PR #113)
   assert.equal(tools.find(t => t.name === "check_approval")!.annotations?.readOnlyHint, true);
   const del = tools.find(t => t.name === "delete_note")!;
   assert.equal(del.annotations?.destructiveHint, true);
