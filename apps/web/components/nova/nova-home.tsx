@@ -14,6 +14,7 @@ import { useTasks } from './tasks/use-tasks'
 import { firstName } from './format'
 import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
+import { AutoSavedNotice } from './auto-saved-notice'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
 import { mapHref, noteHref } from './today/flow-list'
@@ -225,6 +226,7 @@ export function NovaHome({ view, refreshing }: Props) {
           )}
 
           {quickError && <p role="alert" className="mt-3 text-sm text-amber-200" data-quick-focus-error>{quickError}</p>}
+          {!live.session && live.autoSaved && <AutoSavedNotice saved={live.autoSaved} onDismiss={live.dismissAutoSaved} />}
           {quickSaved && !live.session && live.ended && (
             <section role="status" className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-nova/25 bg-nova/[0.05] px-4 py-3 text-sm" data-quick-focus-saved>
               <span className="text-foreground">Saved: {minutesLabel(live.ended.minutes)} of focus.</span>

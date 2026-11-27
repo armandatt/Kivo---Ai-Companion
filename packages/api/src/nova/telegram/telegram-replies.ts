@@ -631,3 +631,11 @@ const FIXED: Record<ReplyLanguage, ReadonlySet<string>> = {
   hindi:    new Set(Object.values(TEXT_HINGLISH)),
 };
 export const isFixedText = (text: string, language: ReplyLanguage): boolean => FIXED[language].has(text);
+
+// A paused session left past the limit is saved with its time (bug batch
+// 28 Nov, item 1). A function, so it sits outside the fixed TEXT tables.
+export function sessionSavedText(language: ReplyLanguage, minutes: number, counted: boolean): string {
+  return language !== "english"
+    ? `Session do ghante se zyada paused tha, isliye maine pause se pehle ke ${minutes} min save kar diye.${counted ? "" : " 10 min se kam Progress mein count nahi hota."} Jab ready ho, naya start kar lo.`
+    : `Your session was paused for over two hours, so I saved it with the ${minutes} min you studied before the pause.${counted ? "" : " Under 10 minutes isn't counted in Progress."} Start a new one when you're ready.`;
+}

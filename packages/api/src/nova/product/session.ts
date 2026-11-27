@@ -23,13 +23,24 @@ import { parseReflection } from "./focus-context";
 import type { ReflectionResponse } from "./focus-context.types";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
-import { ABANDONED_STATUS } from "../engines/session-clock";
-import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
+import { ABANDONED_STATUS, AUTO_SAVED_PAUSED } from "../engines/session-clock";
+import type { NovaAutoSavedSession, NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
   const snapshot = await loadStudySnapshot(platformChatId);
   if (!snapshot.activeSession) return null;
   return { ...toSessionView(snapshot.activeSession, now), details: await detailsOf(snapshot.activeSession.id) };
+}
+
+// The running session, and when nothing runs, the last session if it was a
+// paused one saved for the learner (GET /api/nova/session), so the page can
+// say so instead of the session silently going away.
+export async function loadNovaSessionState(platformChatId: string, now = new Date()): Promise<{ session: NovaSessionView | null; autoSaved: NovaAutoSavedSession | null }> {
+  const snapshot = await loadStudySnapshot(platformChatId);
+  if (snapshot.activeSession) return { session: { ...toSessionView(snapshot.activeSession, now), details: await detailsOf(snapshot.activeSession.id) }, autoSaved: null };
+  if (!snapshot.profileId) return { session: null, autoSaved: null };
+  const how = await lastClosure(snapshot.profileId);
+  return { session: null, autoSaved: how?.kind === "saved" ? how.saved : null };
 }
 
 // A session's Quick Focus details, read only for the page.
@@ -53,12 +64,38 @@ const SESSION_ABANDONED = {
 // Whether the learner's most recent session is one that was closed as
 // abandoned. False again as soon as they start another.
 export async function lastSessionWasAbandoned(profileId: string): Promise<boolean> {
+  return (await lastClosure(profileId))?.kind === "abandoned";
+}
+
+// The words for a paused session that was saved for the learner.
+export function autoSavedMessage(minutes: number, counted: boolean): string {
+  const time = `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return counted
+    ? `Your paused session was left paused for over two hours, so it was saved with the ${time} you studied before the pause.`
+    : `Your paused session was left paused for over two hours, so it was saved with the ${time} you studied before the pause. Under ten minutes isn't counted in Progress.`;
+}
+
+// How the learner's most recent session (not one they reported afterwards)
+// was closed for them, if it was: abandoned, or saved after a long pause.
+// null once they start another, or when they closed it themselves.
+export async function lastClosure(profileId: string): Promise<{ kind: "abandoned" } | { kind: "saved"; saved: NovaAutoSavedSession } | null> {
   const last = await prisma.novaStudySession.findFirst({
     where:   { profileId, activityType: { not: SELF_REPORTED_ACTIVITY } },
     orderBy: { createdAt: "desc" },
-    select:  { status: true },
+    select:  { id: true, status: true, durationMinutes: true, topicName: true, currentFocus: true, executionReport: true },
   });
-  return last?.status === ABANDONED_STATUS;
+  if (!last) return null;
+  if (last.status === ABANDONED_STATUS) return { kind: "abandoned" };
+  const report = last.executionReport as { autoClosed?: unknown; pausedAt?: unknown; backfilled?: unknown } | null;
+  // Saved later by the backfill (persistence/session-backfill.ts): old news, not announced.
+  if (last.status !== "completed" || report?.autoClosed !== AUTO_SAVED_PAUSED || report.backfilled) return null;
+  const counted = last.durationMinutes >= COUNTED_SESSION_MINUTES;
+  return { kind: "saved", saved: {
+    sessionId: last.id, label: last.topicName ?? last.currentFocus ?? null, topicName: last.topicName,
+    minutes: last.durationMinutes, counted,
+    pausedAt: typeof report.pausedAt === "string" ? report.pausedAt : null,
+    message: autoSavedMessage(last.durationMinutes, counted),
+  } };
 }
 
 export async function runNovaSessionCommand(
@@ -83,12 +120,20 @@ export async function runNovaSessionCommand(
   const left   = command.action !== "end" && snapshot.activeSession !== null
     && await abandonIfStale(snapshot.activeSession.id, now).catch(() => false);
   const active = left ? null : snapshot.activeSession;
-  if (left && command.action !== "start") return SESSION_ABANDONED;
+  // A Pause or Resume that finds its session already closed for the learner
+  // says how: saved (paused too long), or abandoned (left running).
+  const closedForThem = async (): Promise<NovaSessionResponse | null> => {
+    const how = await lastClosure(profileId);
+    if (how?.kind === "abandoned") return SESSION_ABANDONED;
+    if (how?.kind === "saved") return { ok: true, session: null, ended: null, autoSaved: how.saved };
+    return null;
+  };
+  if (left && command.action !== "start") return (await closedForThem()) ?? SESSION_ABANDONED;
   const check  = checkSessionCommand(command, active);
   if (check.verdict === "reject") {
     // "Nothing is running" has a reason worth giving when the reason is that
     // the last session was closed for them.
-    if (check.error === "no_active_session" && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
+    if (check.error === "no_active_session") { const why = await closedForThem(); if (why) return why; }
     return { ok: false, error: check.error, message: check.message };
   }
   if (check.verdict === "noop") {
@@ -132,7 +177,7 @@ export async function runNovaSessionCommand(
     // Not closed by this call. Either it was ended elsewhere a moment ago
     // (nothing was written twice, and there is nothing new to report), or
     // the sweep abandoned it first, which the learner is told.
-    if (!closed && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
+    if (!closed) { const why = await closedForThem(); if (why) return why; }
     if (closed) {
       ended = {
         sessionId: active.id,

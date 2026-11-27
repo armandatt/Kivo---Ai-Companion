@@ -33,8 +33,14 @@ export function sessionElapsedSeconds(session: SessionClock, now: Date): number 
 
 // ── A session nobody came back to ─────────────────────────────────────────────
 // A timer left running, or paused and forgotten, is not study. Past these
-// limits the session is closed as "abandoned": it stops holding back Nova's
-// messages, and none of the time it sat open is recorded as studied.
+// limits the session is closed: it stops holding back Nova's messages, and
+// none of the time it sat open is recorded as studied.
+//
+// How it is closed depends on why (sessionClosure below). A paused session is
+// one the learner stopped themselves: the time on its clock was studied, so
+// it is SAVED as a completed session with that time, never dropped (bug batch
+// 28 Nov, item 1). A timer left running past its plan is closed as
+// "abandoned", uncounted, as before.
 //
 //   running   study time reaches the planned length plus the grace period
 //   paused    one pause lasts ABANDON_PAUSED_MINUTES, however little was studied
@@ -60,6 +66,26 @@ export interface Abandonment {
   // What is kept as the session's length: the study time on its clock, never
   // more than the planned length (or the fallback).
   countedMinutes: number;
+  // The study time on its clock, whole minutes, with no cap: what a paused
+  // session is saved with (the clock stopped at the pause).
+  studiedMinutes: number;
+}
+
+// The marker kept on a session saved by the sweep (executionReport.autoClosed),
+// so the learner can be told and the session told apart from one they ended.
+export const AUTO_SAVED_PAUSED = "paused_too_long";
+
+export type SessionClosure =
+  | { status: "completed"; durationMinutes: number; autoClosed: typeof AUTO_SAVED_PAUSED }
+  | { status: typeof ABANDONED_STATUS; durationMinutes: number; autoClosed: null };
+
+// What a session past its limit becomes. Paused: saved, with the time studied
+// up to the pause (Progress still leaves out anything under ten minutes, as it
+// does for every session). Left running: abandoned, as before.
+export function sessionClosure(verdict: Abandonment): SessionClosure {
+  return verdict.reason === "paused_too_long"
+    ? { status: "completed", durationMinutes: verdict.studiedMinutes, autoClosed: AUTO_SAVED_PAUSED }
+    : { status: ABANDONED_STATUS, durationMinutes: verdict.countedMinutes, autoClosed: null };
 }
 
 // The length a session is held to. A missing or unusable plan is the fallback.
@@ -79,12 +105,13 @@ export function sessionAbandonment(
 
   const planned = abandonmentPlanMinutes(session.plannedDurationMinutes);
   const study   = sessionElapsedSeconds(session, now);
-  const countedMinutes = Math.min(Math.floor(study / 60), planned);
+  const studiedMinutes = Math.floor(study / 60);
+  const countedMinutes = Math.min(studiedMinutes, planned);
 
   if (session.status === "paused" && session.pausedAt) {
     const paused = now.getTime() - session.pausedAt.getTime();
-    if (Number.isFinite(paused) && paused >= ABANDON_PAUSED_MINUTES * 60_000) return { reason: "paused_too_long", countedMinutes };
+    if (Number.isFinite(paused) && paused >= ABANDON_PAUSED_MINUTES * 60_000) return { reason: "paused_too_long", countedMinutes, studiedMinutes };
   }
-  if (study >= (planned + ABANDON_GRACE_MINUTES) * 60) return { reason: "ran_past_plan", countedMinutes };
+  if (study >= (planned + ABANDON_GRACE_MINUTES) * 60) return { reason: "ran_past_plan", countedMinutes, studiedMinutes };
   return null;
 }

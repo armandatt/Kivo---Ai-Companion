@@ -10,7 +10,7 @@
 
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
-import { lastSessionWasAbandoned, loadNovaSession, runNovaSessionCommand } from "../product/session";
+import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -26,7 +26,7 @@ import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
   progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
-  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor,
+  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor, sessionSavedText,
 } from "./telegram-replies";
 import type { OptionAction, PlanChangeKind, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
@@ -262,14 +262,20 @@ export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resum
   if (!result.ok) {
     return done(`session_${action}`, { text: notRunningText(ctx, result) }, false);
   }
-  if (!result.session) return done(`session_${action}`, { text: textFor(ctx.language).nothingRunning }, false);
+  if (!result.session) {
+    const saved = result.autoSaved;
+    return done(`session_${action}`, { text: saved ? sessionSavedText(ctx.language, saved.minutes, saved.counted) : textFor(ctx.language).nothingRunning }, false);
+  }
   return done(`session_${action}`, sessionReply(result.session));
 }
 
 export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome | null): Promise<ActionResult> {
   const session = await loadNovaSession(ctx.chatId, ctx.now);
   if (!session) {
-    const text = await lastSessionWasAbandoned(ctx.profileId) ? textFor(ctx.language).sessionAbandoned : textFor(ctx.language).nothingRunning;
+    const how = await lastClosure(ctx.profileId);
+    const text = how?.kind === "abandoned" ? textFor(ctx.language).sessionAbandoned
+      : how?.kind === "saved" ? sessionSavedText(ctx.language, how.saved.minutes, how.saved.counted)
+      : textFor(ctx.language).nothingRunning;
     return done("ask_outcome", { text }, false);
   }
   return done("ask_outcome", outcomeReply(session.topicName, stated));
@@ -283,6 +289,7 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   }
   // Closed by someone else a moment ago (the web app, a second tap): the
   // evidence is theirs and nothing was written twice.
+  if (!result.ended && result.autoSaved) return done("session_end", { text: sessionSavedText(ctx.language, result.autoSaved.minutes, result.autoSaved.counted) }, false);
   if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
   return done("session_end", endedReply(result.ended));
 }

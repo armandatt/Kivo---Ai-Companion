@@ -43,7 +43,7 @@ import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
 import { likeLiteral, normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
-import { ABANDONED_STATUS, pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
+import { pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionClosure, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
 import type { SessionEvidence, SessionExecutionReport, SessionOutcome } from "../types/session.types";
@@ -476,12 +476,18 @@ async function abandonRow(
   row:     AbandonRow,
   verdict: Abandonment,
 ): Promise<boolean> {
+  // Paused too long: saved as completed with the time up to the pause, marked
+  // so the learner is told. Left running: abandoned (engines/session-clock.ts).
+  const closure = sessionClosure(verdict);
   const closed = await db.novaStudySession.updateMany({
     where: { id: row.id, status: row.status, pausedAt: row.pausedAt },
-    data:  { status: ABANDONED_STATUS, durationMinutes: verdict.countedMinutes },
+    data:  {
+      status: closure.status, durationMinutes: closure.durationMinutes,
+      ...(closure.autoClosed ? { executionReport: { autoClosed: closure.autoClosed, pausedAt: row.pausedAt?.toISOString() ?? null } } : {}),
+    },
   });
   if (closed.count === 1) {
-    console.log(JSON.stringify({ layer: "nova:session", sessionId: row.id, profileId: row.profileId, outcome: "abandoned", reason: verdict.reason, countedMinutes: verdict.countedMinutes }));
+    console.log(JSON.stringify({ layer: "nova:session", sessionId: row.id, profileId: row.profileId, outcome: closure.autoClosed ? "auto_saved" : "abandoned", reason: verdict.reason, minutes: closure.durationMinutes }));
   }
   return closed.count === 1;
 }

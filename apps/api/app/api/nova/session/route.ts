@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { loadNovaSession, runNovaSessionCommand } from "@repo/api/nova/product/session"
+import { loadNovaSessionState, runNovaSessionCommand } from "@repo/api/nova/product/session"
 //@ts-ignore
 import { parseSessionCommand } from "@repo/api/nova/product/session-view"
 import { resolveNovaLearner } from "../../../../lib/nova/resolve-learner"
@@ -21,13 +21,15 @@ async function resolveOnboardedLearner() {
 }
 
 // GET /api/nova/session
-// The running study session, or null. Response: NovaSessionResponse.
+// The running study session, or null. Response: NovaSessionResponse. With no
+// session running, autoSaved is the last session when it was paused too long
+// and saved for the learner.
 export async function GET() {
   const { learner, error } = await resolveOnboardedLearner()
   if (error) return error
   try {
-    const session = await loadNovaSession(learner.platformChatId)
-    return NextResponse.json({ ok: true, session, ended: null })
+    const { session, autoSaved } = await loadNovaSessionState(learner.platformChatId)
+    return NextResponse.json({ ok: true, session, ended: null, autoSaved })
   } catch (err) {
     console.error("[nova/session]", err)
     return fail(500, "failed", "Could not load your session.")

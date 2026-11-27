@@ -5,7 +5,7 @@
 
 import {
   ABANDON_FALLBACK_PLANNED_MINUTES, ABANDON_GRACE_MINUTES, ABANDON_PAUSED_MINUTES,
-  abandonmentPlanMinutes, sessionAbandonment, sessionElapsedSeconds,
+  abandonmentPlanMinutes, sessionAbandonment, sessionClosure, sessionElapsedSeconds, AUTO_SAVED_PAUSED,
 } from "../engines/session-clock";
 
 const START = new Date("2026-10-12T10:00:00Z");
@@ -24,11 +24,11 @@ describe("the limits", () => {
 describe("a running session with a planned length", () => {
   it("planned 25 minutes: still a session at 54:59 of study, abandoned at 55:00", () => {
     expect(sessionAbandonment(running(25), at(54, 59))).toBeNull();
-    expect(sessionAbandonment(running(25), at(55))).toEqual({ reason: "ran_past_plan", countedMinutes: 25 });
+    expect(sessionAbandonment(running(25), at(55))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 25 });
   });
 
   it("keeps the planned length at most, however long it sat open", () => {
-    expect(sessionAbandonment(running(25), at(3 * 24 * 60))).toEqual({ reason: "ran_past_plan", countedMinutes: 25 });
+    expect(sessionAbandonment(running(25), at(3 * 24 * 60))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 25 });
     expect(sessionAbandonment(running(45), at(500))?.countedMinutes).toBe(45);
   });
 
@@ -36,14 +36,14 @@ describe("a running session with a planned length", () => {
     // 100 minutes on the wall, 60 of them paused: 40 of study, under 55.
     expect(sessionAbandonment(running(25, 60 * 60), at(100))).toBeNull();
     // 115 on the wall, 60 paused: 55 of study.
-    expect(sessionAbandonment(running(25, 60 * 60), at(115))).toEqual({ reason: "ran_past_plan", countedMinutes: 25 });
+    expect(sessionAbandonment(running(25, 60 * 60), at(115))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 25 });
   });
 });
 
 describe("a session started with no length", () => {
   it("is held to sixty minutes: still a session at 89:59, abandoned at 90:00", () => {
     expect(sessionAbandonment(running(null), at(89, 59))).toBeNull();
-    expect(sessionAbandonment(running(null), at(90))).toEqual({ reason: "ran_past_plan", countedMinutes: 60 });
+    expect(sessionAbandonment(running(null), at(90))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 60 });
   });
 
   it("a planned length that is not a usable number is treated the same way", () => {
@@ -58,10 +58,24 @@ describe("a session started with no length", () => {
 });
 
 describe("a paused session", () => {
-  it("is abandoned after two hours of one pause, however little was studied", () => {
+  // Bug batch 28 Nov, item 1: a paused session left past the limit is never
+  // dropped. It is saved as completed with the time studied before the pause.
+  it("past the limit is SAVED as completed with every minute studied before the pause, not abandoned", () => {
+    const verdict = sessionAbandonment(paused(0, 38), at(38 + 125))!;
+    expect(verdict).toMatchObject({ reason: "paused_too_long", studiedMinutes: 38 });
+    expect(sessionClosure(verdict)).toEqual({ status: "completed", durationMinutes: 38, autoClosed: AUTO_SAVED_PAUSED });
+    // Studied past a 25-minute plan before pausing: all of it is kept.
+    expect(sessionClosure(sessionAbandonment(paused(25, 40), at(40 + 121))!)).toMatchObject({ status: "completed", durationMinutes: 40 });
+  });
+
+  it("a timer left running is still abandoned, held to its plan", () => {
+    expect(sessionClosure(sessionAbandonment(running(25), at(55))!)).toEqual({ status: "abandoned", durationMinutes: 25, autoClosed: null });
+  });
+
+  it("is closed after two hours of one pause, however little was studied", () => {
     // Studied 5 minutes, then paused.
     expect(sessionAbandonment(paused(25, 5), at(5 + 119, 59))).toBeNull();
-    expect(sessionAbandonment(paused(25, 5), at(5 + 120))).toEqual({ reason: "paused_too_long", countedMinutes: 5 });
+    expect(sessionAbandonment(paused(25, 5), at(5 + 120))).toMatchObject({ reason: "paused_too_long", countedMinutes: 5 });
   });
 
   it("stands still while paused: the study limit is not reached by waiting", () => {
@@ -109,6 +123,6 @@ describe("timestamps that are not times", () => {
   });
 
   it("a session marked paused with no pause time is judged as a running one, and still capped", () => {
-    expect(sessionAbandonment({ ...running(null), status: "paused" }, at(3 * 24 * 60))).toEqual({ reason: "ran_past_plan", countedMinutes: 60 });
+    expect(sessionAbandonment({ ...running(null), status: "paused" }, at(3 * 24 * 60))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 60 });
   });
 });

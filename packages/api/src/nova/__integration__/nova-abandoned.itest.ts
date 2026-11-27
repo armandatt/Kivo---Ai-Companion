@@ -26,7 +26,7 @@ process.env.OPENAI_API_KEY = "";
 const { prisma }                = await import("@repo/db/client");
 const { runNovaProactiveCron }  = await import("../proactive/nova-proactive-cron.js");
 const { saveSetup }             = await import("../product/setup.js");
-const { runNovaSessionCommand, loadNovaSession } = await import("../product/session.js");
+const { runNovaSessionCommand, loadNovaSession, loadNovaSessionState } = await import("../product/session.js");
 const { loadNovaProgress }      = await import("../product/progress.js");
 const { loadNovaPlanner }       = await import("../product/planner.js");
 const { loadNovaToday }         = await import("../product/today.js");
@@ -151,7 +151,7 @@ test("a session started with no length is held to sixty minutes: open at 89, aba
   assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 0, "the sixty minutes are a limit, not study");
 });
 
-test("a session paused for two hours is abandoned, however little was studied", async () => {
+test("a session paused for two hours is saved (not abandoned) with the time studied before the pause", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   await start(l, t0, 45);
@@ -159,7 +159,49 @@ test("a session paused for two hours is abandoned, however little was studied", 
   assert.equal(await sweep(l, plus(t0, 5 + 119)), 0);
   assert.deepEqual(await statuses(l), [["paused", 0]]);
   assert.equal(await sweep(l, plus(t0, 5 + 120)), 1);
-  assert.deepEqual(await statuses(l), [["abandoned", 5]], "five minutes were studied; the two hours were not");
+  assert.deepEqual(await statuses(l), [["completed", 5]], "five minutes were studied; the two hours were not");
+});
+
+// Bug batch 28 Nov, item 1: the 27 Nov case. An untimed Quick Focus, 38
+// minutes studied, paused, swept after two hours. It must be saved, counted
+// by Progress, and the learner told on their next visit.
+test("REGRESSION item 1: a paused Quick Focus swept after two hours is saved, counted and announced", async () => {
+  const l = await learner();
+  const t0 = ist("08:18");
+  assert.equal((await runNovaSessionCommand(l.chat, { action: "start", topicName: null, subjectName: null, plannedMinutes: 0, label: "Quick focus" }, t0)).ok, true);
+  await command(l, "pause", plus(t0, 38));
+  assert.equal(await sweep(l, plus(t0, 38 + 125)), 1);
+  const [row] = await rows(l);
+  assert.equal(row!.status, "completed");
+  assert.equal(row!.durationMinutes, 38);
+  assert.equal((row!.executionReport as { autoClosed?: string }).autoClosed, "paused_too_long");
+
+  const progress = await loadNovaProgress(l.chat, { now: plus(t0, 200) });
+  assert.ok(progress.status === "ready");
+  assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes], [1, 38], "the 38 minutes count");
+
+  const state = await loadNovaSessionState(l.chat, plus(t0, 200));
+  assert.equal(state.session, null);
+  assert.deepEqual([state.autoSaved?.sessionId, state.autoSaved?.minutes, state.autoSaved?.counted, state.autoSaved?.label], [row!.id, 38, true, "Quick focus"]);
+
+  // Resume after the sweep: told it was saved, not that it was lost.
+  const resumed = await command(l, "resume", plus(t0, 201));
+  assert.ok(resumed.ok && resumed.session === null && resumed.autoSaved?.minutes === 38);
+
+  // Starting again clears the notice.
+  await runNovaSessionCommand(l.chat, { action: "start", topicName: null, subjectName: null, plannedMinutes: 0, label: "Quick focus" }, plus(t0, 300));
+  assert.equal((await loadNovaSessionState(l.chat, plus(t0, 301))).autoSaved, null);
+});
+
+test("REGRESSION item 1: a paused session under ten minutes is saved but not counted, and says so", async () => {
+  const l = await learner();
+  const t0 = ist("14:00");
+  await start(l, t0, 25);
+  await command(l, "pause", plus(t0, 6));
+  const resumed = await command(l, "resume", plus(t0, 6 + 121));
+  assert.ok(resumed.ok && resumed.autoSaved && resumed.autoSaved.counted === false);
+  assert.match(resumed.ok ? resumed.autoSaved!.message : "", /Under ten minutes/);
+  assert.deepEqual(await statuses(l), [["completed", 6]]);
 });
 
 test("resuming starts the pause count again", async () => {
@@ -173,7 +215,7 @@ test("resuming starts the pause count again", async () => {
   assert.equal(await sweep(l, plus(t0, 5 + 110 + 10 + 30)), 0);
   assert.deepEqual(await statuses(l), [["paused", 0]]);
   assert.equal(await sweep(l, plus(t0, 5 + 110 + 10 + 120)), 1);
-  assert.deepEqual(await statuses(l), [["abandoned", 15]]);
+  assert.deepEqual(await statuses(l), [["completed", 15]]);
 });
 
 // ── What an abandoned session leaves, and does not ────────────────────────────
@@ -386,7 +428,7 @@ test("an End that arrives after the sweep cannot bring an abandoned session back
   assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes, progress.overview.notCounted], [0, 0, { selfReported: 0, underTenMinutes: 0, abandoned: 1 }]);
 });
 
-test("Pause and Resume past the limit close it as abandoned; once the learner starts again, nothing more is said about it", async () => {
+test("Pause past the limit abandons a running session, Resume past the pause limit saves a paused one; once the learner starts again, nothing more is said about it", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   // Running past its limit: a Pause does not rescue it.
@@ -395,12 +437,12 @@ test("Pause and Resume past the limit close it as abandoned; once the learner st
   assert.deepEqual([paused.ok, !paused.ok && paused.error], [false, "session_abandoned"]);
   assert.deepEqual(await statuses(l), [["abandoned", 25]]);
 
-  // Paused for more than two hours: a Resume does not either.
+  // Paused for more than two hours: a Resume finds it saved with its study time.
   await start(l, plus(t0, 1000), 25);
   await command(l, "pause", plus(t0, 1005));
   const resumed = await command(l, "resume", plus(t0, 1005 + 121));
-  assert.deepEqual([resumed.ok, !resumed.ok && resumed.error], [false, "session_abandoned"]);
-  assert.deepEqual((await statuses(l)).at(-1), ["abandoned", 5]);
+  assert.ok(resumed.ok && resumed.session === null && resumed.autoSaved?.minutes === 5);
+  assert.deepEqual((await statuses(l)).at(-1), ["completed", 5]);
 
   // A session started and ended since: "nothing is running" is the whole answer again.
   await start(l, plus(t0, 2000), 25);
@@ -440,4 +482,35 @@ test("timing that makes no sense never becomes study time", async () => {
   assert.deepEqual(await statuses(l), [["abandoned", 60]], "sixty at most, not 4,320");
   const progress = await loadNovaProgress(l.chat, { now: plus(t0, 60 * 24 * 3 + 1) });
   assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 0);
+});
+
+// Bug batch 28 Nov, item 1: the backfill for sessions abandoned while paused
+// before the fix. Dry run writes nothing; apply saves each once; a rerun finds nothing.
+test("REGRESSION item 1 backfill: abandoned-while-paused rows become saved sessions, once, and a running abandon is left alone", async () => {
+  const { backfillPausedAbandoned } = await import("../persistence/session-backfill.js");
+  const l = await learner();
+  const t0 = ist("08:18");
+  // As the old sweep left it: paused at 38 minutes, abandoned, kept as 38 capped... here as 0 to show the recompute.
+  const paused = await prisma.novaStudySession.create({ data: {
+    profileId: l.profileId, durationMinutes: 0, status: "abandoned", sessionDate: t0, pausedAt: plus(t0, 38),
+    plannedDurationMinutes: 0, currentFocus: "Quick focus", totalPausedSeconds: 0,
+  } });
+  const running = await prisma.novaStudySession.create({ data: {
+    profileId: l.profileId, durationMinutes: 25, status: "abandoned", sessionDate: plus(t0, 600), plannedDurationMinutes: 25,
+  } });
+
+  const dry = await backfillPausedAbandoned({ apply: false, profileId: l.profileId });
+  assert.deepEqual([dry.candidates, dry.saved, dry.wouldCount, dry.minutesRecovered], [1, 0, 1, 38]);
+  assert.equal((await prisma.novaStudySession.findUnique({ where: { id: paused.id } }))!.status, "abandoned", "a dry run writes nothing");
+
+  const applied = await backfillPausedAbandoned({ apply: true, profileId: l.profileId });
+  assert.equal(applied.saved, 1);
+  const after = await prisma.novaStudySession.findUnique({ where: { id: paused.id } });
+  assert.deepEqual([after!.status, after!.durationMinutes, after!.pausedAt?.getTime()], ["completed", 38, plus(t0, 38).getTime()]);
+  assert.equal((await prisma.novaStudySession.findUnique({ where: { id: running.id } }))!.status, "abandoned", "a timer left running is not touched");
+
+  const again = await backfillPausedAbandoned({ apply: true, profileId: l.profileId });
+  assert.deepEqual([again.candidates, again.saved], [0, 0], "idempotent");
+  // Old news: the page does not announce a backfilled session.
+  assert.equal((await loadNovaSessionState(l.chat, plus(t0, 700))).autoSaved, null);
 });

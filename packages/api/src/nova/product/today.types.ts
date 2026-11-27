@@ -273,5 +273,22 @@ export type NovaSessionResponse =
         // nothing in Knowledge and is not counted by Progress.
         counted: boolean;
       } | null;
+      // The learner's latest session, when it was paused and left past the
+      // limit and so was saved for them (bug batch 28 Nov, item 1). Set until
+      // they start another session; the page shows it once per session.
+      autoSaved?: NovaAutoSavedSession | null;
     }
   | { ok: false; error: NovaSessionError; message: string };
+
+export interface NovaAutoSavedSession {
+  sessionId: string;
+  // What it was on: its topic, or its Quick Focus title.
+  label:     string | null;
+  topicName: string | null;
+  minutes:   number;
+  // False under ten minutes: kept, but not in Progress's numbers.
+  counted:   boolean;
+  // When it was paused (ISO), the moment its clock stopped.
+  pausedAt:  string | null;
+  message:   string;
+}

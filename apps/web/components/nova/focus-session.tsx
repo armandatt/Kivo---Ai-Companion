@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { clock, minutesLabel } from './format'
 import { StudyRequest } from './saved/study-request'
 import { useNovaSession } from './use-nova-session'
+import { AutoSavedNotice } from './auto-saved-notice'
 import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
 import { SessionNote } from './session-note'
 import { RecordLine, useTopicRecord } from './topic-record'
@@ -45,7 +46,7 @@ const glassButton = 'focus-glass inline-flex h-10 items-center gap-2 rounded-xl 
 // a server command on the session Nova is tracking; the room only adds a
 // backdrop and sound, which are this browser's own.
 export function FocusSession() {
-  const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, end, setTopic, retry } = useNovaSession()
+  const { loading, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setTopic, retry } = useNovaSession()
   const [ending, setEnding] = useState(false)
   // A page the learner asked to study, from the browser extension or Saved.
   const studyId = useSearchParams().get('study')
@@ -235,6 +236,7 @@ export function FocusSession() {
     if (studyId) return roomView(<><div className="focus-glass w-full max-w-xl rounded-3xl p-6 text-left"><StudyRequest id={studyId} /></div></>)
     return (
       roomView(<>
+        {autoSaved && <div className="mb-8 w-full max-w-xl text-left"><AutoSavedNotice saved={autoSaved} onDismiss={dismissAutoSaved} tone="room" /></div>}
         <p className="text-sm uppercase tracking-[0.2em] text-white/55">Focus</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">No session running</h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-white/65">Start one from Home. Nova will have picked what matters most right now. Pick a scene and a sound meanwhile.</p>
