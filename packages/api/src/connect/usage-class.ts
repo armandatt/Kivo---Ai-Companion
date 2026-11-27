@@ -49,6 +49,7 @@ export const MCP_TOOL_CLASS: Record<string, ToolClass> = {
   create_note:               { kind: "write", why: "creates a note (and its images)", items: withFiles },
   update_note:               { kind: "write", why: "appends, renames, adds images; renames wait for approval", items: withFiles },
   restore_note_version:      { kind: "write", why: "puts back an earlier text of a note" },
+  set_topic_status:          { kind: "write", why: "sets a topic not started / in progress / completed" },
   delete_note:               { kind: "write", why: "deletes a note (after approval)" },
   move_note:                 { kind: "write", why: "refiles a note (after approval)" },
   link_notes:                { kind: "write", why: "writes a [[link]] into a note" },

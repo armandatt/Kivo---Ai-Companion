@@ -42,12 +42,13 @@ import {
 } from "./knowledge-map.types";
 import { boardHref } from "./companion";
 import { COUNTED_SESSION_MINUTES } from "../engines/study-session-engine";
+import { effectiveTopicStatus, parseTopicStatus } from "./topic-status";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
   // nextReviewAt / lastStudiedAt: the review schedule and the last session,
   // as stored. Absent: not shown (an older caller).
-  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date; nextReviewAt?: Date | null; lastStudiedAt?: Date | null }>;
+  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date; nextReviewAt?: Date | null; lastStudiedAt?: Date | null; status?: string | null }>;
   // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
@@ -175,6 +176,9 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
         ...(input.sessionsByTopic
           ? { sessions: sessionsAt.get(topicKey(t.subjectId, t.name))?.sessions ?? 0, focusedMinutes: sessionsAt.get(topicKey(t.subjectId, t.name))?.minutes ?? 0 }
           : { sessions: t.reviewCount }),
+        // Where the learner says it stands (item 7): their word, or implied by its sessions.
+        status: effectiveTopicStatus(t.status, (sessionsAt.get(topicKey(t.subjectId, t.name))?.sessions ?? 0) > 0 || t.reviewCount > 0),
+        statusSet: parseTopicStatus(t.status) !== null,
         level: known === "unverified" ? null : known,
         masteryPercent: known !== "unverified" ? Math.round(t.masteryProbability * 100) : null,
         notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
@@ -288,7 +292,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
   const [allTopics, noted, saved, allTasks, sessionRows] = await Promise.all([
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
-      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true },
+      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true, status: true },
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),

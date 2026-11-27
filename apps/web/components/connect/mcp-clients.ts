@@ -81,6 +81,7 @@ export const MCP_TOOLS: Array<{ group: string; items: Array<[name: string, what:
     ['create_note', 'Create a note, with screenshots or images if given, optionally filed under a subject or topic', 'write'],
     ['update_note', 'Edit exact passages of a note, replace its whole text (a long note needs approval), add text or images at the end or under a heading, or rename it (needs approval). The text before each change is kept.', 'write'],
     ['restore_note_version', 'Undo a change to a note: put back its text as it was before the last edit, replace or addition', 'write'],
+    ['set_topic_status', 'Mark a topic not started, in progress or completed, when you say where it stands', 'write'],
     ['link_notes', 'Link a note to another note or a topic', 'write'],
     ['move_note', 'Refile a note under another subject or topic', 'approval'],
     ['delete_note', 'Delete a note', 'approval'],

@@ -37,7 +37,7 @@ import { linkPath, treePath, TREE_STROKE } from './edge-path'
 import { nextStep, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
-import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
+import { GAP_LABEL, LENSES, STATE_LABEL, STATUS_LABEL, statusOf, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
 import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
 import { EDGE_MS, LARGE_MAP, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
@@ -360,6 +360,38 @@ function Ring({ percent, color, size = 52, label }: { percent: number | null; co
   )
 }
 
+// Not started / In progress / Completed for one topic (POST /api/nova/topics/status).
+function TopicStatusPicker({ node, onChanged }: { node: Extract<MapNode, { type: 'topic' }>; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [shown, setShown] = useState(statusOf(node))
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { setShown(statusOf(node)); setError(null) }, [node])
+  const choose = async (status: 'not_started' | 'in_progress' | 'completed') => {
+    if (status === shown || busy) return
+    const was = shown
+    setShown(status); setBusy(true); setError(null)
+    try {
+      const r = await fetch('/api/nova/topics/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topicId: node.id.replace(/^topic:/, ''), status }) })
+      const b = await r.json().catch(() => null) as { ok?: boolean; message?: string } | null
+      if (!b?.ok) { setShown(was); setError(b?.message ?? 'That didn’t save. Try again.') } else onChanged()
+    } catch { setShown(was); setError('That didn’t save. Try again.') }
+    setBusy(false)
+  }
+  return (
+    <div data-topic-status-picker>
+      <div role="radiogroup" aria-label="Where this topic stands" className="grid grid-cols-3 gap-1 rounded-xl border border-white/8 bg-white/[0.02] p-1">
+        {(['not_started', 'in_progress', 'completed'] as const).map(s => (
+          <button key={s} type="button" role="radio" aria-checked={shown === s} disabled={busy} onClick={() => void choose(s)} data-status={s}
+            className={cn('rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-60', shown === s ? 'bg-nova/15 text-foreground' : 'text-foreground/60 hover:bg-white/5 hover:text-foreground')}>
+            {STATUS_LABEL[s]}
+          </button>
+        ))}
+      </div>
+      {error && <p role="alert" className="mt-1 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
+
 const TILE_ICON: Partial<Record<MapNodeType, typeof FileText>> = { note: FileText, resource: Globe, task: ListChecks, topic: Circle, subject: Circle }
 
 function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected, where = [], tally }: {
@@ -521,6 +553,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
             </span>
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
+      {/* Where the topic stands, in the learner's own word (item 7, 28 Nov). Time never sets Completed. */}
+      {node.type === 'topic' && node.kind !== 'milestone' && <TopicStatusPicker node={node} onChanged={onChanged} />}
       {/* One next step, from its own record, as an action. */}
       {step && (
         <div className="flex items-center gap-2.5 rounded-xl border px-3 py-2" style={{ borderColor: 'color-mix(in oklch, var(--map-note) 35%, transparent)', background: 'color-mix(in oklch, var(--map-note) 7%, transparent)' }} data-next-step={step.kind}>
@@ -696,6 +730,7 @@ function peekLines(n: MapNode, path: string[], now: Date): { title: string; wher
   if (n.type === 'topic') {
     const st = topicState(n)
     facts.push(n.level && n.masteryPercent !== null && st !== 'organising' ? `${STATE_LABEL[st]} · ${n.masteryPercent}% (your own estimate)` : STATE_LABEL[st])
+    if (n.kind !== 'milestone') facts.push(STATUS_LABEL[statusOf(n)])
     if (n.reviewDue) facts.push('Review due')
     if (n.lastStudiedAt) facts.push(`Last studied ${ago(n.lastStudiedAt)}${isRecent(n, now) ? '' : ''}`)
     facts.push(`${plural(n.sessions, 'session')} · ${plural(n.notes, 'note')} · ${plural(n.resources, 'saved page')}`)
@@ -738,6 +773,8 @@ function TopicMarks({ n, detail, lens, now, at }: { n: Extract<MapNode, { type: 
       {/* On the top edge, left of the card's own + button. */}
       {n.reviewDue && chip(x0 + 12, 'Review due', 'var(--map-note)')}
       {lens === 'learning' && isRecent(n, now) && chip(x0 + 12 + (n.reviewDue ? 76 : 0), 'Recent', 'var(--nova)')}
+      {/* The Learning lens says where each topic stands (item 7, 28 Nov). */}
+      {lens === 'learning' && n.kind !== 'milestone' && <text x={x0 + 18} y={at.y + h / 2 + 15} fontSize={10.5} fontWeight={500} className="pointer-events-none" style={{ fill: statusOf(n) === 'completed' ? 'var(--nova)' : 'var(--map-meta, currentColor)' }} data-lens-status={statusOf(n)}>{STATUS_LABEL[statusOf(n)]}</text>}
       {lens === 'gaps' && gaps.length > 0 && (
         <>
           <rect className="pointer-events-none" x={x0 - 6} y={y0 - 6} width={w + 12} height={h + 12} rx={19} fill="none" stroke="var(--map-note)" strokeWidth={1.6} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />

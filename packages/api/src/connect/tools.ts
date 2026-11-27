@@ -15,6 +15,7 @@ import type { ConnectLearner } from "./learner";
 import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, REPLACE_REVIEW_CHARS, type Change, type ChangeReport } from "./changes";
 import { NOTE_BODY_MAX } from "../nova/product/notes.types";
 import { listNoteVersions } from "../nova/product/note-versions";
+import { setTopicStatus } from "../nova/product/topic-status";
 import { execute, planStatus, preview } from "./plans";
 import { finishKeyed, idempotencyKeyOk, priorResult, recordAudit, recordKeyed, type AuditOutcome } from "./audit";
 import { discardNoteImages, imagesInText, noteImageMeta, noteImagesByIds, saveNoteImageBytes } from "../nova/product/note-images";
@@ -233,7 +234,7 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "get_workspace_structure", title: "Workspace structure", kind: "read", scopes: ["workspace:read"],
-    description: "Read-only. The full hierarchy: subjects inside subjects, topics inside topics, with ids and whether each topic has been studied. Use before adding or moving subjects and topics.",
+    description: "Read-only. The full hierarchy: subjects inside subjects, topics inside topics, with ids, whether each topic has been studied, and its status (not_started | in_progress | completed: the learner's word, else in_progress once studied). Use before adding or moving subjects and topics.",
     input: { workspace: workspaceArg },
     handler: async (a, ctx) => {
       const { st, ws } = await structureAndWorkspace(ctx, a.workspace);
@@ -402,6 +403,23 @@ export const TOOLS: ToolDef[] = [
         const w = await writeIntoNote(ctx, { noteId: id, text: a.appendText, ready: ready.images, afterHeading: a.afterHeading, baseUpdatedAt: a.baseUpdatedAt });
         if ("problem" in w) return { result: fail("failed", w.problem), outcome: "failed", resources: { items: [{ type: "note", id }] } };
         return fromReport(ctx, w.report, { images: imagesOut(w.stored) });
+      });
+    },
+  }),
+  def({
+    name: "set_topic_status", title: "Set where a topic stands", kind: "write", scopes: ["knowledge:write"],
+    description: "Writes. Sets one of the learner's topics to not_started, in_progress or completed, applied at once. Only when the learner says where it stands (\"I've finished WACC\", \"mark DCF as in progress\"): never because time was studied, and never on your own judgement of their mastery. Give topicId (from get_workspace_structure or get_knowledge_map, \"topic:<id>\" or the row id) or subjectId with topicName.",
+    input: {
+      topicId: z.string().min(1).max(50).optional(), subjectId: z.string().min(1).max(50).optional(), topicName: z.string().trim().min(1).max(120).optional(),
+      status: z.enum(["not_started", "in_progress", "completed"]), idempotencyKey: idemArg,
+    },
+    handler: async (a, ctx) => {
+      const at = a.topicId ? { topicId: rowId("topic", a.topicId) } : a.subjectId && a.topicName ? { subjectId: rowId("subject", a.subjectId), topicName: a.topicName } : null;
+      if (!at) return fail("invalid_input", "Give topicId, or subjectId with topicName. Nothing was changed.");
+      return keyedRun(ctx, "set_topic_status", a.idempotencyKey, async () => {
+        const r = await setTopicStatus(ctx.learner.profileId, at, a.status);
+        if (!r.ok) return { result: fail(r.error === "not_found" ? "not_found" : "invalid_input", `${r.message} Nothing was changed.`), outcome: "refused", resources: { error: r.error } };
+        return { result: ok({ topicId: `topic:${r.topicId}`, topic: r.topicName, status: r.status, changed: r.changed, message: r.changed ? `${r.topicName} is now ${r.status.replace("_", " ")}.` : `${r.topicName} was already ${r.status.replace("_", " ")}.` }), outcome: "ok", resources: { items: [{ type: "topic", id: r.topicId }] } };
       });
     },
   }),

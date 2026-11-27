@@ -26,21 +26,46 @@ export function SessionTopicAsk({ topicName, onChoose, busy, dark = false, after
   after?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const [filed, setFiled] = useState<string | null>(null)
+  const [filed, setFiled] = useState<{ subjectId: string; topicName: string } | null>(null)
+  const [status, setStatusShown] = useState<'in_progress' | 'completed' | null>(null)
+  const [statusBusy, setStatusBusy] = useState(false)
+  const setStatus = async (s: 'in_progress' | 'completed') => {
+    if (!filed) return
+    setStatusBusy(true)
+    try {
+      const r = await fetch('/api/nova/topics/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subjectId: filed.subjectId, topicName: filed.topicName, status: s }) })
+      if ((await r.json().catch(() => null) as { ok?: boolean } | null)?.ok) setStatusShown(s)
+    } catch { /* stays unchosen */ }
+    setStatusBusy(false)
+  }
   const [subjects, setSubjects] = useState<NoteSubjectOption[] | null>(null)
   const [value, setValue] = useState<Destination>(NO_SUBJECT)
   const [error, setError] = useState<string | null>(null)
   const load = async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }
   useEffect(() => { if (open && !subjects) void load() }, [open, subjects])
 
-  if (filed && !topicName) return <p className={cn('text-sm', dark ? 'text-white/70' : 'text-foreground/70')} data-session-filed>Filed on <span className="font-medium">{filed}</span>. It now counts toward that topic.</p>
+  if (filed && !topicName) return (
+    <div className={cn('text-sm', dark ? 'text-white/70' : 'text-foreground/70')} data-session-filed>
+      <p>Filed on <span className="font-medium">{filed.topicName}</span>. It now counts toward that topic.</p>
+      {/* Optional (item 7, 28 Nov): where the topic stands now. Time alone never completes it. */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label={`Where ${filed.topicName} stands`}>
+        <span className={dark ? 'text-white/55' : 'text-foreground/50'}>Where does it stand?</span>
+        {(['in_progress', 'completed'] as const).map(s => (
+          <button key={s} type="button" disabled={statusBusy} aria-pressed={status === s} onClick={() => void setStatus(s)} data-filed-status={s}
+            className={cn('rounded-full border px-2.5 py-0.5 text-xs', status === s ? 'border-nova/60 bg-nova/15' : dark ? 'border-white/20 hover:bg-white/10' : 'border-white/12 hover:bg-white/5')}>
+            {s === 'completed' ? 'Completed' : 'Still in progress'}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
   if (topicName) return <p className={cn('text-sm', dark ? 'text-white/70' : 'text-foreground/70')} data-session-topic>On <span className="font-medium">{topicName}</span>: it counts toward that topic.</p>
 
   const choose = async (d: Destination) => {
     setValue(d); setError(null)
     if (d.kind !== 'topic' || !d.subjectId || !d.topicName) { if (d.kind !== 'none') setError('Choose a topic (open a subject to see its topics).'); return }
     if (!(await onChoose(d.subjectId, d.topicName))) setError('That didn’t save. Choose it again.')
-    else { setOpen(false); setFiled(d.topicName) }
+    else { setOpen(false); setFiled({ subjectId: d.subjectId, topicName: d.topicName }) }
   }
 
   return (

@@ -23,6 +23,7 @@
 //   - No model is called here, and nothing is counted as study.
 
 import { createHash } from "node:crypto";
+import { effectiveTopicStatus } from "./topic-status";
 import { prisma } from "@repo/db/client";
 import { declareTopics, moveTopicIn, normalizeTopicName, orderTopicsIn, placeTopicIn, removeTopicIn, renameTopicIn, setTopicDetailsIn } from "../engines/topic-mastery-engine";
 import { TOPIC_DEPTH_MAX, readTopicDetails, topicKindOf, topicOutline } from "./topic-tree";
@@ -64,7 +65,7 @@ export function structureVersion(subjects: Array<{ id: string; name: string; par
 export async function loadStudyStructure(profileId: string): Promise<StudyStructure> {
   const subjects = await prisma.novaSubject.findMany({
     where:   { profileId },
-    select:  { id: true, name: true, parentId: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true, archivedAt: true, parentId: true, position: true, kind: true, createdAt: true }, orderBy: { createdAt: "asc" } } },
+    select:  { id: true, name: true, parentId: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true, archivedAt: true, parentId: true, position: true, kind: true, createdAt: true, status: true }, orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "asc" },
   });
   const topicIds = subjects.flatMap(s => s.topics.map(t => t.id));
@@ -78,6 +79,8 @@ export async function loadStudyStructure(profileId: string): Promise<StudyStruct
     topics: topicOutline(s.topics).map(({ item: t }) => ({
       id: t.id, name: t.name, hasHistory: recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null, archived: t.archivedAt !== null,
       parentId: t.parentId && s.topics.some(x => x.id === t.parentId) ? t.parentId : null, kind: topicKindOf(t.kind),
+      // Where the learner says it stands (topic-status.ts); not part of the structure's version.
+      status: effectiveTopicStatus(t.status, recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null),
     })),
   }));
   const versioned = subjects.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null, parentId: t.parentId, position: t.position })) }));

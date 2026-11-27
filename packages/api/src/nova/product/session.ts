@@ -21,6 +21,7 @@ import {
   saveSessionNote,
 } from "../persistence/nova-persistence";
 import { parseReflection } from "./focus-context";
+import { setTopicStatus } from "./topic-status";
 import type { ReflectionResponse } from "./focus-context.types";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
@@ -117,7 +118,9 @@ export async function runNovaSessionCommand(
   if (command.action === "file") {
     const named = await fileEndedSession(profileId, command.sessionId, command.subjectId, command.topicName);
     if (!named) return { ok: false, error: "invalid", message: "That session can't be filed there. It may already be on a topic." };
-    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null, filed: { sessionId: command.sessionId, subjectId: command.subjectId, topicName: named } };
+    // Where the topic stands, when the learner said so while filing (item 7).
+    const st = command.topicStatus ? await setTopicStatus(profileId, { subjectId: command.subjectId, topicName: named }, command.topicStatus, now) : null;
+    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null, filed: { sessionId: command.sessionId, subjectId: command.subjectId, topicName: named, ...(st?.ok ? { topicStatus: st.status } : {}) } };
   }
 
   // An End is taken as it comes: a session that is still open is ended as a

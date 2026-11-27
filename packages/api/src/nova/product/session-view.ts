@@ -63,7 +63,10 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
     const sessionId = typeof b.sessionId === "string" ? b.sessionId.trim() : "";
     const subjectId = typeof b.subjectId === "string" ? b.subjectId.trim() : "";
     const topicName = typeof b.topicName === "string" ? b.topicName.trim().slice(0, MAX_TOPIC_LENGTH) : "";
-    return sessionId && sessionId.length <= 40 && subjectId && subjectId.length <= 40 && topicName ? { action: "file", sessionId, subjectId, topicName } : null;
+    // Optional: where the topic now stands (item 7), said while filing.
+    const topicStatus = b.topicStatus === "not_started" || b.topicStatus === "in_progress" || b.topicStatus === "completed" ? b.topicStatus : undefined;
+    if (b.topicStatus !== undefined && b.topicStatus !== null && !topicStatus) return null;
+    return sessionId && sessionId.length <= 40 && subjectId && subjectId.length <= 40 && topicName ? { action: "file", sessionId, subjectId, topicName, ...(topicStatus ? { topicStatus } : {}) } : null;
   }
   if (b.action === "end") {
     // Anything that is not one of the four answers is "no answer".

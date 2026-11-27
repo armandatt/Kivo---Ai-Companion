@@ -246,7 +246,7 @@ export type NovaSessionCommand =
   // A FINISHED session with no topic, filed afterwards (bug batch 28 Nov,
   // items 3/4): from the end screen, the saved notice or Progress. Only the
   // learner's own completed session with no topic yet; never re-files one.
-  | { action: "file"; sessionId: string; subjectId: string; topicName: string };
+  | { action: "file"; sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
@@ -282,7 +282,7 @@ export type NovaSessionResponse =
       // they start another session; the page shows it once per session.
       autoSaved?: NovaAutoSavedSession | null;
       // Set by "file": the finished session and the topic it is now on.
-      filed?: { sessionId: string; subjectId: string; topicName: string } | null;
+      filed?: { sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" } | null;
     }
   | { ok: false; error: NovaSessionError; message: string };
 

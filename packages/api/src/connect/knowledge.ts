@@ -76,10 +76,10 @@ export function subjectsIn(st: StudyStructure, ws: WorkspaceRef | null): StudySu
 export function outline(subjects: StudySubject[]) {
   const byParent = new Map<string | null, StudySubject[]>();
   for (const s of subjects) { const p = s.parentId && subjects.some(x => x.id === s.parentId) ? s.parentId : null; byParent.set(p, [...(byParent.get(p) ?? []), s]); }
-  type TopicTree = { id: string; name: string; studied: boolean; kind: string | null; children: TopicTree[] };
+  type TopicTree = { id: string; name: string; studied: boolean; status: string | null; kind: string | null; children: TopicTree[] };
   const topicTree = (s: StudySubject): TopicTree[] => {
     const live = s.topics.filter(t => !t.archived);
-    const kids = (pid: string | null): TopicTree[] => live.filter(t => (t.parentId ?? null) === pid).map(t => ({ id: t.id, name: t.name, studied: t.hasHistory, kind: t.kind ?? null, children: kids(t.id) }));
+    const kids = (pid: string | null): TopicTree[] => live.filter(t => (t.parentId ?? null) === pid).map(t => ({ id: t.id, name: t.name, studied: t.hasHistory, status: t.status ?? null, kind: t.kind ?? null, children: kids(t.id) }));
     return kids(null);
   };
   type SubjectTree = { id: string; name: string; topics: TopicTree[]; subjects: SubjectTree[] };
@@ -109,7 +109,7 @@ export function nodeOut(n: MapNode, origin: string) {
   const base = { id: n.id, type, label: n.label, url: n.href ? `${origin}${n.href}` : linkTo(origin, type, rowId), subjectId: n.subjectId };
   switch (n.type) {
     case "subject":  return { ...base, parentSubjectId: n.parentId ?? null, counts: { topics: n.topics, notes: n.notes, savedPages: n.resources } };
-    case "topic":    return { ...base, subject: n.subjectName, parentTopicId: n.parentId ? `topic:${n.parentId}` : null, sessions: n.sessions, level: n.level, masteryPercentEstimate: n.masteryPercent, notes: n.notes, savedPages: n.resources, explanation: n.details?.explanation ?? null };
+    case "topic":    return { ...base, subject: n.subjectName, parentTopicId: n.parentId ? `topic:${n.parentId}` : null, sessions: n.sessions, status: n.status ?? null, level: n.level, masteryPercentEstimate: n.masteryPercent, notes: n.notes, savedPages: n.resources, explanation: n.details?.explanation ?? null };
     case "note":     return { ...base, subject: n.subjectName, topicName: n.topicName, filedUnderTopic: n.topicLinked, updatedAt: n.updatedAt };
     case "resource": return { ...base, subject: n.subjectName, topicName: n.topicName, pageUrl: n.url, site: n.domain };
     case "task":     return { ...base, status: n.status, dueDay: n.dueDay };

@@ -55,6 +55,11 @@ export type MapNode =
       sessions: number;
       // Their minutes together. Absent from an older API.
       focusedMinutes?: number;
+      // Where it stands (bug batch 28 Nov, item 7): the learner's word when
+      // statusSet, else implied (in_progress once it has a session). Absent
+      // from an older API.
+      status?: "not_started" | "in_progress" | "completed";
+      statusSet?: boolean;
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
       // The review schedule's date has come (retention-engine.ts isDueForReview),

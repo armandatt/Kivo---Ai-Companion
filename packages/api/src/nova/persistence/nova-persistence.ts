@@ -43,6 +43,7 @@ import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
 import { likeLiteral, normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
+import { markTopicStarted } from "../product/topic-status";
 import { pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionClosure, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
@@ -372,6 +373,7 @@ export async function openStudySession(
   // with its subject, and that subject is the authority. Only a start with
   // no subject (a chat turn) is resolved from the topic.
   const match = !planned.subjectId && topic ? await resolveTopicSubject(topic, subjects) : null;
+  let started: { subjectId: string; topicName: string } | null = null;
   await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
 
@@ -383,12 +385,15 @@ export async function openStudySession(
     const stale = open ? abandonmentOf(open, now) : null;
     if (open && !(stale && await abandonRow(tx, open, stale))) return;
 
+    const subjectId = planned.subjectId ?? match?.subjectId ?? null;
+    const topicName = topic ? (match?.resolvedName ?? normalizeTopicName(topic)) : null;
+    if (subjectId && topicName) started = { subjectId, topicName };
     await tx.novaStudySession.create({
       data: {
         profileId,
-        subjectId:       planned.subjectId ?? match?.subjectId ?? null,
+        subjectId,
         // The topic's existing spelling when it is one the student already has.
-        topicName:       topic ? (match?.resolvedName ?? normalizeTopicName(topic)) : null,
+        topicName,
         plannedDurationMinutes: planned.durationMinutes ?? null,
         currentFocus:    planned.label ?? null,
         durationMinutes: 0,
@@ -397,7 +402,11 @@ export async function openStudySession(
         sessionDate:     now,
       },
     });
-  }).catch(err => console.error("[nova:session] start failed", err));
+  }).catch(err => { started = null; console.error("[nova:session] start failed", err); });
+  // Starting a session on a topic not yet started moves it to in progress
+  // (topic-status.ts). Never to completed.
+  const s0 = started as { subjectId: string; topicName: string } | null;
+  if (s0) await markTopicStarted(s0.subjectId, s0.topicName, now).catch(() => false);
 }
 
 // A running session's length, changed by the learner: longer, shorter, or 0
@@ -461,6 +470,7 @@ export async function fileEndedSession(profileId: string, sessionId: string, sub
     where: { id: sessionId, profileId, status: "completed", topicName: null },
     data:  { subjectId, topicName: topic.name },
   });
+  if (done.count === 1) await markTopicStarted(subjectId, topic.name).catch(() => false);
   return done.count === 1 ? topic.name : null;
 }
 

@@ -633,3 +633,21 @@ test("REGRESSION item 6: update_note edits, replaces, keeps versions, and undoes
   const raw = await call("execute_knowledge_changes", { planId: pv.data!.planId, expiresAt: pv.data!.expiresAt, changes: [{ op: "replace_note_body", noteId: id, body: "sneaky", baseUpdatedAt: (await now()).updatedAt }] }, c.ctx);
   assert.notEqual((await now()).body, "sneaky", JSON.stringify(raw).slice(0, 300));
 });
+
+// Bug batch 28 Nov, item 7: an assistant reads and sets where a topic stands.
+test("REGRESSION item 7: set_topic_status writes the learner's word; get_workspace_structure reads it", async () => {
+  const userId = await account([{ name: "Finance", topics: ["WACC", "DCF"] }]);
+  const c = await connect(userId);
+  const st = await loadStudyStructure(c.learner.profileId);
+  const wacc = st.subjects[0]!.topics.find(t => t.name === "WACC")!;
+  const set = await call("set_topic_status", { topicId: `topic:${wacc.id}`, status: "completed" }, c.ctx);
+  assert.equal(set.ok, true, JSON.stringify(set));
+  assert.equal(set.data!.status, "completed");
+  const byName = await call("set_topic_status", { subjectId: st.subjects[0]!.id, topicName: "dcf", status: "in_progress" }, c.ctx);
+  assert.equal(byName.data!.topic, "DCF");
+  assert.equal((await call("set_topic_status", { topicName: "DCF", status: "completed" }, c.ctx)).ok, false, "needs a topic id or subject");
+  const read = await call("get_workspace_structure", {}, c.ctx);
+  const topics = JSON.stringify(read.data!.subjects);
+  assert.match(topics, /"name":"WACC","studied":false,"status":"completed"/);
+  assert.match(topics, /"name":"DCF","studied":false,"status":"in_progress"/);
+});

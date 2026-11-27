@@ -856,6 +856,13 @@ model NovaTopicMastery {
   // What the plan said about it: an explanation and its sources, and for a
   // milestone its effort, goals, exercises, project, done-when and resources.
   details  Json?
+  // Where the learner says the topic stands (bug batch 28 Nov, item 7):
+  // "not_started" | "in_progress" | "completed". Null: not said; shown as
+  // in_progress once it has a finished session, else not_started
+  // (product/topic-status.ts). Only the learner (map, filing, Nova, an
+  // assistant on their behalf) completes a topic; time never does.
+  status          String?
+  statusChangedAt DateTime?
   parent   NovaTopicMastery?  @relation("NovaTopicTree", fields: [parentId], references: [id], onDelete: SetNull)
   children NovaTopicMastery[] @relation("NovaTopicTree")
 
