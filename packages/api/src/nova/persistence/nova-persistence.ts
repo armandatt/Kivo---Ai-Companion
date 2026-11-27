@@ -447,6 +447,23 @@ export async function setSessionTopic(profileId: string, sessionId: string, subj
   return done.count === 1 ? topic.name : null;
 }
 
+// A finished session with no topic, filed afterwards (bug batch 28 Nov, items
+// 3/4). Conditional on it being this learner's, completed, and still on no
+// topic, so a session is filed once and an earlier choice is never replaced.
+// Its time, report and every other field stay as they are.
+export async function fileEndedSession(profileId: string, sessionId: string, subjectId: string, topicName: string): Promise<string | null> {
+  const topic = await prisma.novaTopicMastery.findFirst({
+    where:  { subjectId, subject: { profileId }, archivedAt: null, name: { equals: likeLiteral(topicName.trim()), mode: "insensitive" } },
+    select: { name: true },
+  });
+  if (!topic) return null;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: "completed", topicName: null },
+    data:  { subjectId, topicName: topic.name },
+  });
+  return done.count === 1 ? topic.name : null;
+}
+
 // ── Sessions nobody came back to ──────────────────────────────────────────────
 // The rule is engines/session-clock.ts (sessionAbandonment). These are its
 // only writers: the tick's sweep, a Start over a session left open, and a

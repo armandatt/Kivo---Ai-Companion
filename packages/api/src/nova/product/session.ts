@@ -16,6 +16,7 @@ import {
   setSessionLength,
   setSessionDetails,
   setSessionTopic,
+  fileEndedSession,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
@@ -110,6 +111,13 @@ export async function runNovaSessionCommand(
   const profileId = snapshot.profileId;
   if (!profileId) {
     return { ok: false, error: "onboarding_incomplete", message: "Finish setting up with Nova first." };
+  }
+
+  // Filing a finished session touches no open session and no clock.
+  if (command.action === "file") {
+    const named = await fileEndedSession(profileId, command.sessionId, command.subjectId, command.topicName);
+    if (!named) return { ok: false, error: "invalid", message: "That session can't be filed there. It may already be on a topic." };
+    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null, filed: { sessionId: command.sessionId, subjectId: command.subjectId, topicName: named } };
   }
 
   // An End is taken as it comes: a session that is still open is ended as a

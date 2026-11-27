@@ -103,7 +103,19 @@ function resolver(ctx: Context): (item: NewFlowItem) => Resolved | null {
     }
     if (item.kind === "focus") {
       const title = typeof item.title === "string" ? item.title.trim() : "";
-      return title ? { kind: "focus", taskId: null, topicId: null, title, subjectName: null, topicName: null, minutes: null } : null;
+      if (!title) return null;
+      // A focus item whose words ARE one of the learner's topics (exactly, any
+      // case) is that topic: its session is filed on it and shows on the map
+      // (bug batch 28 Nov, item 3: a copilot "focus" on "Startup Valuation"
+      // started a session on no topic). Two topics of that name: left as words.
+      const key = title.toLowerCase().replace(/\s+/g, " ");
+      const same = [...ctx.topics.entries()].filter(([, t]) => t.topicName.toLowerCase().replace(/\s+/g, " ") === key);
+      if (same.length === 1) {
+        const [topicId, t] = same[0]!;
+        const block = ctx.blocks.find(b => b.topicId === topicId);
+        return { kind: "topic", taskId: null, topicId, title: t.topicName, subjectName: t.subjectName, topicName: t.topicName, minutes: block?.durationMinutes ?? null };
+      }
+      return { kind: "focus", taskId: null, topicId: null, title, subjectName: null, topicName: null, minutes: null };
     }
     return null;
   };

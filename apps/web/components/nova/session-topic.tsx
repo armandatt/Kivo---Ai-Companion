@@ -15,33 +15,39 @@ import { NO_SUBJECT, destinationLabel, type Destination } from './notes/note-des
 import { fetchNotes } from './notes/notes-api'
 import { cn } from '@/lib/utils'
 
-export function SessionTopicAsk({ topicName, onChoose, busy, dark = false }: {
+// after: the session has already ended (bug batch 28 Nov, item 4). The same
+// question, asked on the end screen, the saved notice and Progress, filing a
+// finished session (the "file" command) instead of a running one.
+export function SessionTopicAsk({ topicName, onChoose, busy, dark = false, after = false }: {
   topicName: string | null
   onChoose: (subjectId: string, topicName: string) => Promise<boolean>
   busy: boolean
   dark?: boolean
+  after?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [filed, setFiled] = useState<string | null>(null)
   const [subjects, setSubjects] = useState<NoteSubjectOption[] | null>(null)
   const [value, setValue] = useState<Destination>(NO_SUBJECT)
   const [error, setError] = useState<string | null>(null)
   const load = async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }
   useEffect(() => { if (open && !subjects) void load() }, [open, subjects])
 
+  if (filed && !topicName) return <p className={cn('text-sm', dark ? 'text-white/70' : 'text-foreground/70')} data-session-filed>Filed on <span className="font-medium">{filed}</span>. It now counts toward that topic.</p>
   if (topicName) return <p className={cn('text-sm', dark ? 'text-white/70' : 'text-foreground/70')} data-session-topic>On <span className="font-medium">{topicName}</span>: it counts toward that topic.</p>
 
   const choose = async (d: Destination) => {
     setValue(d); setError(null)
     if (d.kind !== 'topic' || !d.subjectId || !d.topicName) { if (d.kind !== 'none') setError('Choose a topic (open a subject to see its topics).'); return }
     if (!(await onChoose(d.subjectId, d.topicName))) setError('That didn’t save. Choose it again.')
-    else setOpen(false)
+    else { setOpen(false); setFiled(d.topicName) }
   }
 
   return (
     <div className={cn('rounded-2xl border p-3 text-left', dark ? 'border-white/15 bg-white/[0.06]' : 'border-white/10 bg-card/40')} data-session-topic-ask>
       <div className="flex flex-wrap items-center gap-2">
         <Hash aria-hidden className={cn('size-4', dark ? 'text-white/60' : 'text-subtle')} />
-        <p className={cn('flex-1 text-sm', dark ? 'text-white/85' : 'text-foreground/85')}>What was this on? <span className={dark ? 'text-white/55' : 'text-foreground/50'}>Optional: a topic makes it count toward that topic.</span></p>
+        <p className={cn('flex-1 text-sm', dark ? 'text-white/85' : 'text-foreground/85')}>What was this on? <span className={dark ? 'text-white/55' : 'text-foreground/50'}>{after ? 'Optional: file it on a topic so it shows on the map and counts toward it.' : 'Optional: a topic makes it count toward that topic.'}</span></p>
         {!open && <button type="button" disabled={busy} onClick={() => setOpen(true)} className={cn('rounded-lg border px-2.5 py-1 text-sm', dark ? 'border-white/20 text-white hover:bg-white/10' : 'border-white/12 hover:bg-white/5')} data-session-topic-open>Choose a topic</button>}
       </div>
       {open && (

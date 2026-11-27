@@ -117,10 +117,20 @@ export function useNovaSession() {
     })
   }, [])
 
+  // A finished session with no topic, filed afterwards (items 3/4, 28 Nov).
+  const fileSession = useCallback(async (sessionId: string, subjectId: string, topicName: string) => {
+    setPending('topic')
+    const res = await sendSessionCommand({ action: 'file', sessionId, subjectId, topicName })
+    setPending(null)
+    // The asking card says "Filed on …" itself; the ended record stays what the
+    // End recorded (filing later moves no mastery, so it claims none).
+    return res.ok && Boolean(res.filed)
+  }, [])
+
   const session = synced?.session ?? null
   const elapsedSeconds = session
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setLength, quickStart, setDetails, setTopic, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setLength, quickStart, setDetails, setTopic, fileSession, retry: sync }
 }

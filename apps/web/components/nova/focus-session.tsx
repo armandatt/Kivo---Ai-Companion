@@ -46,7 +46,7 @@ const glassButton = 'focus-glass inline-flex h-10 items-center gap-2 rounded-xl 
 // a server command on the session Nova is tracking; the room only adds a
 // backdrop and sound, which are this browser's own.
 export function FocusSession() {
-  const { loading, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setTopic, retry } = useNovaSession()
+  const { loading, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setTopic, fileSession, retry } = useNovaSession()
   const [ending, setEnding] = useState(false)
   // A page the learner asked to study, from the browser extension or Saved.
   const studyId = useSearchParams().get('study')
@@ -203,6 +203,8 @@ export function FocusSession() {
             ? 'Nova has updated this topic and when to revisit it.'
             : `Nova logged the session, but couldn't tie ${ended.topicName} to one of your subjects, so it isn't in Knowledge yet.`}
         </p>
+        {/* Items 3/4 (28 Nov): ended on no topic, it can still be filed now. */}
+        {!ended.topicName && <div className="mx-auto mt-6 w-full max-w-md"><SessionTopicAsk topicName={null} after dark busy={pending !== null} onChoose={(subjectId, topicName) => fileSession(ended.sessionId, subjectId, topicName)} /></div>}
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link href="/home" className={cn(primary, 'h-12 text-base')}>See what&apos;s next</Link>
           <Link href="/knowledge" className={cn(quiet, 'h-12 text-sm')}>Open Knowledge</Link>
@@ -236,7 +238,7 @@ export function FocusSession() {
     if (studyId) return roomView(<><div className="focus-glass w-full max-w-xl rounded-3xl p-6 text-left"><StudyRequest id={studyId} /></div></>)
     return (
       roomView(<>
-        {autoSaved && <div className="mb-8 w-full max-w-xl text-left"><AutoSavedNotice saved={autoSaved} onDismiss={dismissAutoSaved} tone="room" /></div>}
+        {autoSaved && <div className="mb-8 w-full max-w-xl space-y-3 text-left"><AutoSavedNotice saved={autoSaved} onDismiss={dismissAutoSaved} tone="room" />{!autoSaved.topicName && <SessionTopicAsk topicName={null} after dark busy={pending !== null} onChoose={(subjectId, topicName) => fileSession(autoSaved.sessionId, subjectId, topicName)} />}</div>}
         <p className="text-sm uppercase tracking-[0.2em] text-white/55">Focus</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">No session running</h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-white/65">Start one from Home. Nova will have picked what matters most right now. Pick a scene and a sound meanwhile.</p>

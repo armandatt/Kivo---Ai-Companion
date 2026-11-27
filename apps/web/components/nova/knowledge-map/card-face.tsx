@@ -108,7 +108,10 @@ export function CardFace({ n, detail, folded, at = ORIGIN }: { n: MapNode; detai
     const barW = w - 36
     // Two lines for a long title when nothing else is said on the card.
     const [l1, l2] = detail === 1 && !folded ? twoLines(n.label, 21) : [short(n.label, 20), null]
-    const level = n.level && n.masteryPercent !== null ? `${LEVEL_TEXT[n.level]} · ${n.masteryPercent}%` : 'No session yet'
+    // A session filed without a mastery reading (Quick Focus filed later) is
+    // still a session: say how many, never "No session yet" (item 3, 28 Nov).
+    const level = n.level && n.masteryPercent !== null ? `${LEVEL_TEXT[n.level]} · ${n.masteryPercent}%`
+      : n.sessions > 0 ? `${n.sessions} session${n.sessions === 1 ? '' : 's'}${n.focusedMinutes ? ` · ${n.focusedMinutes} min` : ''}` : 'No session yet'
     return (
       <>
         {/* No session yet: the card lies flat (no slab, depth.ts) and its subject bar is hollow. */}

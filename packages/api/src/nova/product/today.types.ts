@@ -242,7 +242,11 @@ export type NovaSessionCommand =
   // What a session with no topic was on (Quick Focus, a task with no topic),
   // said before it ends: one of the learner's own topics, so the session
   // counts toward that topic like any other. Refused when it already has one.
-  | { action: "set_topic"; subjectId: string; topicName: string };
+  | { action: "set_topic"; subjectId: string; topicName: string }
+  // A FINISHED session with no topic, filed afterwards (bug batch 28 Nov,
+  // items 3/4): from the end screen, the saved notice or Progress. Only the
+  // learner's own completed session with no topic yet; never re-files one.
+  | { action: "file"; sessionId: string; subjectId: string; topicName: string };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
@@ -277,6 +281,8 @@ export type NovaSessionResponse =
       // limit and so was saved for them (bug batch 28 Nov, item 1). Set until
       // they start another session; the page shows it once per session.
       autoSaved?: NovaAutoSavedSession | null;
+      // Set by "file": the finished session and the topic it is now on.
+      filed?: { sessionId: string; subjectId: string; topicName: string } | null;
     }
   | { ok: false; error: NovaSessionError; message: string };
 

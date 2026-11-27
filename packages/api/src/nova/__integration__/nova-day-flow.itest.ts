@@ -279,3 +279,24 @@ test("sessions on one item add up across a day, Start continues from what is lef
   const refused = await finishItemTask({ ...base, version: added.flow.version, itemId: focusItem.id });
   assert.ok(!refused.ok && refused.error === "invalid");
 });
+
+// Bug batch 28 Nov, item 3: a copilot or learner "focus" item whose words are
+// exactly one of the learner's topics is that topic, so the session it starts
+// is filed on it (it used to start on no topic and never reach the map).
+test("REGRESSION item 3: a focus item named exactly like a topic becomes that topic, and its session is filed on it", async () => {
+  const L = await learner();
+  const base = { profileId: L.profileId, platformChatId: L.id };
+  const made = await changeDayFlow({ ...base, version: 0, by: "nova", ops: [
+    { op: "add", item: { kind: "focus", title: "  sql JOINS ", minutes: 25 } },
+    { op: "add", item: { kind: "focus", title: "SQL joins practice", minutes: 20 } },
+  ] });
+  assert.ok(made.ok);
+  const [topicItem, words] = made.flow.items;
+  assert.deepEqual([topicItem!.kind, topicItem!.title, topicItem!.topicName], ["topic", "SQL joins", "SQL joins"]);
+  assert.equal(words!.kind, "focus", "words that are not a topic's name stay words");
+  const started = await startFocus({ ...base, version: made.flow.version, itemId: topicItem!.id, minutes: 25 });
+  assert.ok(started.ok);
+  const row = await prisma.novaStudySession.findFirst({ where: { profileId: L.profileId, status: "in_progress" } });
+  assert.equal(row?.topicName, "SQL joins");
+  assert.ok(row?.subjectId, "filed under its subject");
+});

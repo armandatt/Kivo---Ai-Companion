@@ -122,3 +122,67 @@ test("set_topic: a session with no topic takes one of the learner's topics, only
   assert.equal(row.subjectId, subject.id);
   assert.equal(row.status, "completed");
 });
+
+// Bug batch 28 Nov, items 3/4: a Quick Focus that ended on no topic can be
+// filed afterwards (the end screen, the saved notice, Progress). Once only,
+// only the learner's own finished session, only onto one of their topics.
+test("REGRESSION items 3/4: an ended Quick Focus is filed on a topic afterwards, once, and only by its owner", async () => {
+  const subject = await prisma.novaSubject.findFirst({ where: { profileId }, select: { id: true } });
+  await prisma.novaTopicMastery.create({ data: { subjectId: subject!.id, name: "Optics" } });
+  const t0 = new Date("2026-11-28T09:00:00Z");
+  assert.ok((await runNovaSessionCommand(CHAT, QUICK, t0)).ok);
+  const ended = await runNovaSessionCommand(CHAT, { action: "end", outcome: "good" }, new Date(t0.getTime() + 15 * 60_000));
+  assert.ok(ended.ok && ended.ended && ended.ended.topicName === null);
+  const id = ended.ended!.sessionId;
+
+  assert.deepEqual(parseSessionCommand({ action: "file", sessionId: id, subjectId: subject!.id, topicName: " Optics " }), { action: "file", sessionId: id, subjectId: subject!.id, topicName: "Optics" });
+  assert.equal(parseSessionCommand({ action: "file", sessionId: id }), null);
+
+  const wrong = await runNovaSessionCommand(CHAT, { action: "file", sessionId: id, subjectId: subject!.id, topicName: "Not a topic" });
+  assert.ok(!wrong.ok);
+  const filed = await runNovaSessionCommand(CHAT, { action: "file", sessionId: id, subjectId: subject!.id, topicName: "optics" });
+  assert.ok(filed.ok && filed.filed?.topicName === "Optics", JSON.stringify(filed));
+  const row = await prisma.novaStudySession.findUnique({ where: { id } });
+  assert.deepEqual([row!.status, row!.durationMinutes, row!.topicName, row!.subjectId], ["completed", 15, "Optics", subject!.id], "time and status untouched");
+
+  const again = await runNovaSessionCommand(CHAT, { action: "file", sessionId: id, subjectId: subject!.id, topicName: "Optics" });
+  assert.ok(!again.ok, "a filed session is never re-filed");
+
+  // Someone else's learner cannot file it.
+  const other = `nova_itest_quick_other_${STAMP}`;
+  await prisma.messengerUser.create({ data: { platform: "telegram", platformChatId: other, persona: "nova", novaAcademicProfile: { create: { onboardingComplete: true, subjects: { create: { name: "Physics" } } } } } });
+  try {
+    const theirs = await runNovaSessionCommand(other, { action: "file", sessionId: id, subjectId: subject!.id, topicName: "Optics" });
+    assert.ok(!theirs.ok);
+  } finally { await prisma.messengerUser.deleteMany({ where: { platformChatId: other } }); }
+});
+
+test("REGRESSION item 3 audit: finds unassigned and mis-assigned sessions; files only exact single matches, once", async () => {
+  const { auditSessionFiling } = await import("../persistence/session-filing-audit.js");
+  const subject = await prisma.novaSubject.findFirst({ where: { profileId }, select: { id: true } });
+  await prisma.novaTopicMastery.create({ data: { subjectId: subject!.id, name: "Thermodynamics" } });
+  const mk = (data: { topicName?: string | null; subjectId?: string | null; currentFocus?: string | null }) =>
+    prisma.novaStudySession.create({ data: { profileId, durationMinutes: 20, status: "completed", ...data } });
+  const label  = await mk({ currentFocus: "thermodynamics" });                                 // unassigned, safe
+  const vague  = await mk({ currentFocus: "Quick focus" });                                    // unassigned, no match
+  const cased  = await mk({ subjectId: subject!.id, topicName: "THERMODYNAMICS" });             // unmatched, safe
+  const orphan = await mk({ subjectId: null, topicName: "Thermodynamics" });                    // no subject, safe
+
+  const dry = await auditSessionFiling({ apply: false, profileId });
+  const mine = new Map(dry.rows.map(r => [r.id, r]));
+  assert.equal(mine.get(label.id)?.match?.topicName, "Thermodynamics");
+  assert.equal(mine.get(vague.id)?.match, null);
+  assert.equal(mine.get(cased.id)?.kind, "unmatched");
+  assert.equal(mine.get(orphan.id)?.kind, "no_subject");
+  assert.equal(dry.written, 0);
+  assert.equal((await prisma.novaStudySession.findUnique({ where: { id: label.id } }))!.topicName, null, "a dry run writes nothing");
+
+  const applied = await auditSessionFiling({ apply: true, profileId });
+  assert.ok(applied.written >= 3);
+  for (const id of [label.id, cased.id, orphan.id]) {
+    const r = await prisma.novaStudySession.findUnique({ where: { id } });
+    assert.deepEqual([r!.topicName, r!.subjectId, r!.durationMinutes, r!.status], ["Thermodynamics", subject!.id, 20, "completed"]);
+  }
+  assert.equal((await prisma.novaStudySession.findUnique({ where: { id: vague.id } }))!.topicName, null, "no guess");
+  assert.equal((await auditSessionFiling({ apply: true, profileId })).written, 0, "idempotent");
+});

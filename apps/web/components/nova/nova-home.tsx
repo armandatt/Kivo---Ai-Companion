@@ -15,6 +15,7 @@ import { firstName } from './format'
 import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
 import { AutoSavedNotice } from './auto-saved-notice'
+import { SessionTopicAsk } from './session-topic'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
 import { mapHref, noteHref } from './today/flow-list'
@@ -226,7 +227,10 @@ export function NovaHome({ view, refreshing }: Props) {
           )}
 
           {quickError && <p role="alert" className="mt-3 text-sm text-amber-200" data-quick-focus-error>{quickError}</p>}
-          {!live.session && live.autoSaved && <AutoSavedNotice saved={live.autoSaved} onDismiss={live.dismissAutoSaved} />}
+          {!live.session && live.autoSaved && (<>
+            <AutoSavedNotice saved={live.autoSaved} onDismiss={live.dismissAutoSaved} />
+            {!live.autoSaved.topicName && <div className="mt-2"><SessionTopicAsk topicName={null} after busy={live.pending !== null} onChoose={(subjectId, topicName) => live.fileSession(live.autoSaved!.sessionId, subjectId, topicName)} /></div>}
+          </>)}
           {quickSaved && !live.session && live.ended && (
             <section role="status" className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-nova/25 bg-nova/[0.05] px-4 py-3 text-sm" data-quick-focus-saved>
               <span className="text-foreground">Saved: {minutesLabel(live.ended.minutes)} of focus.</span>
@@ -234,6 +238,10 @@ export function NovaHome({ view, refreshing }: Props) {
               <Link href="/progress#recent-sessions" className="font-medium text-nova-ink hover:underline">Recent sessions</Link>
               <button type="button" onClick={() => setQuickSaved(false)} aria-label="Dismiss" className="ml-auto text-subtle hover:text-foreground"><X className="size-3.5" /></button>
             </section>
+          )}
+          {/* Items 3/4 (28 Nov): a Quick Focus ended on no topic is filed here, after End. */}
+          {quickSaved && !live.session && live.ended && !live.ended.topicName && (
+            <div className="mt-2" data-quick-focus-file><SessionTopicAsk topicName={null} after busy={live.pending !== null} onChoose={(subjectId, topicName) => live.fileSession(live.ended!.sessionId, subjectId, topicName)} /></div>
           )}
 
           {/* ── A session running, or one that just ended ──────────────── */}

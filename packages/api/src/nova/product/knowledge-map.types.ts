@@ -50,8 +50,11 @@ export type MapNode =
       studied?: boolean;
       // What the plan said about it: an explanation, a milestone's effort, goals and done-when.
       details?: { explanation?: string | null; weeks?: number | null; hoursPerWeek?: number | null; goals?: string[]; exercises?: string[]; project?: string | null; completion?: string | null };
-      // Finished sessions that fed the topic. 0: declared, never studied.
+      // Finished sessions on the topic (completed, ten minutes or more, the
+      // way Progress counts them). 0: declared, never studied.
       sessions: number;
+      // Their minutes together. Absent from an older API.
+      focusedMinutes?: number;
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
       // The review schedule's date has come (retention-engine.ts isDueForReview),
