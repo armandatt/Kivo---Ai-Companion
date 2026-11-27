@@ -15,6 +15,7 @@ import { firstName } from './format'
 import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
 import { AutoSavedNotice } from './auto-saved-notice'
+import { PreparedPlanCard, usePreparedPlan } from './today/prepared-plan'
 import { SessionTopicAsk } from './session-topic'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
@@ -56,6 +57,7 @@ export function NovaHome({ view, refreshing }: Props) {
   const board = useTasks()
   const day = useDayFlow()
   const live = useNovaSession()
+  const prepared = usePreparedPlan(day.flow !== null)
   const nova = useRef<CopilotHandle>(null)
   const copilotInput = useRef<HTMLTextAreaElement>(null)
 
@@ -143,6 +145,16 @@ export function NovaHome({ view, refreshing }: Props) {
     if (window.matchMedia('(min-width: 1024px)').matches) showNova(true); else setNovaOnPhone(true)
   }, [])
   const ask = useCallback((text: string) => { openNova(); nova.current?.send(text, { draftNow: text.toLowerCase().startsWith('just draft') }) }, [openNova])
+  // From the check-in on Telegram (item 12): ?plan=own starts planning with
+  // Nova; ?plan=prepared lands on the prepared plan, which is already on top.
+  const arrived = useRef(false)
+  useEffect(() => {
+    if (arrived.current || !day.flow) return
+    arrived.current = true
+    const how = new URLSearchParams(window.location.search).get('plan')
+    if (how === 'own') window.setTimeout(() => ask('Plan my day with me'), 300)
+    if (how === 'prepared') window.setTimeout(() => document.querySelector('[data-prepared-plan]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 1200)
+  }, [day.flow, ask])
   // A task made from Add to today: due today, like one made on today's board.
   const createTask = useCallback(async (title: string) => {
     const made = await board.createTask({ title, dueDay: day.flow?.day ?? null })
@@ -164,7 +176,7 @@ export function NovaHome({ view, refreshing }: Props) {
   }, [day, flow, dueOutside])
 
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
-  const starters = subject ? [`Plan time for ${subject.subjectName}`, 'Plan my day', 'Just draft something'] : ['Plan my day with Nova', 'I want to learn something new', 'I have about an hour']
+  const starters = subject ? [`Plan time for ${subject.subjectName}`, 'Plan my day', 'Just draft something'] : ['Plan my day with me', 'I want to learn something new', 'I have about an hour']
 
   return (
     <div className="-mx-6 -mb-6 flex min-h-[calc(100vh-1rem)] lg:-mt-6" data-today-workspace>
@@ -268,18 +280,26 @@ export function NovaHome({ view, refreshing }: Props) {
             </div>
           )}
 
-          {/* ── The playground ──────────────────────────────────────────── */}
+          {/* ── The plan Nova prepared at check-in (item 12): a suggestion until taken ── */}
           <div className="mt-5">
+            {flow && prepared.plan && (
+              <PreparedPlanCard plan={prepared.plan} flow={flow}
+                onTake={async (p, keep) => { const r = await day.approve(p, keep); if (r.ok) void prepared.close('taken'); return r }}
+                onTweak={plan => { openNova(); nova.current?.offer(`${plan.reply} Tell me what to change, or apply it as it is.`, plan.pending) }}
+                onDismiss={() => void prepared.close('dismissed')} />
+            )}
             {day.loadError && !flow ? (
               <div role="alert" className="rounded-2xl border border-red-400/30 px-4 py-3 text-sm text-foreground/80">{day.loadError} <button type="button" onClick={() => void day.load()} className="ml-2 underline">Try again</button></div>
             ) : (
-              <Playground flow={flow} proposal={studio.proposal} thinking={studio.thinking} busy={day.busy} touched={day.touched}
+              <Playground flow={prepared.plan && flow ? { ...flow, draft: null } : flow} proposal={studio.proposal} thinking={studio.thinking} busy={day.busy} touched={day.touched}
                 sessionRunning={sessionRunning} starting={startingItem} starters={starters}
                 onOps={(l: FlowOp[]) => void day.ops(l)} onStart={(i, m) => void startItem(i, m)}
                 onView={v => void day.act({ action: 'view', view: v }, { quiet: true })}
                 onApply={keep => nova.current?.apply(keep)} onDiscard={() => nova.current?.discard()}
                 onChange={() => { openNova(); nova.current?.fill('Change something: ') }}
-                onAsk={ask} onAdd={() => setAdding(true)} />
+                onAsk={ask} onAdd={() => setAdding(true)}
+                onPropose={() => { openNova(); nova.current?.proposePlan() }}
+                onTakeDraft={() => { if (flow?.draft?.id) void day.act({ action: 'accept', draftId: flow.draft.id }) }} />
             )}
           </div>
 

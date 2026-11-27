@@ -164,6 +164,8 @@ export interface CopilotRequest {
   open?:   { id: string; version: number; ops: FlowOp[] } | null;
   // The learner asked to skip questions and see a draft from what is known.
   draftNow?: boolean;
+  // "Propose a plan" (item 12): Nova proposes a whole day now, with full context.
+  proposePlan?: boolean;
   // The top-level subject selected on the page: context only, never a request.
   subjectId?: string | null;
   // A screenshot, photo or PDF for this one message. Read for this answer and not kept.

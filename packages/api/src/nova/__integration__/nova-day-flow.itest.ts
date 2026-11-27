@@ -300,3 +300,47 @@ test("REGRESSION item 3: a focus item named exactly like a topic becomes that to
   assert.equal(row?.topicName, "SQL joins");
   assert.ok(row?.subjectId, "filed under its subject");
 });
+
+// Bug batch 28 Nov, item 12: "Propose a plan" is a full-context model call
+// whose proposal code keeps to at least three items, with a ranked fallback;
+// and the plan Nova prepares at check-in is made once a day, kept apart from
+// the flow, and offered until it is taken or set aside.
+test("REGRESSION item 12: Propose a plan never comes back thin, asks nothing, and survives a model failure", async () => {
+  const L = await learner();
+  const v = (await loadDayFlow(L.profileId, L.id)).version;
+  const say = (reply: unknown) => (async () => JSON.stringify(reply)) as never;
+  // The model proposes one item: code tops it up from the ranked record.
+  const one = await askCopilot(L.profileId, L.id, { message: "Propose a full plan for today from everything you know about me.", version: v, proposePlan: true }, say({ intent: "propose", reply: "A focused day.", ops: [{ op: "add", ref: "c1" }] }));
+  assert.ok(one.ok && one.pending, JSON.stringify(one).slice(0, 300));
+  assert.ok(one.pending!.ops.filter(o => o.op === "add").length >= 3, "at least three items");
+  assert.equal(one.reply, "A focused day.");
+  // The model asks instead: Propose a plan never asks.
+  const asked = await askCopilot(L.profileId, L.id, { message: "x", version: v, proposePlan: true }, say({ intent: "ask", reply: "", question: "What matters?", choices: ["A", "B"] }));
+  assert.ok(asked.ok && asked.pending && asked.question === null);
+  // The model fails: a plan from the ranking alone.
+  const failed = await askCopilot(L.profileId, L.id, { message: "x", version: v, proposePlan: true }, (async () => { throw new Error("down") }) as never);
+  assert.ok(failed.ok && failed.pending && failed.pending.ops.length >= 3, JSON.stringify(failed).slice(0, 300));
+  assert.match(failed.ok ? failed.reply : "", /Assignment 3, because it's due today/);
+  assert.equal((await loadDayFlow(L.profileId, L.id)).version, v, "nothing written");
+});
+
+test("REGRESSION item 12: the prepared plan is made once a day, never applied by itself, and closes when taken or set aside", async () => {
+  const { preparePlan, loadPreparedPlan, closePreparedPlan } = await import("../product/prepared-plan.js");
+  const L = await learner();
+  let calls = 0;
+  const ask = (async (p: string, c: string, raw: unknown) => { calls++; return askCopilot(p, c, raw, (async () => JSON.stringify({ intent: "propose", reply: "Today: the assignment, then SQL joins.", ops: [{ op: "add", ref: "c1" }] })) as never) }) as never;
+  const made = await preparePlan(L.profileId, L.id, "check_in", ask);
+  assert.ok(made);
+  assert.ok(await preparePlan(L.profileId, L.id, "check_in", ask));
+  assert.equal(calls, 1, "once a day");
+  const flow = await loadDayFlow(L.profileId, L.id);
+  assert.equal(flow.saved, false, "the flow is untouched");
+  const view = await loadPreparedPlan(L.profileId, L.id);
+  assert.ok(view && view.pending.ops.length >= 3 && view.trigger === "check_in");
+  assert.equal(view!.reply, "Today: the assignment, then SQL joins.");
+  // Taken: its ops are the same approve every proposal goes through.
+  const taken = await approvePending(L.profileId, L.id, { pendingId: view!.pending.id, version: view!.pending.version, ops: view!.pending.ops, keep: [0, 1] });
+  assert.ok(taken.ok);
+  assert.equal(await closePreparedPlan(L.profileId, view!.day, "taken"), true);
+  assert.equal(await loadPreparedPlan(L.profileId, L.id), null, "not offered again today");
+});

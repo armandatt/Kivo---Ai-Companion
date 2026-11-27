@@ -58,24 +58,61 @@ const EXAMPLE = [
   { title: 'Light revision before bed', meta: 'Something you studied last week · 15 min', hue: 293 },
 ]
 
-function Empty({ onStart, starters, thinking }: { onStart: (text: string) => void; starters: string[]; thinking: boolean }) {
+// The empty studio (bug batch 28 Nov, item 12): two ways in, the learner's
+// choice. Plan with Nova talks it through (Nova asks first); Propose a plan
+// has Nova build one at once from their board and map. When the record holds
+// enough, Nova's own suggestion is already shown, with why, to take as it is.
+function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, busy }: {
+  onStart: (text: string) => void; onPropose: () => void; starters: string[]; thinking: boolean
+  draft: NovaDayView['draft']; onTakeDraft: () => void; busy: boolean
+}) {
+  const shown = draft && draft.items.length ? draft : null
   return (
     <div className="grid gap-10 px-6 py-12 sm:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] lg:items-center lg:py-16" data-playground-empty>
       <div className="nova-rise max-w-md">
         <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-nova-ink"><Sparkles aria-hidden className="size-3.5" /> Today’s planning studio</p>
         <h2 className="mt-4 text-[2rem] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[2.5rem]">Let’s design your day.</h2>
-        <p className="mt-4 text-[15px] leading-relaxed text-foreground/70">Tell Nova what you want to focus on. Your daily flow will take shape here, and you’ll stay in control of every change.</p>
-        <div className="mt-7 flex flex-wrap gap-2">
-          {starters.map((s, i) => (
+        <p className="mt-4 text-[15px] leading-relaxed text-foreground/70">Talk it through with Nova, or let Nova propose a plan from your tasks, deadlines, reviews and map. Nothing changes until you approve it.</p>
+        <div className="mt-7 grid gap-2 sm:grid-cols-2" data-plan-modes>
+          <button type="button" disabled={thinking} onClick={() => onStart('Plan my day with me')}
+            className="flex flex-col items-start gap-0.5 rounded-xl bg-action px-4 py-3 text-left text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-colors hover:bg-action-hover disabled:opacity-50" data-plan-with-nova>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><MessageSquareText aria-hidden className="size-4" /> Plan with Nova</span>
+            <span className="text-xs opacity-80">A few quick questions, then a plan</span>
+          </button>
+          <button type="button" disabled={thinking} onClick={onPropose}
+            className="flex flex-col items-start gap-0.5 rounded-xl border border-nova/40 bg-nova/[0.08] px-4 py-3 text-left text-foreground transition-colors hover:bg-nova/15 disabled:opacity-50" data-propose-plan>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Sparkles aria-hidden className="size-4 text-nova-ink" /> Propose a plan</span>
+            <span className="text-xs text-foreground/60">Nova drafts it now from your record</span>
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {starters.slice(1).map(s => (
             <button key={s} type="button" disabled={thinking} onClick={() => onStart(s)}
-              className={cn('inline-flex h-10 items-center gap-1.5 rounded-xl px-4 text-sm font-medium transition-colors disabled:opacity-50',
-                i === 0 ? 'bg-action text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] hover:bg-action-hover' : 'border border-white/12 bg-background/40 text-foreground/85 hover:border-nova/50 hover:bg-nova/10')}
-              data-playground-starter>
-              {i === 0 && <MessageSquareText aria-hidden className="size-4" />}{s}
-            </button>
+              className="rounded-full border border-white/12 px-3 py-1 text-xs text-foreground/75 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-50" data-playground-starter>{s}</button>
           ))}
         </div>
       </div>
+      {shown ? (
+        <div className="relative mx-auto w-full max-w-sm" data-nova-suggests>
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-nova-ink">Nova suggests · from your record</p>
+          <div className="space-y-2">
+            {shown.items.filter(i => i.status !== 'later').slice(0, 6).map((it, i) => (
+              <div key={it.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-background/50 px-4 py-2.5">
+                <span className="grid size-6 shrink-0 place-items-center rounded-full border border-nova/40 text-[11px] font-semibold text-nova-ink">{i + 1}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground/90">{it.title}</p>
+                  <p className="truncate text-[11px] text-foreground/50">{[it.subjectName, it.minutes ? `${it.minutes} min` : null, it.kind === 'task' ? 'task' : 'topic'].filter(Boolean).join(' · ')}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {shown.reasons.length > 0 && <p className="mt-3 text-xs leading-relaxed text-foreground/55">{shown.reasons.join(' ')}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" disabled={busy || thinking} onClick={onTakeDraft} className="inline-flex h-9 items-center rounded-lg bg-action px-3 text-sm font-semibold text-action-foreground hover:bg-action-hover disabled:opacity-50" data-take-draft>Use this plan</button>
+            <button type="button" disabled={thinking} onClick={() => onStart('Change Nova’s suggested plan with me')} className="inline-flex h-9 items-center rounded-lg border border-white/12 px-3 text-sm text-foreground/80 hover:bg-white/5" data-change-draft>Change it with Nova</button>
+          </div>
+        </div>
+      ) : (
       <div aria-hidden className="relative mx-auto w-full max-w-sm" data-playground-example>
         <p className="mb-3 text-center text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground/40">Example · not your plan</p>
         <div className="space-y-2.5">
@@ -90,6 +127,7 @@ function Empty({ onStart, starters, thinking }: { onStart: (text: string) => voi
           ))}
         </div>
       </div>
+      )}
     </div>
   )
 }
@@ -182,7 +220,7 @@ function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
   )
 }
 
-export function Playground({ flow, proposal, thinking, busy, touched, sessionRunning, starting, starters, onOps, onStart, onView, onApply, onDiscard, onChange, onAsk, onAdd }: {
+export function Playground({ flow, proposal, thinking, busy, touched, sessionRunning, starting, starters, onOps, onStart, onView, onApply, onDiscard, onChange, onAsk, onAdd, onPropose, onTakeDraft }: {
   flow: NovaDayView | null
   proposal: OpenProposal | null
   thinking: boolean
@@ -199,6 +237,9 @@ export function Playground({ flow, proposal, thinking, busy, touched, sessionRun
   onChange: () => void
   onAsk: (text: string) => void
   onAdd: () => void
+  // Item 12: Nova builds a plan now; and taking Nova's own suggestion as it is.
+  onPropose: () => void
+  onTakeDraft: () => void
 }) {
   const [left, setLeft] = useState('')
   const list = useRef<HTMLDivElement>(null)
@@ -232,7 +273,7 @@ export function Playground({ flow, proposal, thinking, busy, touched, sessionRun
       ) : showing ? (
         <Proposal key={showing.pending.id} proposal={showing} flow={flow} busy={busy} onApply={onApply} onDiscard={onDiscard} onChange={onChange} />
       ) : !hasFlow ? (
-        <Empty onStart={onAsk} starters={starters} thinking={thinking} />
+        <Empty onStart={onAsk} onPropose={onPropose} starters={starters} thinking={thinking} draft={flow?.draft ?? null} onTakeDraft={onTakeDraft} busy={busy} />
       ) : (
         <div className="px-3 py-5 sm:px-6 sm:py-6" data-playground-saved>
           <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-3">

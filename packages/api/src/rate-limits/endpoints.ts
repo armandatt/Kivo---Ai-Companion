@@ -46,6 +46,7 @@ export const ROUTES: readonly Route[] = [
   { pattern: r("/api/nova/notes/(?:propose|import|papers|papers/preview)"), category: "ai", note: "Draft with Nova, transcription, papers" },
   { pattern: r("/api/nova/(?:subjects|workspaces)/propose"), category: "ai", note: "Study and workspace proposals" },
   { pattern: r("/api/nova/day/copilot"), category: "ai", note: "Today's Nova" },
+  { pattern: r("/api/nova/day/prepared"), category: "ai", note: "Today's plan Nova prepared (may prepare it: one model call)" },
   { pattern: r("/api/nova/builder"), category: "ai", methods: ["POST"], note: "Build with Nova: a new plan" },
   { pattern: r(`/api/nova/builder/${ID}/(?:messages|retry)`), category: "ai", note: "Build with Nova turns" },
   { pattern: r("/api/nova/extension/(?:ask|intent|captures/place)"), category: "ai", note: "Ask Nova, side-panel intent, filing" },
