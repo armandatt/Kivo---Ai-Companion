@@ -4,15 +4,28 @@
 // (GET /api/nova/sessions/recent, product/focus-history.ts). "Counted" is
 // Progress's own rule, so this list and the totals above agree. A session
 // with no topic moves no mastery and completes no task; the list says only
-// what it was and how long.
+// what it was and how long. One with no topic can be filed on a topic here,
+// afterwards (bug batch 28 Nov, item 4: the "file" session command).
 
 import { useEffect, useState } from 'react'
 import type { RecentSession } from '@repo/api/nova/product/focus-history.types'
 import { minutesLabel } from '../format'
+import { sendSessionCommand } from '../nova-api'
+import { SessionTopicAsk } from '../session-topic'
 
 export function RecentSessions() {
   const [sessions, setSessions] = useState<RecentSession[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const [filing, setFiling] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const file = async (id: string, subjectId: string, topicName: string) => {
+    setBusy(true)
+    const res = await sendSessionCommand({ action: 'file', sessionId: id, subjectId, topicName })
+    setBusy(false)
+    if (!res.ok || !res.filed) return false
+    setSessions(list => list?.map(x => (x.id === id ? { ...x, kind: 'topic', title: res.filed!.topicName } : x)) ?? list)
+    return true
+  }
   useEffect(() => {
     void fetch('/api/nova/sessions/recent', { cache: 'no-store' })
       .then(r => r.json())
@@ -37,6 +50,10 @@ export function RecentSessions() {
               {!s.counted && ' · under 10 minutes, not counted'}
             </span>
             {s.description && <p className="w-full text-xs leading-relaxed text-foreground/55">{s.description}</p>}
+            {s.kind === 'focus' && filing !== s.id && (
+              <button type="button" onClick={() => setFiling(s.id)} className="text-xs font-medium text-nova-ink hover:underline" data-file-session={s.id}>File on a topic</button>
+            )}
+            {filing === s.id && <div className="w-full pt-2"><SessionTopicAsk topicName={null} after busy={busy} onChoose={(subjectId, topicName) => file(s.id, subjectId, topicName)} /></div>}
           </li>
         ))}
       </ul>

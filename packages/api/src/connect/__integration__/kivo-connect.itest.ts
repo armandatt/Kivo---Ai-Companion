@@ -568,3 +568,91 @@ test("images: another learner reaches none; a stale note, a bad image or a missi
   assert.equal(after.title, before.title);
   assert.equal(await imageRows(a.learner.profileId), rows, "no image left behind by a failed call");
 });
+
+// Bug batch 28 Nov, item 6: update_note could only append. Now: exact edits
+// (each passage found exactly once, all or nothing), a whole-text replace
+// (at once for a short note, approved first for a long one), and every change
+// keeps the previous text as a version that restore_note_version puts back.
+test("REGRESSION item 6: update_note edits, replaces, keeps versions, and undoes", async () => {
+  const userId = await account();
+  const c = await connect(userId);
+  const made = await createNote(c.learner.profileId, { title: "Paxos", body: "Paxos has two phases.\nPhase one: prepare.\nPhase one: promise." });
+  assert.ok(made.ok); if (!made.ok) return;
+  const id = made.note.id;
+  const now = async () => (await getNote(c.learner.profileId, id))!;
+
+  // A passage that is missing, or found twice: nothing changes, and the call says which edit.
+  const missing = await call("update_note", { noteId: id, edits: [{ find: "three phases", replace: "x" }], baseUpdatedAt: made.note.updatedAt }, c.ctx);
+  assert.match(JSON.stringify(missing), /Edit 1: that passage is not in the note/);
+  const twice = await call("update_note", { noteId: id, edits: [{ find: "Paxos has two phases.", replace: "Paxos has two rounds." }, { find: "Phase one", replace: "Round one" }], baseUpdatedAt: made.note.updatedAt }, c.ctx);
+  assert.match(JSON.stringify(twice), /Edit 2: that passage is in the note 2 times/);
+  assert.equal((await now()).body, made.note.body, "all or nothing: the first edit did not go in either");
+
+  // A good edit, at once, and the old text kept.
+  const edited = await call("update_note", { noteId: id, edits: [{ find: "Phase one: promise.", replace: "Phase two: accept." }], baseUpdatedAt: made.note.updatedAt }, c.ctx);
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  assert.equal((await now()).body, "Paxos has two phases.\nPhase one: prepare.\nPhase two: accept.");
+  const read = await call("get_note", { noteId: `note:${id}` }, c.ctx);
+  assert.equal(read.data!.versions.length, 1);
+  assert.equal(read.data!.versions[0].before, "edit");
+
+  // Mixing ways in one call is refused.
+  assert.equal((await call("update_note", { noteId: id, edits: [{ find: "Paxos", replace: "P" }], appendText: "x", baseUpdatedAt: (await now()).updatedAt }, c.ctx)).ok, false);
+
+  // A short note that keeps most of its words is replaced at once.
+  const replaced = await call("update_note", { noteId: id, replaceBody: "# Paxos\nPaxos has two phases.\nPhase one: prepare.\nPhase two: accept.\nRewritten whole.", baseUpdatedAt: (await now()).updatedAt }, c.ctx);
+  assert.equal(replaced.ok, true, JSON.stringify(replaced));
+  assert.equal((await now()).body, "# Paxos\nPaxos has two phases.\nPhase one: prepare.\nPhase two: accept.\nRewritten whole.");
+
+  // PR #113 B.2: removing more than half of a short note's text waits for approval too.
+  const wiped = await call("update_note", { noteId: id, replaceBody: "Something else entirely.", baseUpdatedAt: (await now()).updatedAt }, c.ctx);
+  assert.equal(wiped.error, "approval_required", JSON.stringify(wiped));
+  assert.match((await now()).body, /Rewritten whole/, "nothing replaced before approval");
+
+  // Undo twice: back to the edit, then back to the original.
+  assert.equal((await call("restore_note_version", { noteId: id }, c.ctx)).ok, true);
+  assert.equal((await now()).body, "Paxos has two phases.\nPhase one: prepare.\nPhase two: accept.");
+  assert.equal((await call("restore_note_version", { noteId: id }, c.ctx)).ok, true);
+  assert.equal((await now()).body, made.note.body);
+
+  // A long note is not replaced whole without the learner's approval.
+  const long = await createNote(c.learner.profileId, { title: "Long Paxos", body: "x".repeat(2_500) });
+  assert.ok(long.ok); if (!long.ok) return;
+  const asked = await call("update_note", { noteId: long.note.id, replaceBody: "short", baseUpdatedAt: long.note.updatedAt }, c.ctx);
+  assert.equal(asked.error, "approval_required", JSON.stringify(asked));
+  assert.match(JSON.stringify(asked.data!.summary), /Replace the text of note/);
+  assert.equal((await getNote(c.learner.profileId, long.note.id))!.body.length, 2_500, "nothing replaced before approval");
+  // A plan holding note text is not stored (no content in the audit): the
+  // learner approves on Kivo, then the assistant sends the same change again.
+  const clicked = await approveAndApply({ userId: c.learner.userId, profileId: c.learner.profileId, origin: ISSUER }, asked.data!.planId);
+  assert.equal(clicked.status, "approved", JSON.stringify(clicked));
+  assert.equal((await getNote(c.learner.profileId, long.note.id))!.body.length, 2_500, "approval alone writes nothing");
+  const ran = await call("execute_knowledge_changes", { planId: asked.data!.planId, expiresAt: asked.data!.expiresAt, changes: asked.data!.changes }, c.ctx);
+  assert.equal(ran.ok, true, JSON.stringify(ran).slice(0, 400));
+  assert.equal((await getNote(c.learner.profileId, long.note.id))!.body, "short");
+  assert.equal(await prisma.novaNoteVersion.count({ where: { noteId: long.note.id } }), 1, "the long text is kept");
+
+  // Through the generic batch, a replace is always reviewed.
+  const pv = await call("preview_knowledge_changes", { changes: [{ op: "replace_note_body", noteId: id, body: "sneaky", baseUpdatedAt: (await now()).updatedAt }] }, c.ctx);
+  assert.equal(pv.data?.approvalRequired, true, JSON.stringify(pv).slice(0, 300));
+  const raw = await call("execute_knowledge_changes", { planId: pv.data!.planId, expiresAt: pv.data!.expiresAt, changes: [{ op: "replace_note_body", noteId: id, body: "sneaky", baseUpdatedAt: (await now()).updatedAt }] }, c.ctx);
+  assert.notEqual((await now()).body, "sneaky", JSON.stringify(raw).slice(0, 300));
+});
+
+// Bug batch 28 Nov, item 7: an assistant reads and sets where a topic stands.
+test("REGRESSION item 7: set_topic_status writes the learner's word; get_workspace_structure reads it", async () => {
+  const userId = await account([{ name: "Finance", topics: ["WACC", "DCF"] }]);
+  const c = await connect(userId);
+  const st = await loadStudyStructure(c.learner.profileId);
+  const wacc = st.subjects[0]!.topics.find(t => t.name === "WACC")!;
+  const set = await call("set_topic_status", { topicId: `topic:${wacc.id}`, status: "completed" }, c.ctx);
+  assert.equal(set.ok, true, JSON.stringify(set));
+  assert.equal(set.data!.status, "completed");
+  const byName = await call("set_topic_status", { subjectId: st.subjects[0]!.id, topicName: "dcf", status: "in_progress" }, c.ctx);
+  assert.equal(byName.data!.topic, "DCF");
+  assert.equal((await call("set_topic_status", { topicName: "DCF", status: "completed" }, c.ctx)).ok, false, "needs a topic id or subject");
+  const read = await call("get_workspace_structure", {}, c.ctx);
+  const topics = JSON.stringify(read.data!.subjects);
+  assert.match(topics, /"name":"WACC","studied":false,"status":"completed"/);
+  assert.match(topics, /"name":"DCF","studied":false,"status":"in_progress"/);
+});

@@ -41,12 +41,14 @@ import {
   type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type MapWorkspace, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 import { boardHref } from "./companion";
+import { sessionsByTopic } from "./focus-history";
+import { effectiveTopicStatus, parseTopicStatus } from "./topic-status";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
   // nextReviewAt / lastStudiedAt: the review schedule and the last session,
   // as stored. Absent: not shown (an older caller).
-  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date; nextReviewAt?: Date | null; lastStudiedAt?: Date | null }>;
+  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date; nextReviewAt?: Date | null; lastStudiedAt?: Date | null; status?: string | null }>;
   // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
@@ -55,6 +57,10 @@ export interface MapInputs {
     suggestions?: Array<{ subjectId: string; topicName: string | null; confidence: "high" | "possible"; basis: MapSuggestion["basis"] }>;
   }>;
   totals:    { notes: number; resources: number };
+  // Finished sessions on each topic, from the session rows themselves (bug
+  // batch 28 Nov, item 3): counted as Progress counts them (completed, ten
+  // minutes or more). Absent: the topic's review count, as before.
+  sessionsByTopic?: Array<{ subjectId: string; topicName: string; sessions: number; minutes: number }>;
   // The learner's tasks (tasks.ts), each with the task it is a step of. A
   // tree goes to the topic its top task is filed under, else its subject.
   tasks?:    Array<MapTask & { subjectId: string | null; topicName: string | null; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; estimatedMinutes?: number | null; after?: string[] }>;
@@ -73,6 +79,11 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
   // Only topics of a subject the learner still has.
   const topics  = input.topics.filter(t => subjectName.has(t.subjectId));
   const topicAt = new Map(topics.map(t => [topicKey(t.subjectId, t.name), t.id]));
+  const sessionsAt = new Map<string, { sessions: number; minutes: number }>();
+  for (const r of input.sessionsByTopic ?? []) {
+    const k = topicKey(r.subjectId, r.topicName), was = sessionsAt.get(k);
+    sessionsAt.set(k, { sessions: (was?.sessions ?? 0) + r.sessions, minutes: (was?.minutes ?? 0) + r.minutes });
+  }
 
   const edges: MapEdge[] = [];
   const link = (from: string, to: string, kind: MapEdge["kind"]) => edges.push({ id: `${from}>${to}`, from, to, kind });
@@ -162,7 +173,12 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       const details = readTopicDetails(t.details);
       topicNodes.push({
         id, type: "topic", label: t.name, href: `/knowledge?topic=${encodeURIComponent(t.id)}`, subjectId: t.subjectId, subjectName: s.name,
-        sessions: t.reviewCount,
+        ...(input.sessionsByTopic
+          ? { sessions: sessionsAt.get(topicKey(t.subjectId, t.name))?.sessions ?? 0, focusedMinutes: sessionsAt.get(topicKey(t.subjectId, t.name))?.minutes ?? 0 }
+          : { sessions: t.reviewCount }),
+        // Where the learner says it stands (item 7): their word, or implied by its sessions.
+        status: effectiveTopicStatus(t.status, (sessionsAt.get(topicKey(t.subjectId, t.name))?.sessions ?? 0) > 0 || t.reviewCount > 0),
+        statusSet: parseTopicStatus(t.status) !== null,
         level: known === "unverified" ? null : known,
         masteryPercent: known !== "unverified" ? Math.round(t.masteryProbability * 100) : null,
         notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
@@ -273,14 +289,15 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
 
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [allTopics, noted, saved, allTasks] = await Promise.all([
+  const [allTopics, noted, saved, allTasks, topicSessions] = await Promise.all([
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
-      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true },
+      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true, status: true },
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),
     listTaskOutline(profileId),
+    sessionsByTopic(profileId),
   ]);
   // A workspace's subjects and every subject inside them.
   const inScope = new Set(chosen ? chosen.subjectIds : allSubjects.map(s => s.id));
@@ -302,6 +319,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
     subjects, topics: allTopics.filter(t => inScope.has(t.subjectId)),
     notes: scoped(noted.notes), resources: scoped(saved.resources), tasks: allTasks.filter(t => top.has(t.id)),
     totals: { notes: chosen ? scoped(noted.notes).length : noted.total, resources: chosen ? scoped(saved.resources).length : saved.total },
+    sessionsByTopic: topicSessions,
     workspaceId: chosen?.id ?? null, workspaces: workspaces.map(w => ({ id: w.id, title: w.title, kind: w.kind })),
   });
 }

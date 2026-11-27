@@ -36,7 +36,7 @@ const request = (over: Partial<LearnerRequest> = {}): LearnerRequest => ({
   clarity: "clear", changeOfMind: false,
   action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
-  asks: "none", availableMinutesMax: null, setup: null, language: null, languageRequest: null, ...over,
+  asks: "none", availableMinutesMax: null, setup: null, language: null, languageRequest: null, topicStatus: null, ...over,
 });
 const reading = (req: Partial<LearnerRequest> = {}, over: Partial<AcademicUnderstanding> = {}): AcademicUnderstanding => ({
   intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0, disclosureClass: "none",
@@ -986,5 +986,25 @@ describe("a request of its own is not an answer to the open card", () => {
     }
     // Found by the eval (acceptance run): "skip krde aaj deadlocks" was read as not_now, which quiets Nova for the day.
     expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain('is change_plan with that topic, not not_now');
+  });
+});
+
+// Bug batch 28 Nov, item 7: a topic's status through Nova. The reading
+// proposes; the decision runs it only when clear, explicit and confident,
+// with a topic and a state. Finishing a session is never this.
+describe("REGRESSION item 7: set_topic_status in chat", () => {
+  it("parses topicStatus only as one of the three words", () => {
+    expect(parseLearnerRequest({ clarity: "clear", action: "set_topic_status", confidence: 0.9, topicStatus: "completed" }).topicStatus).toBe("completed");
+    expect(parseLearnerRequest({ clarity: "clear", action: "set_topic_status", confidence: 0.9, topicStatus: "done" }).topicStatus).toBeNull();
+  });
+  it("runs on a clear, confident reading that names the topic and the state", () => {
+    const d = decideAction(reading({ action: "set_topic_status", confidence: 0.9, topicStatus: "completed" }, { topic: "WACC" }), NO_CONTEXT);
+    expect(d.action).toEqual({ type: "set_topic_status", topic: "WACC", status: "completed" });
+  });
+  it("does nothing on a low-confidence reading, a change of mind, or with no topic or state", () => {
+    expect(decideAction(reading({ action: "set_topic_status", confidence: 0.5, topicStatus: "completed" }, { topic: "WACC" }), NO_CONTEXT).action.type).not.toBe("set_topic_status");
+    expect(decideAction(reading({ action: "set_topic_status", confidence: 0.9, topicStatus: "completed", changeOfMind: true }, { topic: "WACC" }), NO_CONTEXT).action.type).not.toBe("set_topic_status");
+    expect(decideAction(reading({ action: "set_topic_status", confidence: 0.9, topicStatus: "completed" }, { topic: null }), NO_CONTEXT).action.type).not.toBe("set_topic_status");
+    expect(decideAction(reading({ action: "set_topic_status", confidence: 0.9, topicStatus: null }, { topic: "WACC" }), NO_CONTEXT).action.type).not.toBe("set_topic_status");
   });
 });

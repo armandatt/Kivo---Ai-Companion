@@ -9,8 +9,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUpRight, Check, Copy, Loader2, Plug, ShieldCheck, Sparkles, Unplug, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, Check, Copy, FilePlus2, Loader2, Plug, ShieldCheck, Sparkles, Unplug, X } from 'lucide-react'
 import { ASSISTANTS, assistantOf, canWrite, newConnection, since, type Assistant, type AssistantId, type Connection } from './assistants-model'
+import { MCP_URL, mcpAddressFor } from './mcp-clients'
 import { cn } from '@/lib/utils'
 
 const POLL_MS = 3_000
@@ -29,7 +30,9 @@ export function AssistantsPage() {
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState<AssistantId | null>(null)
   const [address, setAddress] = useState('')
-  useEffect(() => { setAddress(`${window.location.origin}/api/mcp`) }, [])
+  // Copied once, anywhere on the page: the setup's first step is then done, never asked again.
+  const [addressCopied, setAddressCopied] = useState(false)
+  useEffect(() => { setAddress(mcpAddressFor(window.location.origin)) }, [])
 
   const load = useCallback(async () => {
     const got = await readConnections()
@@ -46,11 +49,15 @@ export function AssistantsPage() {
         <span className="grid size-10 place-items-center rounded-xl bg-nova/12 text-nova-ink"><Plug aria-hidden className="size-5" /></span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground">AI assistants</h1>
-          <p className="text-sm text-foreground/60">Chat with Claude or ChatGPT about your notes and map.</p>
+          <p className="text-sm text-foreground/60">Let the assistant you already use read your notes and map, and save what you work out back to Kivo.</p>
         </div>
       </header>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2" role="list">
+      {/* One address for every assistant (item 8, 28 Nov), first on the page. */}
+      <McpAddressCard address={address || MCP_URL} copied={addressCopied} onCopied={() => setAddressCopied(true)} />
+
+      <h2 className="mt-8 text-xs font-semibold uppercase tracking-[0.14em] text-foreground/50">Set up step by step</h2>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2" role="list">
         {ASSISTANTS.map(a => {
           const mine = connectedTo(a.id)
           const selected = open === a.id
@@ -61,7 +68,7 @@ export function AssistantsPage() {
               data-assistant={a.id}>
               <Mark a={a} />
               <span className="min-w-0 flex-1">
-                <span className="block font-semibold text-foreground">{a.name}</span>
+                <span className="block font-semibold text-foreground">{a.name} <span className="font-normal text-foreground/45">by {a.maker}</span></span>
                 <span className="mt-0.5 flex items-center gap-1.5 text-xs">
                   {mine.length > 0
                     ? <><span className="size-1.5 rounded-full bg-emerald-400" /> <span className="text-emerald-300">Connected</span></>
@@ -69,7 +76,7 @@ export function AssistantsPage() {
                 </span>
               </span>
               <span className={cn('rounded-lg px-2.5 py-1 text-xs font-medium transition-colors', selected ? 'bg-white/10 text-foreground' : 'bg-nova/12 text-nova-ink group-hover:bg-nova/20')}>
-                {selected ? 'Close' : mine.length ? 'Add again' : 'Connect'}
+                {selected ? 'Close' : mine.length ? 'Add again' : 'Set up'}
               </span>
             </button>
           )
@@ -77,23 +84,25 @@ export function AssistantsPage() {
       </div>
 
       {open && address && (
-        <Setup key={open} a={ASSISTANTS.find(x => x.id === open)!} address={address} reload={load} before={list}
+        <Setup key={open} a={ASSISTANTS.find(x => x.id === open)!} address={address} copied={addressCopied} onCopied={() => setAddressCopied(true)} reload={load} before={list}
           onClose={() => setOpen(null)} />
       )}
 
+      <OtherAssistant />
+
       <section className="mt-10" aria-labelledby="connected-title">
-        <h2 id="connected-title" className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground/50">Connected</h2>
+        <h2 id="connected-title" className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground/50">Your connections</h2>
         {failed && list === null && <p role="alert" className="mt-3 text-sm text-amber-200">Couldn’t load your connections. <button type="button" className="underline" onClick={() => void load()}>Try again</button></p>}
         {list === null && !failed && <div aria-busy="true" className="mt-3 h-14 animate-pulse rounded-xl bg-white/5" />}
-        {list?.length === 0 && <p className="mt-3 text-sm text-foreground/50">Nothing connected yet. Pick Claude or ChatGPT above.</p>}
+        {list?.length === 0 && <p className="mt-3 text-sm text-foreground/50">No assistant is connected yet. Set one up above: it takes about a minute.</p>}
         <ul className="mt-2 divide-y divide-white/6">
           {list?.map(c => <ConnectionRow key={c.id} c={c} onGone={setList} />)}
         </ul>
       </section>
 
       <p className="mt-10 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground/45">
-        <span className="inline-flex items-center gap-1"><ShieldCheck aria-hidden className="size-3.5" /> Nothing connects without your Allow. Deleting or moving notes always asks you first.</span>
-        <Link href="/integrations/kivo-connect" className="underline-offset-2 hover:text-foreground hover:underline">Other apps & help</Link>
+        <span className="inline-flex items-center gap-1"><ShieldCheck aria-hidden className="size-3.5" /> Nothing connects until you press Allow, and you can disconnect at any time. Deleting, moving or renaming always waits for your approval.</span>
+        <Link href="/integrations/kivo-connect" className="underline-offset-2 hover:text-foreground hover:underline">Full guide and every tool</Link>
       </p>
     </div>
   )
@@ -109,11 +118,10 @@ function Mark({ a, size = 'md' }: { a: Assistant; size?: 'md' | 'sm' }) {
 
 // One assistant's setup: three moves, each lighting up as it is done, then
 // the connection as soon as Kivo sees it.
-function Setup({ a, address, before, reload, onClose }: {
-  a: Assistant; address: string; before: Connection[] | null
+function Setup({ a, address, copied, onCopied, before, reload, onClose }: {
+  a: Assistant; address: string; copied: boolean; onCopied: () => void; before: Connection[] | null
   reload: () => Promise<Connection[] | null>; onClose: () => void
 }) {
-  const [copied, setCopied] = useState(false)
   const [opened, setOpened] = useState(false)
   const [done, setDone] = useState<Connection | null>(null)
   const start = useRef(before)
@@ -136,8 +144,8 @@ function Setup({ a, address, before, reload, onClose }: {
     return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
   }, [a.id, done, reload])
 
-  // Copied stays ticked: it is the first step's done mark.
-  const copy = () => { void navigator.clipboard?.writeText(address).then(() => setCopied(true), () => setCopied(true)) }
+  // Copied anywhere on the page ticks the first step; it is never asked for twice.
+  const copy = () => { void navigator.clipboard?.writeText(address).then(onCopied, () => undefined) }
 
   if (done) {
     return (
@@ -158,35 +166,47 @@ function Setup({ a, address, before, reload, onClose }: {
     )
   }
 
-  const step2Ready = copied
   return (
     <div ref={panel} className="mt-4 rounded-2xl border border-white/10 bg-card/70 p-4 sm:p-5 motion-safe:animate-[subject-pop_220ms_ease-out]" data-setup={a.id}>
-      <ol className="grid gap-3 sm:grid-cols-3">
-        <Step n={1} done={copied} active={!copied} title="Copy your Kivo link">
-          <button type="button" onClick={copy} className={cn('mt-2 flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors',
-            copied ? 'border-emerald-400/40 bg-emerald-400/10' : 'border-nova/40 bg-nova/[0.08] hover:bg-nova/15')} data-setup-copy>
-            <code className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">{address.replace(/^https?:\/\//, '')}</code>
-            {copied ? <Check aria-hidden className="size-4 shrink-0 text-emerald-300" /> : <Copy aria-hidden className="size-4 shrink-0 text-nova-ink" />}
-            <span className="sr-only">{copied ? 'Copied' : 'Copy the address'}</span>
-          </button>
+      <div className="flex items-center gap-2.5">
+        <Mark a={a} size="sm" />
+        <p className="min-w-0 flex-1 text-sm font-semibold text-foreground">Connect {a.name} in three steps</p>
+        <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-foreground/50 hover:bg-white/5 hover:text-foreground"><X className="size-4" /></button>
+      </div>
+      <ol className="mt-4 space-y-0">
+        <Step n={1} done={copied} active={!copied} title="Copy your Kivo address" last={false}>
+          {copied
+            ? <p className="text-xs text-foreground/60" data-setup-copied>Done. It’s on your clipboard, ready to paste.</p>
+            : (
+              <button type="button" onClick={copy} className="inline-flex max-w-full items-center gap-2 rounded-lg border border-nova/40 bg-nova/[0.08] px-3 py-1.5 text-left text-sm hover:bg-nova/15" data-setup-copy>
+                <Copy aria-hidden className="size-4 shrink-0 text-nova-ink" />
+                <code className="min-w-0 truncate text-xs text-foreground/80">{address.replace(/^https?:\/\//, '')}</code>
+              </button>
+            )}
         </Step>
-        <Step n={2} done={opened} active={step2Ready && !opened} title={`Add it in ${a.name}`}>
+        <Step n={2} done={opened} active={copied && !opened} title={`Add Kivo in ${a.name}`} last={false}>
           <a href={a.settingsUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}
-            className={cn('mt-2 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
-              step2Ready ? 'bg-action text-action-foreground hover:bg-action-hover' : 'border border-white/12 text-foreground/80 hover:bg-white/5')} data-setup-open>
-            <Mark a={a} size="sm" /> {a.add} <ArrowUpRight aria-hidden className="size-3.5" />
+            className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors',
+              copied ? 'bg-action text-action-foreground hover:bg-action-hover' : 'border border-white/12 text-foreground/80 hover:bg-white/5')} data-setup-open>
+            {a.add} <ArrowUpRight aria-hidden className="size-3.5" />
           </a>
-          <p className="mt-1.5 text-[11px] text-foreground/50">Kivo can’t add itself there: paste the link as the <span className="text-foreground/70">{a.paste}</span></p>
-          <details className="mt-1.5 text-[11px] text-foreground/55" data-setup-path>
-            <summary className="cursor-pointer hover:text-foreground">Where exactly?</summary>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-4">{a.path.map(p => <li key={p}>{p}</li>)}</ol>
-            <p className="mt-1">{a.planNote} <a href={a.docsUrl} target="_blank" rel="noopener noreferrer" className="underline">{a.name}’s guide</a></p>
-          </details>
+          <p className="mt-2.5 text-xs font-medium text-foreground/70">Then, in {a.name}:</p>
+          <ol className="mt-1.5 flex flex-wrap items-center gap-1.5" data-setup-path aria-label={`The clicks in ${a.name}`}>
+            {a.path.map((p, i) => (
+              <li key={p} className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.03] px-2.5 py-1 text-xs text-foreground/85">
+                  <span className="grid size-4 place-items-center rounded-full bg-white/10 text-[10px] font-semibold text-foreground/70">{i + 1}</span>{p}
+                </span>
+                {i < a.path.length - 1 && <ArrowRight aria-hidden className="size-3 text-foreground/30" />}
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2 text-[11px] leading-relaxed text-foreground/50">{a.planNote} <a href={a.docsUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">{a.name}’s own guide</a></p>
         </Step>
-        <Step n={3} done={false} active={opened} title="Allow">
-          <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-white/12 px-3 py-2 text-sm text-foreground/70" data-setup-waiting>
-            {opened ? <Loader2 aria-hidden className="size-4 animate-spin text-nova-ink" /> : <span className="size-2 rounded-full bg-white/20" />}
-            <span>{opened ? 'Waiting for you…' : 'Kivo will ask you'}</span>
+        <Step n={3} done={false} active={opened} title="Press Allow on Kivo" last>
+          <div className="inline-flex items-center gap-2 rounded-lg border border-dashed border-white/15 px-3 py-1.5 text-sm text-foreground/75" data-setup-waiting>
+            {opened ? <Loader2 aria-hidden className="size-4 animate-spin text-nova-ink" /> : <ShieldCheck aria-hidden className="size-4 text-foreground/40" />}
+            <span>{opened ? 'Waiting for your Allow… this page updates by itself.' : 'Kivo shows what it may do, and nothing connects until you allow it.'}</span>
           </div>
           <p className="mt-1.5 text-[11px] text-foreground/50">{a.allow}</p>
         </Step>
@@ -195,18 +215,65 @@ function Setup({ a, address, before, reload, onClose }: {
   )
 }
 
-function Step({ n, title, done, active, children }: { n: number; title: string; done: boolean; active: boolean; children: React.ReactNode }) {
+function Step({ n, title, done, active, last, children }: { n: number; title: string; done: boolean; active: boolean; last: boolean; children: React.ReactNode }) {
   return (
-    <li className={cn('rounded-xl p-3 transition-colors duration-300', active ? 'bg-white/[0.05] ring-1 ring-nova/30' : 'bg-white/[0.02]')} data-step={n} data-step-done={done || undefined}>
-      <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <span className={cn('grid size-5 place-items-center rounded-full text-[11px] font-semibold transition-colors duration-300',
-          done ? 'bg-emerald-400 text-emerald-950' : active ? 'bg-nova text-background' : 'bg-white/10 text-foreground/60')}>
-          {done ? <Check aria-hidden className="size-3" /> : n}
-        </span>
-        {title}
-      </p>
-      {children}
+    <li className="relative flex gap-3 pb-5 last:pb-0" data-step={n} data-step-done={done || undefined}>
+      {!last && <span aria-hidden className={cn('absolute left-[11px] top-7 bottom-1 w-px', done ? 'bg-emerald-400/50' : 'bg-white/10')} />}
+      <span className={cn('relative z-[1] grid size-6 shrink-0 place-items-center rounded-full text-xs font-semibold transition-colors duration-300',
+        done ? 'bg-emerald-400 text-emerald-950' : active ? 'bg-nova text-background ring-4 ring-nova/15' : 'bg-white/10 text-foreground/60')}>
+        {done ? <Check aria-hidden className="size-3.5" /> : n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className={cn('text-sm font-medium', done ? 'text-foreground/70' : 'text-foreground')}>{title}</p>
+        <div className="mt-1.5">{children}</div>
+      </div>
     </li>
+  )
+}
+
+// The Kivo MCP address with a copy button: what any MCP client asks for.
+// Copied is the page's one state, so the setup below does not ask again.
+function McpAddressCard({ address, copied, onCopied }: { address: string; copied: boolean; onCopied: () => void }) {
+  const [flash, setFlash] = useState(false)
+  useEffect(() => { if (!flash) return; const t = setTimeout(() => setFlash(false), 2000); return () => clearTimeout(t) }, [flash])
+  const copy = () => { void navigator.clipboard?.writeText(address).then(() => { onCopied(); setFlash(true) }, () => undefined) }
+  return (
+    <section className="mt-6 rounded-2xl border border-nova/30 bg-nova/[0.05] p-4" aria-labelledby="mcp-address-title" data-mcp-address>
+      <p id="mcp-address-title" className="text-sm font-semibold text-foreground">Your Kivo address</p>
+      <p className="mt-0.5 text-xs text-foreground/60">The one link every assistant needs. It is the same for everyone; signing in is what makes it yours.</p>
+      <div className="mt-2 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground/85" data-mcp-url>{address}</code>
+        <button type="button" onClick={copy} className={cn('inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors',
+          copied ? 'border border-emerald-400/40 bg-emerald-400/10 text-foreground' : 'bg-action text-action-foreground hover:bg-action-hover')} data-mcp-copy data-copied={copied || undefined}>
+          {copied ? <Check aria-hidden className="size-4 text-emerald-400" /> : <Copy aria-hidden className="size-4" />}{flash ? 'Copied' : copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <ul className="mt-3 grid gap-2 text-xs text-foreground/75 sm:grid-cols-3" data-mcp-can>
+        <li className="flex items-start gap-1.5"><BookOpen aria-hidden className="mt-0.5 size-3.5 shrink-0 text-nova-ink" /> Reads your notes, map and saved pages</li>
+        <li className="flex items-start gap-1.5"><FilePlus2 aria-hidden className="mt-0.5 size-3.5 shrink-0 text-nova-ink" /> Saves notes, edits and topics to Kivo</li>
+        <li className="flex items-start gap-1.5"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0 text-nova-ink" /> Asks you before deleting or moving anything</li>
+      </ul>
+      <p className="mt-3 text-xs leading-relaxed text-foreground/55">Works with any AI assistant that can add a remote MCP server (often called a custom connector) and sign in to it.</p>
+      <span className="sr-only" role="status" aria-live="polite">{flash ? 'Address copied' : ''}</span>
+    </section>
+  )
+}
+
+// Any other MCP-compatible assistant: the same three moves, said generally.
+function OtherAssistant() {
+  return (
+    <details className="group mt-3 rounded-2xl border border-white/10 bg-card/40 px-4 py-3" data-other-assistant>
+      <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-foreground/80 hover:text-foreground">
+        <span>Another assistant? <span className="font-normal text-foreground/50">Any app that supports remote MCP servers</span></span>
+        <ChevronDown aria-hidden className="size-4 text-foreground/50 transition-transform group-open:rotate-180" />
+      </summary>
+      <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-foreground/70">
+        <li>In its settings, add a remote MCP server (it may be called a custom connector or integration).</li>
+        <li>Paste your Kivo address above as the server URL. Choose OAuth if it asks how to sign in.</li>
+        <li>Sign in to Kivo when it opens, check what it asks for, and press Allow.</li>
+      </ol>
+      <p className="mt-2 text-xs text-foreground/50">Kivo has been tested with Claude and ChatGPT. Others that support remote MCP servers with sign-in should work the same way.</p>
+    </details>
   )
 }
 

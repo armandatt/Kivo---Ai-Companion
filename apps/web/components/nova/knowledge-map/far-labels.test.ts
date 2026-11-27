@@ -1,66 +1,50 @@
-// Founder review #02: far out, names stay readable and never pile up.
+// Names over the map's cards and the tier they follow (lod.ts, 28 Nov 2026). Run with `npm test`.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { FAR_LABEL_MAX, FAR_LABEL_PX, planFarLabels, type LabelCandidate } from './far-labels'
+import { planCardLabels, type LabelCandidate } from './far-labels'
+import { LOD, tierAtZoom, tierFor } from './lod'
 
-const subj = (id: string, x: number, y: number, rank = 0): LabelCandidate => ({ id, x, y, text: `Subject ${id}`, kind: 'subject', rank })
-const top = (id: string, x: number, y: number, rank = 10): LabelCandidate => ({ id, x, y, text: `Topic ${id}`, kind: 'topic', rank })
+const topic = (id: string, text = `Topic ${id}`): LabelCandidate => ({ id, x: 0, y: 0, text, kind: 'topic', rank: 100, card: { w: 180, h: 58 } })
+const subject = (id: string, plated = false): LabelCandidate => ({ id, x: 0, y: 0, text: `Subject ${id}`, kind: 'subject', rank: 0, card: { w: 208, h: 66 }, insideOnly: plated })
 
-test('names keep a fixed size on screen at any zoom', () => {
-  for (const k of [0.1, 0.2, 0.35]) {
-    const [l] = planFarLabels([subj('a', 0, 0)], k)
-    assert.equal(l!.px, FAR_LABEL_PX.subject)
-  }
+test('tiers from the card’s width on screen: far under 44px, close from 140px, mid between', () => {
+  assert.equal(tierFor(43), 'far')
+  assert.equal(tierFor(44), 'mid')
+  assert.equal(tierFor(139), 'mid')
+  assert.equal(tierFor(140), 'close')
+  assert.equal(tierAtZoom(LOD.closeFromPx / LOD.refW), 'close')
 })
 
-test('every subject keeps its name when there is room, at the far-out limit too', () => {
-  // Subjects 3000 map units apart: 300px apart at k = 0.1.
-  const c = [subj('a', 0, 0), subj('b', 3000, 0), subj('c', 0, 3000)]
-  assert.deepEqual(planFarLabels(c, 0.1).map(l => l.id).sort(), ['a', 'b', 'c'])
+test('hysteresis: a tier is entered at 1.0× its threshold and left only under 0.85×', () => {
+  assert.equal(tierFor(130, 'close'), 'close', '130 > 140 × 0.85 = 119')
+  assert.equal(tierFor(118, 'close'), 'mid')
+  assert.equal(tierFor(139, 'mid'), 'mid', 'not up until 140')
+  assert.equal(tierFor(38, 'mid'), 'mid', '38 > 44 × 0.85 = 37.4')
+  assert.equal(tierFor(37, 'mid'), 'far')
+  assert.equal(tierFor(43, 'far'), 'far', 'not up until 44')
+  assert.equal(tierFor(20, 'close'), 'far', 'a big jump goes straight down')
 })
 
-test('a topic name that would overlap a subject name is left out; subjects win', () => {
-  const c = [top('t', 10, 0), subj('s', 0, 0)]
-  assert.deepEqual(planFarLabels(c, 0.2).map(l => l.id), ['s'])
+test('far: no topic names; subject headers only (not a plated subject); always-named cards inside their card', () => {
+  const k = 0.25
+  const out = planCardLabels([topic('a'), topic('b'), subject('s'), subject('p', true)], k, 'far', new Set(['b']))
+  assert.deepEqual(out.map(l => [l.id, l.inside]).sort(), [['b', true], ['s', false]])
+  assert.equal(out.find(l => l.id === 'b')!.px, LOD.minTextPx)
 })
 
-test('topics appear as the zoom gives them room, predictably', () => {
-  const c = [subj('s', 0, 0), ...Array.from({ length: 6 }, (_, i) => top(`t${i}`, 0, 200 + i * 80, 10 + i))]
-  const far = planFarLabels(c, 0.1).length, nearer = planFarLabels(c, 0.3).length
-  assert.ok(nearer > far, `${nearer} > ${far}`)
-  assert.deepEqual(planFarLabels(c, 0.3), planFarLabels([...c].reverse(), 0.3), 'same zoom, same names, whatever the order given')
+test('mid: every card named inside, one line, cut to the card’s width', () => {
+  const k = 0.4 // a 180-unit card is 72px wide: (72 - 10) / (10 × 0.6) = 10 characters
+  const [l] = planCardLabels([topic('a', 'Weighted average cost of capital')], k, 'mid')
+  assert.equal(l!.inside, true)
+  assert.equal(l!.px, LOD.midTextPx)
+  assert.ok(l!.text.length <= 10 && l!.text.endsWith('…'), l!.text)
 })
 
-test('a blocker (a subject plate already drawn) keeps names off it', () => {
-  const plate = { minX: -50, minY: -20, maxX: 50, maxY: 20 }
-  assert.equal(planFarLabels([subj('a', 0, 0)], 0.2, [plate]).length, 0)
+test('every box keeps its name in mid: no cap a real map reaches', () => {
+  const many = Array.from({ length: 1500 }, (_, i) => topic(`t${i}`))
+  assert.equal(planCardLabels(many, 0.4, 'mid').length, 1500)
 })
 
-test('long names are cut with an ellipsis, never run on', () => {
-  const [l] = planFarLabels([{ ...subj('a', 0, 0), text: 'Computer Organisation and Architecture, second half' }], 0.2)
-  assert.ok(l!.text.length <= 26 && l!.text.endsWith('…'))
-})
-
-test('a huge map stays within the cap and plans quickly', () => {
-  const c: LabelCandidate[] = []
-  for (let i = 0; i < 3000; i++) c.push(top(`t${i}`, (i % 60) * 260, Math.floor(i / 60) * 120, 10 + i))
-  const t0 = performance.now()
-  const out = planFarLabels(c, 0.34)
-  const ms = performance.now() - t0
-  assert.ok(out.length <= FAR_LABEL_MAX)
-  assert.ok(ms < 60, `planned 3000 candidates in ${ms.toFixed(1)} ms`)
-})
-
-test('a card wide enough on screen holds its own name, cut to fit; neighbours never lose theirs', () => {
-  // 20 topic cards 200 map units apart, 180 wide: at 0.44 each is 79px, the gaps 9px.
-  const c = Array.from({ length: 20 }, (_, i): LabelCandidate => ({ id: `t${i}`, x: i * 200, y: 0, text: `Process topic ${i + 1}`, kind: 'topic', rank: 10, card: { w: 180, h: 58 } }))
-  const out = planFarLabels(c, 0.44)
-  assert.equal(out.length, 20, 'every card named')
-  assert.ok(out.every(l => l.inside && l.text.length * 6.1 + 10 <= 180 * 0.44 + 1))
-})
-
-test('a note or page is named only inside its card, never beside it', () => {
-  const note: LabelCandidate = { id: 'n', x: 0, y: 0, text: 'Lexers', kind: 'topic', rank: 200, card: { w: 164, h: 48 }, insideOnly: true }
-  assert.equal(planFarLabels([note], 0.4).length, 1)
-  assert.equal(planFarLabels([note], 0.1).length, 0)
+test('close: nothing over the cards, the faces say it', () => {
+  assert.deepEqual(planCardLabels([topic('a'), subject('s')], 1, 'close'), [])
 })

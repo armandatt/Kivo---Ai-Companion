@@ -108,7 +108,10 @@ export function CardFace({ n, detail, folded, at = ORIGIN }: { n: MapNode; detai
     const barW = w - 36
     // Two lines for a long title when nothing else is said on the card.
     const [l1, l2] = detail === 1 && !folded ? twoLines(n.label, 21) : [short(n.label, 20), null]
-    const level = n.level && n.masteryPercent !== null ? `${LEVEL_TEXT[n.level]} · ${n.masteryPercent}%` : 'No session yet'
+    // A session filed without a mastery reading (Quick Focus filed later) is
+    // still a session: say how many, never "No session yet" (item 3, 28 Nov).
+    const level = n.level && n.masteryPercent !== null ? `${LEVEL_TEXT[n.level]} · ${n.masteryPercent}%`
+      : n.sessions > 0 ? `${n.sessions} session${n.sessions === 1 ? '' : 's'}${n.focusedMinutes ? ` · ${n.focusedMinutes} min` : ''}` : 'No session yet'
     return (
       <>
         {/* No session yet: the card lies flat (no slab, depth.ts) and its subject bar is hollow. */}
@@ -119,6 +122,8 @@ export function CardFace({ n, detail, folded, at = ORIGIN }: { n: MapNode; detai
           : <rect x={x0 + 7} y={y0 + 11} width={3} height={h - 22} rx={1.5} fill="var(--sc)" />)}
         {detail >= 1 && <text x={x0 + 18} y={cy + (detail === 2 || folded || l2 ? -6 : 5)} className={text} fontSize={13} fontWeight={600}>{l1}</text>}
         {detail === 1 && l2 && <text x={x0 + 18} y={cy + 11} className={text} fontSize={13} fontWeight={600}>{l2}</text>}
+        {/* Where it stands (item 7, 28 Nov): hollow not started, half in progress, check completed. */}
+        {detail >= 1 && n.status && <StatusGlyph cx={x1 - 13} cy={y0 + 13} status={n.status} />}
         {detail === 1 && folded && <text x={x0 + 18} y={cy + 12} {...meta}>{short(folded, 26)}</text>}
         {detail === 2 && (
           <>
@@ -206,5 +211,18 @@ export function CardSurface({ n, detail, folded, lifted, at = ORIGIN, children }
       {children}
       {detail > 0 && <rect className="pointer-events-none" x={at.x - w / 2} y={at.y - h / 2} width={w} height={h} rx={r} fill="url(#map-light)" />}
     </>
+  )
+}
+
+// A topic's status as a small mark in the card's corner (bug batch 28 Nov, item 7).
+function StatusGlyph({ cx, cy, status }: { cx: number; cy: number; status: 'not_started' | 'in_progress' | 'completed' }) {
+  const r = 5
+  return (
+    <g data-topic-status={status} aria-hidden>
+      {status === 'completed'
+        ? <><circle cx={cx} cy={cy} r={r} fill="var(--nova)" /><path d={`M ${cx - 2.4} ${cy} l 1.7 1.8 l 3.1 -3.4`} fill="none" stroke="var(--background)" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" /></>
+        : <><circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--nova)" strokeOpacity={status === 'in_progress' ? 1 : 0.45} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+          {status === 'in_progress' && <path d={`M ${cx} ${cy - r} A ${r} ${r} 0 0 1 ${cx} ${cy + r} Z`} fill="var(--nova)" />}</>}
+    </g>
   )
 }

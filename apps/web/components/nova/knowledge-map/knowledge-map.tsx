@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useStartSession } from '../use-start-session'
 import { ArrowUp, ArrowUpRight, ChevronsDownUp, Eraser, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
 import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
@@ -21,8 +22,10 @@ import { filingChoices, placementLabel, placementOf, planLink, samePlacement, ty
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
-import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
-import { planFarLabels, type Blocker, type LabelCandidate } from './far-labels'
+import { clickAction, enterAction, enterTarget, openHrefOf, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
+import { planCardLabels, type LabelCandidate } from './far-labels'
+import { LOD, tierAtZoom, type Tier } from './lod'
+import { setTopicStatusOnMap } from './topic-status-api'
 import { ARRIVE_PARAM, arrivedFromImport, openingView, opensWithEntrance } from './opening-view'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
@@ -36,8 +39,8 @@ import { linkPath, treePath, TREE_STROKE } from './edge-path'
 import { nextStep, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
-import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
-import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
+import { GAP_LABEL, LENSES, STATE_LABEL, STATUS_LABEL, statusOf, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
+import { minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
 import { EDGE_MS, LARGE_MAP, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
@@ -67,7 +70,7 @@ const MIN_K = 0.1, MAX_K = 2.5
 // the length of an ordinary one.
 const MAP_SESSION_MINUTES = 25
 
-// The zoom a card found with Find (or asked for by a link) is brought in at, at least: its title and facts show (overview.ts detailAt 2 from 0.62).
+// The zoom a card found with Find (or asked for by a link) is brought in at, at least: its full face shows (lod.ts close: 140px, zoom 0.78).
 const FIND_K = 0.9
 // The height the lens bar (Structure · Learning · Gaps) takes on the canvas's top edge, in screen pixels.
 const LENS_BAR = 48
@@ -359,6 +362,35 @@ function Ring({ percent, color, size = 52, label }: { percent: number | null; co
   )
 }
 
+// Not started / In progress / Completed for one topic (POST /api/nova/topics/status).
+function TopicStatusPicker({ node, onChanged }: { node: Extract<MapNode, { type: 'topic' }>; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [shown, setShown] = useState(statusOf(node))
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { setShown(statusOf(node)); setError(null) }, [node])
+  const choose = async (status: 'not_started' | 'in_progress' | 'completed') => {
+    if (status === shown || busy) return
+    const was = shown
+    setShown(status); setBusy(true); setError(null)
+    const r = await setTopicStatusOnMap(node.id.replace(/^topic:/, ''), status)
+    if (!r.ok) { setShown(was); setError(r.message) } else onChanged()
+    setBusy(false)
+  }
+  return (
+    <div data-topic-status-picker>
+      <div role="radiogroup" aria-label="Where this topic stands" className="grid grid-cols-3 gap-1 rounded-xl border border-white/8 bg-white/[0.02] p-1">
+        {(['not_started', 'in_progress', 'completed'] as const).map(s => (
+          <button key={s} type="button" role="radio" aria-checked={shown === s} disabled={busy} onClick={() => void choose(s)} data-status={s}
+            className={cn('rounded-lg px-1.5 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-60', shown === s ? 'bg-nova/15 text-foreground' : 'text-foreground/60 hover:bg-white/5 hover:text-foreground')}>
+            {STATUS_LABEL[s]}
+          </button>
+        ))}
+      </div>
+      {error && <p role="alert" className="mt-1 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
+
 const TILE_ICON: Partial<Record<MapNodeType, typeof FileText>> = { note: FileText, resource: Globe, task: ListChecks, topic: Circle, subject: Circle }
 
 function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected, where = [], tally }: {
@@ -520,6 +552,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
             </span>
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
+      {/* Where the topic stands, in the learner's own word (item 7, 28 Nov). Time never sets Completed. */}
+      {node.type === 'topic' && node.kind !== 'milestone' && <TopicStatusPicker node={node} onChanged={onChanged} />}
       {/* One next step, from its own record, as an action. */}
       {step && (
         <div className="flex items-center gap-2.5 rounded-xl border px-3 py-2" style={{ borderColor: 'color-mix(in oklch, var(--map-note) 35%, transparent)', background: 'color-mix(in oklch, var(--map-note) 7%, transparent)' }} data-next-step={step.kind}>
@@ -695,6 +729,7 @@ function peekLines(n: MapNode, path: string[], now: Date): { title: string; wher
   if (n.type === 'topic') {
     const st = topicState(n)
     facts.push(n.level && n.masteryPercent !== null && st !== 'organising' ? `${STATE_LABEL[st]} · ${n.masteryPercent}% (your own estimate)` : STATE_LABEL[st])
+    if (n.kind !== 'milestone') facts.push(STATUS_LABEL[statusOf(n)])
     if (n.reviewDue) facts.push('Review due')
     if (n.lastStudiedAt) facts.push(`Last studied ${ago(n.lastStudiedAt)}${isRecent(n, now) ? '' : ''}`)
     facts.push(`${plural(n.sessions, 'session')} · ${plural(n.notes, 'note')} · ${plural(n.resources, 'saved page')}`)
@@ -737,6 +772,8 @@ function TopicMarks({ n, detail, lens, now, at }: { n: Extract<MapNode, { type: 
       {/* On the top edge, left of the card's own + button. */}
       {n.reviewDue && chip(x0 + 12, 'Review due', 'var(--map-note)')}
       {lens === 'learning' && isRecent(n, now) && chip(x0 + 12 + (n.reviewDue ? 76 : 0), 'Recent', 'var(--nova)')}
+      {/* The Learning lens says where each topic stands (item 7, 28 Nov). */}
+      {lens === 'learning' && n.kind !== 'milestone' && <text x={x0 + 18} y={at.y + h / 2 + 15} fontSize={10.5} fontWeight={500} className="pointer-events-none" style={{ fill: statusOf(n) === 'completed' ? 'var(--nova)' : 'var(--map-meta, currentColor)' }} data-lens-status={statusOf(n)}>{STATUS_LABEL[statusOf(n)]}</text>}
       {lens === 'gaps' && gaps.length > 0 && (
         <>
           <rect className="pointer-events-none" x={x0 - 6} y={y0 - 6} width={w + 12} height={h + 12} rx={19} fill="none" stroke="var(--map-note)" strokeWidth={1.6} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
@@ -779,7 +816,7 @@ export interface CardActs {
   pointerMove(e: React.PointerEvent<SVGGElement>): void
   pointerUp(e: React.PointerEvent<SVGGElement>): void
   pointerCancel(): void
-  click(id: string): void
+  click(id: string, clicks?: number): void
   dbl(id: string): void
   focus(id: string): void
   hover(id: string | null): void
@@ -828,12 +865,14 @@ const MapCard = memo(function MapCard({ n, x: px, y: py, detail, kids, inside, c
         'data-node-id': n.id,
         onPointerDown: (e: React.PointerEvent<SVGGElement>) => a().pointerDown(e, n.id), onPointerMove: (e: React.PointerEvent<SVGGElement>) => a().pointerMove(e),
         onPointerUp: (e: React.PointerEvent<SVGGElement>) => a().pointerUp(e), onPointerCancel: () => a().pointerCancel(),
-        onClick: () => a().click(n.id), onDoubleClick: () => a().dbl(n.id), onFocus: () => a().focus(n.id),
+        onClick: (e: React.MouseEvent<SVGGElement>) => a().click(n.id, e.detail), onDoubleClick: () => a().dbl(n.id), onFocus: () => a().focus(n.id),
         onPointerEnter: () => a().hover(n.id), onPointerLeave: () => a().hover(null),
       } : { 'aria-hidden': true, 'data-copy-of': n.id })}
       className={cn('subject-tone group/card outline-none', live ? 'map-card' : 'map-copy pointer-events-none', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
       data-node={n.type} data-depth-thickness={th}
     >
+      {/* Far out a card is a plain pill: its name shows on hover and focus. */}
+      {live && detail === 0 && <title>{n.label}</title>}
       <g className={live ? arriving : undefined} style={live && arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
         <CardGround n={n} detail={detail} at={at} />
         <g className={cn('map-lift', copy || dragging ? 'map-raise' : undefined)} transform={LIFT_SPLIT}>
@@ -914,6 +953,7 @@ const MapCard = memo(function MapCard({ n, x: px, y: py, detail, kids, inside, c
 })
 
 export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void; pendingScope?: string | null }) {
+  const router = useRouter()
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
   // Branches folded away: what hangs from these cards is not drawn.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -1520,7 +1560,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
 
   // Shows the card's details, keeping it selected.
   // readable: brought in at least to the zoom where a card's title and facts
-  // show (overview.ts detailAt 2), never pulled further out than it is.
+  // show (lod.ts close tier), never pulled further out than it is.
   const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean; readable?: boolean } = {}) => {
     setSelected(id)
     lastChosen.current = id
@@ -1835,7 +1875,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       case 'explore':
         if (!target) { if (onCanvas) { act(); say('Select a card first: find it with / or move to it with the arrow keys.') } return }
         act()
-        switch (enterAction(target, { exploring: focus, explorable: id => canExplore(tree, id) })) {
+        switch (enterAction(target, { exploring: focus, explorable: id => canExplore(tree, id), opens: id => openHrefOf(byId.get(id)) !== null })) {
+          case 'open': router.push(openHrefOf(byId.get(target))!); return
           case 'already': say(`You are exploring ${byId.get(target)?.label ?? 'this card'}. U goes up a level.`); return
           // Nothing inside: no empty map. Its details instead, and why.
           case 'details': select(target); say(`Nothing is inside ${byId.get(target)?.label ?? 'this card'} to explore; its details are open.`); return
@@ -1873,7 +1914,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // subjects' names (drawn at a readable size); then titles; then facts.
   // Deferred: crossing a threshold redraws every card's face, which on a large
   // map is a long frame. The zoom itself goes first and the faces follow.
-  const detail: CardDetail = useDeferredValue(detailAt(t.k))
+  // The tier (lod.ts): from a card's width on screen, with hysteresis so a
+  // zoom resting near a threshold never flickers. Far and mid draw the cards'
+  // shapes (names over them, inside each card); close draws the full faces.
+  const tierRef = useRef<Tier | null>(null)
+  const tierNow = tierAtZoom(t.k, tierRef.current)
+  tierRef.current = tierNow
+  const tier: Tier = useDeferredValue(tierNow)
+  const detail: CardDetail = tier === 'close' ? 2 : 0
   const textScale = 1 / Math.max(t.k, 0.0001)
   // "Recent" is judged against when the map was read.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- read again with each new reading of the map
@@ -2018,14 +2066,21 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const cardActs = useRef<CardActs | null>(null)
   cardActs.current = {
     pointerDown: onCardPointerDown, pointerMove: onCardPointerMove, pointerUp: onCardPointerUp, pointerCancel: onCardPointerCancel,
-    click: id => {
+    click: (id, clicks) => {
       if (swallowClick.current) { swallowClick.current = false; return }
       pendingSelect.current = null
       lastChosen.current = id
-      if (selected === id) { setDetailOpen(o => !o); return }
+      const did = clickAction(selected, id, clicks ?? 1)
+      if (did === 'keep') return
+      if (did === 'toggle') { setDetailOpen(o => !o); return }
       select(id)
     },
-    dbl: id => { if (tree.children.get(id)?.length) explore(id) },
+    // Double-click: a note or saved page opens; a card with something inside is explored.
+    dbl: id => {
+      const href = openHrefOf(byId.get(id))
+      if (href) { router.push(href); return }
+      if (tree.children.get(id)?.length) explore(id)
+    },
     focus: id => { lastChosen.current = id },
     hover: hoverCard,
     chip: id => { if (canExplore(tree, id)) explore(id) },
@@ -2086,7 +2141,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     }
     return out
   }, [drawn, cover, glideCover, placed, selected, hover, dragAt])
-  const landingDetail = glideCover ? Math.min(detail, detailAt(glideCover.k)) as CardDetail : detail
+  const landingDetail = glideCover ? Math.min(detail, tierAtZoom(glideCover.k) === 'close' ? 2 : 0) as CardDetail : detail
   const nodeLayer = useMemo(() => shownCards.map(({ n, landing }) => {
     const card = cardPropsOf(n)
     if (!card) return null
@@ -2108,8 +2163,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const near = drawn.filter(n => (neighbourIds.has(n.id) || n.id === selected) && n.id !== focusId)
     const self = byId.get(focusId!)
     const copies = [...near.map(n => cardPropsOf(n, n.id === selected ? 'focus' : 'near')), self ? cardPropsOf(self, 'focus') : null]
-    return <>{sugg}{copies.map(p => (p ? <MapCard key={`copy-${p.n.id}`} {...p} /> : null))}{rings}</>
-  }, [focusOn, focusId, selected, neighbourIds, allLines, drawRing, drawSuggestion, suggestions, overviewOn, drawn, byId, cardPropsOf])
+    // Far and mid, the raised copies carry their names too (inside each card),
+    // or the lit cards would cover the names drawn under them.
+    const ks = 1 / Math.max(t.k, 0.0001)
+    const named = tier === 'close' ? [] : planCardLabels([...near, ...(self ? [self] : [])].flatMap(n => {
+      const p = placed.at.get(n.id)
+      return p ? [{ id: n.id, x: p.x, y: p.y, text: n.label, kind: n.type === 'subject' ? 'subject' as const : 'topic' as const, rank: 0, card: CARD[n.type] }] : []
+    }), t.k, 'mid')
+    return <>{sugg}{copies.map(p => (p ? <MapCard key={`copy-${p.n.id}`} {...p} /> : null))}{rings}
+      {named.map(l => (
+        <text key={`focus-name-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={600} data-focus-name
+          className="pointer-events-none fill-foreground" style={{ paintOrder: 'stroke', stroke: 'var(--card)', strokeWidth: 2.5 * ks, strokeLinejoin: 'round' }}>{l.text}</text>
+      ))}</>
+  }, [focusOn, focusId, selected, neighbourIds, allLines, drawRing, drawSuggestion, suggestions, overviewOn, drawn, byId, cardPropsOf, tier, t.k, placed])
   // The lines it lights, for the focus canvas over the scrim.
   const focusScene = useMemo<Scene>(() => {
     const out = { strokes: [] as StrokePrim[], dots: [] as DotPrim[], movers: [] as MoverPrim[] }
@@ -2195,7 +2261,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // Far out, which subjects' regions are wide enough for a plate (name and
   // facts), and where each plate sits on screen (at the map's origin).
   const plated = useMemo(() => {
-    const out = new Map<string, Blocker>()
+    const out = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>()
     if (detail !== 0) return out
     for (const r of regions) {
       const wPx = r.w * t.k - 20, hPx = r.h * t.k
@@ -2220,7 +2286,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const wPx = r.w * t.k - 20, hPx = r.h * t.k
           if (wPx < 70 || hPx < 34) return null
           const title = short(s.label, Math.max(6, Math.floor((wPx - 30) / 8.8)))
-          const line = hPx >= 76 ? short(facts, Math.max(8, Math.floor((wPx - 20) / 6.4))) : null
+          // Far out, a header only: what the area is. Its stats come back at mid.
+          const line = tier !== 'far' && hPx >= 76 ? short(facts, Math.max(8, Math.floor((wPx - 20) / 6.4))) : null
           const plateW = Math.min(wPx, Math.max(title.length * 8.8 + 34, (line?.length ?? 0) * 6.4 + 22))
           const plateH = line ? 48 : 30
           return (
@@ -2236,7 +2303,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         })()}
       </g>
     )
-  })), [regions, byId, detail, t.k, zoomToRegion, tree, explore, overviewOn])
+  })), [regions, byId, detail, tier, t.k, zoomToRegion, tree, explore])
 
   // Between subjects, in the overview: the [[links]] written from one subject's
   // items to another's, one line per pair with how many. Only links on record.
@@ -2316,28 +2383,31 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     )
   }), [markers, byId, focusId, detail, goOutside])
 
-  // Far out, names over the cards at a fixed size on screen (far-labels.ts,
-  // founder review #02): every subject without a plate and every topic drawn,
-  // most important first, each only where it overlaps no other name or plate.
-  // Planned once per resting zoom; a pan changes nothing here.
+  // Names over the cards (lod.ts, far-labels.ts): always inside their card.
+  // Far: only subject headers; mid: every card, one line; close: the faces.
+  // The selected card, its connections and search hits are named at every tier.
+  const alwaysNamed = useMemo(() => new Set<string>([...(selected ? [selected] : []), ...(neighbourIds ?? []), ...found.map(f => f.id)]), [selected, neighbourIds, found])
   const farLabels = useMemo(() => {
-    if (detail !== 0) return null
+    if (tier === 'close') return null
     const candidates: LabelCandidate[] = []
     for (const n of drawn) {
       const p = placed.at.get(n.id)
       if (!p) continue
       const subject = n.type === 'subject'
-      // A subject with a plate is named there; its own card still carries its name when wide enough.
       candidates.push({ id: n.id, x: p.x, y: p.y, text: n.label, kind: subject ? 'subject' : 'topic', rank: (subject ? 0 : n.type === 'topic' ? 100 : 200) + depthOf(n.id) * 10, card: CARD[n.type], insideOnly: plated.has(n.id) || (!subject && n.type !== 'topic') })
     }
     const ks = 1 / Math.max(t.k, 0.0001)
-    return planFarLabels(candidates, t.k, [...plated.values()]).map(l => (
-      <text key={`far-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={l.kind === 'subject' ? 650 : 500} data-far-label={l.inside ? 'inside' : l.kind}
-        className="map-far-label pointer-events-none fill-foreground" style={{ fontFamily: l.kind === 'subject' ? 'var(--font-display)' : undefined, paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: 4 * ks, strokeLinejoin: 'round' }}>
-        {l.text}
-      </text>
-    ))
-  }, [detail, drawn, plated, placed, t.k, depthOf])
+    return (
+      <g key={`names-${tier}`} className="map-tier-fade" style={{ ['--tier-fade' as string]: `${LOD.fadeMs}ms` }} data-map-tier={tier}>
+        {planCardLabels(candidates, t.k, tier, alwaysNamed).map(l => (
+          <text key={`far-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={l.kind === 'subject' ? 650 : 500} data-far-label={l.inside ? 'inside' : 'header'}
+            className="map-far-label pointer-events-none fill-foreground" style={{ fontFamily: l.kind === 'subject' ? 'var(--font-display)' : undefined, paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: (l.inside ? 2.5 : 4) * ks, strokeLinejoin: 'round' }}>
+            {l.text}
+          </text>
+        ))}
+      </g>
+    )
+  }, [tier, drawn, plated, placed, t.k, depthOf, alwaysNamed])
 
   // ── Around the canvas ──────────────────────────────────────────────────────
   const saver = layout.saver
@@ -2730,7 +2800,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {(view.unconnected > 0 || view.notShown.notes > 0 || view.notShown.resources > 0) && (
             <p className="hidden rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] text-foreground/70 backdrop-blur-sm md:block">
               {view.unconnected > 0 && <>{view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
-              {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
+              {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Some older notes and pages are not drawn.</>}
             </p>
           )}
         </div>

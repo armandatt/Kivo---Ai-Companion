@@ -43,7 +43,9 @@ import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
 import { likeLiteral, normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
-import { ABANDONED_STATUS, pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
+import { markTopicStarted } from "../product/topic-status";
+import { AUTO_SAVED_RUNNING, UNCONFIRMED_STATUS } from "../engines/session-clock";
+import { pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionClosure, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
 import type { SessionEvidence, SessionExecutionReport, SessionOutcome } from "../types/session.types";
@@ -372,6 +374,7 @@ export async function openStudySession(
   // with its subject, and that subject is the authority. Only a start with
   // no subject (a chat turn) is resolved from the topic.
   const match = !planned.subjectId && topic ? await resolveTopicSubject(topic, subjects) : null;
+  let started: { subjectId: string; topicName: string } | null = null;
   await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
 
@@ -383,12 +386,15 @@ export async function openStudySession(
     const stale = open ? abandonmentOf(open, now) : null;
     if (open && !(stale && await abandonRow(tx, open, stale))) return;
 
+    const subjectId = planned.subjectId ?? match?.subjectId ?? null;
+    const topicName = topic ? (match?.resolvedName ?? normalizeTopicName(topic)) : null;
+    if (subjectId && topicName) started = { subjectId, topicName };
     await tx.novaStudySession.create({
       data: {
         profileId,
-        subjectId:       planned.subjectId ?? match?.subjectId ?? null,
+        subjectId,
         // The topic's existing spelling when it is one the student already has.
-        topicName:       topic ? (match?.resolvedName ?? normalizeTopicName(topic)) : null,
+        topicName,
         plannedDurationMinutes: planned.durationMinutes ?? null,
         currentFocus:    planned.label ?? null,
         durationMinutes: 0,
@@ -397,7 +403,11 @@ export async function openStudySession(
         sessionDate:     now,
       },
     });
-  }).catch(err => console.error("[nova:session] start failed", err));
+  }).catch(err => { started = null; console.error("[nova:session] start failed", err); });
+  // Starting a session on a topic not yet started moves it to in progress
+  // (topic-status.ts). Never to completed.
+  const s0 = started as { subjectId: string; topicName: string } | null;
+  if (s0) await markTopicStarted(s0.subjectId, s0.topicName, now).catch(() => false);
 }
 
 // A running session's length, changed by the learner: longer, shorter, or 0
@@ -447,6 +457,55 @@ export async function setSessionTopic(profileId: string, sessionId: string, subj
   return done.count === 1 ? topic.name : null;
 }
 
+// A finished session with no topic, filed afterwards (bug batch 28 Nov, items
+// 3/4). Conditional on it being this learner's, completed, and still on no
+// topic, so a session is filed once and an earlier choice is never replaced.
+// Its time, report and every other field stay as they are.
+export async function fileEndedSession(profileId: string, sessionId: string, subjectId: string, topicName: string): Promise<string | null> {
+  const topic = await prisma.novaTopicMastery.findFirst({
+    where:  { subjectId, subject: { profileId }, archivedAt: null, name: { equals: likeLiteral(topicName.trim()), mode: "insensitive" } },
+    select: { name: true },
+  });
+  if (!topic) return null;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: "completed", topicName: null },
+    data:  { subjectId, topicName: topic.name },
+  });
+  if (done.count === 1) await markTopicStarted(subjectId, topic.name).catch(() => false);
+  return done.count === 1 ? topic.name : null;
+}
+
+// An End more than two hours past the plan (owner decision 28 Nov, PR #113
+// B.1): the End is recorded in full (report, mastery, Learning DNA), then
+// its time waits for the learner: marked unconfirmed, it is in none of
+// Progress's numbers (nor Learning DNA's) until they confirm or trim it.
+export async function markUnconfirmed(profileId: string, sessionId: string, now: Date): Promise<boolean> {
+  const row = await prisma.novaStudySession.findFirst({ where: { id: sessionId, profileId, status: "completed" }, select: { executionReport: true } });
+  if (!row) return false;
+  const report = (row.executionReport && typeof row.executionReport === "object" ? row.executionReport : {}) as Record<string, unknown>;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: "completed" },
+    data:  { status: UNCONFIRMED_STATUS, executionReport: { ...report, autoClosed: AUTO_SAVED_RUNNING, endedBy: "learner", awaitingConfirm: true } as object },
+  });
+  if (done.count === 1) await refreshLearningDna(profileId, now).catch(err => console.error("[nova:dna] refresh failed", err));
+  return done.count === 1;
+}
+
+// The learner's word on an unconfirmed session's time: all of it, or less.
+// Then it counts like any session. Only theirs, only once, never more than recorded.
+export async function confirmSessionTime(profileId: string, sessionId: string, minutes: number): Promise<{ minutes: number } | null> {
+  const row = await prisma.novaStudySession.findFirst({ where: { id: sessionId, profileId, status: UNCONFIRMED_STATUS }, select: { durationMinutes: true, executionReport: true } });
+  if (!row) return null;
+  const kept = Math.max(0, Math.min(row.durationMinutes, Math.round(minutes)));
+  const report = (row.executionReport && typeof row.executionReport === "object" ? row.executionReport : {}) as Record<string, unknown>;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: UNCONFIRMED_STATUS },
+    data:  { status: "completed", durationMinutes: kept, executionReport: { ...report, confirmed: true, recordedMinutes: row.durationMinutes } as object },
+  });
+  if (done.count === 1) await refreshLearningDna(profileId, new Date()).catch(err => console.error("[nova:dna] refresh failed", err));
+  return done.count === 1 ? { minutes: kept } : null;
+}
+
 // ── Sessions nobody came back to ──────────────────────────────────────────────
 // The rule is engines/session-clock.ts (sessionAbandonment). These are its
 // only writers: the tick's sweep, a Start over a session left open, and a
@@ -476,12 +535,18 @@ async function abandonRow(
   row:     AbandonRow,
   verdict: Abandonment,
 ): Promise<boolean> {
+  // Paused too long: saved as completed with the time up to the pause, marked
+  // so the learner is told. Left running: abandoned (engines/session-clock.ts).
+  const closure = sessionClosure(verdict);
   const closed = await db.novaStudySession.updateMany({
     where: { id: row.id, status: row.status, pausedAt: row.pausedAt },
-    data:  { status: ABANDONED_STATUS, durationMinutes: verdict.countedMinutes },
+    data:  {
+      status: closure.status, durationMinutes: closure.durationMinutes,
+      ...(closure.autoClosed ? { executionReport: { autoClosed: closure.autoClosed, pausedAt: row.pausedAt?.toISOString() ?? null } } : {}),
+    },
   });
   if (closed.count === 1) {
-    console.log(JSON.stringify({ layer: "nova:session", sessionId: row.id, profileId: row.profileId, outcome: "abandoned", reason: verdict.reason, countedMinutes: verdict.countedMinutes }));
+    console.log(JSON.stringify({ layer: "nova:session", sessionId: row.id, profileId: row.profileId, outcome: closure.autoClosed ? "auto_saved" : "abandoned", reason: verdict.reason, minutes: closure.durationMinutes }));
   }
   return closed.count === 1;
 }

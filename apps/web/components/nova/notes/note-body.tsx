@@ -6,6 +6,7 @@
 // Everything is built as React elements: nothing in a note is ever treated as
 // HTML, so a note cannot run code or change the page.
 
+import { readingClasses, type Reading } from './note-reading'
 import Link from 'next/link'
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
@@ -318,8 +319,10 @@ function PaperHeader({ card, title, nav, span, onRead }: { card: PaperCard; titl
   )
 }
 
-export function NoteBody({ body, links, serif = false, cite, compact = false, title, onReadPdf, onToggleCheck }: {
+export function NoteBody({ body, links, serif = false, reading, cite, compact = false, title, onReadPdf, onToggleCheck }: {
   body: string; links: NoteLinkRef[]; serif?: boolean
+  // The learner's reading setting (note-reading.ts). Given: it sets the face, size and measure.
+  reading?: Reading
   // Ticks a checklist item (the note's reader and preview); without it, boxes are shown only.
   onToggleCheck?: ToggleCheck
   // Opens a paper's PDF beside the note instead of in a new tab.
@@ -360,7 +363,7 @@ export function NoteBody({ body, links, serif = false, cite, compact = false, ti
   } else content = render(blocks, 'n', resolve)
   return (
     <div
-      className={`note-prose break-words [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h2]:after:hidden [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : serif ? 'font-serif text-[17px] leading-[1.8] [&_p]:my-4' : 'text-[15.5px] leading-[1.75] [&_p]:my-3.5'}`}
+      className={`note-prose break-words [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h2]:after:hidden [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : reading ? readingClasses(reading) : serif ? 'font-serif text-[17px] leading-[1.8] [&_p]:my-4' : 'text-[15.5px] leading-[1.75] [&_p]:my-3.5'}`}
       data-note-body
     >
       <ToggleContext.Provider value={onToggleCheck ?? null}>{content}</ToggleContext.Provider>

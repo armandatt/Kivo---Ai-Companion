@@ -1,10 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import type { NovaSessionOutcome, NovaSessionResponse, NovaSessionView } from '@repo/api/nova/product/today.types'
+import type { NovaAutoSavedSession, NovaSessionOutcome, NovaSessionResponse, NovaSessionView } from '@repo/api/nova/product/today.types'
 import { fetchSession, sendSessionCommand } from './nova-api'
 
 const SYNC_MS = 30_000
+// Auto-saved sessions the learner has already been told about (dismissed), by id.
+const SEEN_SAVED = 'kivo:auto-saved-seen'
+function seenSaved(): string[] { try { return JSON.parse(localStorage.getItem(SEEN_SAVED) ?? '[]') as string[] } catch { return [] } }
 
 type Synced = { session: NovaSessionView | null; at: number }
 type Ended  = NonNullable<Extract<NovaSessionResponse, { ok: true }>['ended']>
@@ -19,12 +22,17 @@ export function useNovaSession() {
   const [error, setError]     = useState<string | null>(null)
   const [blocked, setBlocked] = useState<string | null>(null)   // this account cannot have a session
   const [now, setNow]         = useState(() => Date.now())
+  // A paused session the server saved for the learner (item 1, 28 Nov): shown
+  // until dismissed, once per session.
+  const [autoSaved, setAutoSaved] = useState<NovaAutoSavedSession | null>(null)
 
   const apply = useCallback((res: NovaSessionResponse) => {
     if (res.ok) {
       setSynced({ session: res.session, at: Date.now() })
       setNow(Date.now())
       if (res.ended) setEnded(res.ended)
+      if (res.session) setAutoSaved(null)
+      else if (res.autoSaved && !seenSaved().includes(res.autoSaved.sessionId)) setAutoSaved(res.autoSaved)
       setError(null)
       return
     }
@@ -102,10 +110,27 @@ export function useNovaSession() {
     return res.ok
   }, [apply])
 
+  const dismissAutoSaved = useCallback(() => {
+    setAutoSaved(a => {
+      if (a) { try { localStorage.setItem(SEEN_SAVED, JSON.stringify([...seenSaved(), a.sessionId].slice(-20))) } catch { /* storage off */ } }
+      return null
+    })
+  }, [])
+
+  // A finished session with no topic, filed afterwards (items 3/4, 28 Nov).
+  const fileSession = useCallback(async (sessionId: string, subjectId: string, topicName: string) => {
+    setPending('topic')
+    const res = await sendSessionCommand({ action: 'file', sessionId, subjectId, topicName })
+    setPending(null)
+    // The asking card says "Filed on …" itself; the ended record stays what the
+    // End recorded (filing later moves no mastery, so it claims none).
+    return res.ok && Boolean(res.filed)
+  }, [])
+
   const session = synced?.session ?? null
   const elapsedSeconds = session
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, quickStart, setDetails, setTopic, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, autoSaved, dismissAutoSaved, pending, error, blocked, command, end, setLength, quickStart, setDetails, setTopic, fileSession, retry: sync }
 }

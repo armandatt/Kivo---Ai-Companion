@@ -47,6 +47,8 @@ export const USAGE_FEATURES = [
   "telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding", "telegram_first_use",
   "extension_ask_nova", "extension_agent", "extension_intent", "capture_placement",
   "saved_page_processing", "saved_page_retry", "scheduled_nova_message",
+  // Today's plan Nova prepares at check-in or on the first visit (PR #113 B.3): summed apart.
+  "prepared_plan",
   "rex", "other",
 ] as const;
 export type UsageFeature = typeof USAGE_FEATURES[number];

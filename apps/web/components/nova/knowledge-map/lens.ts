@@ -34,6 +34,12 @@ export function topicState(t: Topic): TopicState {
 export const isRecent = (t: Topic, now: Date) =>
   !!t.lastStudiedAt && now.getTime() - new Date(t.lastStudiedAt).getTime() <= RECENT_DAYS * DAY_MS
 
+// Where a topic stands (bug batch 28 Nov, item 7): the learner's word, or
+// implied by its sessions for an API that does not send it.
+export type TopicStatus = 'not_started' | 'in_progress' | 'completed'
+export const STATUS_LABEL: Record<TopicStatus, string> = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed' }
+export const statusOf = (t: Topic): TopicStatus => t.status ?? (t.sessions > 0 ? 'in_progress' : 'not_started')
+
 // Why a topic is a gap: things the learner can act on, each from the record.
 export type GapReason = 'unstudied' | 'review_due' | 'weak' | 'nothing_written'
 export const GAP_LABEL: Record<GapReason, string> = {
@@ -50,8 +56,11 @@ export function gapsOf(t: Topic): GapReason[] {
   if (!studiable(t)) return []
   const out: GapReason[] = []
   if (t.reviewDue) out.push('review_due')
-  if (t.sessions === 0) out.push('unstudied')
-  else if (t.level === 'weak') out.push('weak')
+  // A topic the learner marked completed is not "not studied" or "weak" to them; a review due still is.
+  if (statusOf(t) !== 'completed') {
+    if (t.sessions === 0) out.push('unstudied')
+    else if (t.level === 'weak') out.push('weak')
+  }
   if (t.notes === 0 && t.resources === 0) out.push('nothing_written')
   return out
 }
@@ -62,7 +71,7 @@ export function gapsOf(t: Topic): GapReason[] {
 export type Lens = 'structure' | 'learning' | 'gaps'
 export const LENSES: Array<{ id: Lens; label: string; hint: string }> = [
   { id: 'structure', label: 'Structure', hint: 'Everything, as it is filed and linked' },
-  { id: 'learning', label: 'Learning', hint: 'Topics by how far you have come; reviews due and recent study marked' },
+  { id: 'learning', label: 'Learning', hint: 'Topics by how far you have come and where you say they stand (not started, in progress, completed); reviews due and recent study marked' },
   { id: 'gaps', label: 'Gaps', hint: 'Topics to act on: reviews due, not studied, weak, or nothing written' },
 ]
 export const nextLens = (l: Lens): Lens => LENSES[(LENSES.findIndex(x => x.id === l) + 1) % LENSES.length]!.id

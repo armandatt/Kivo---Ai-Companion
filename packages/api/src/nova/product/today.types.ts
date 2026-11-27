@@ -242,7 +242,14 @@ export type NovaSessionCommand =
   // What a session with no topic was on (Quick Focus, a task with no topic),
   // said before it ends: one of the learner's own topics, so the session
   // counts toward that topic like any other. Refused when it already has one.
-  | { action: "set_topic"; subjectId: string; topicName: string };
+  | { action: "set_topic"; subjectId: string; topicName: string }
+  // A FINISHED session with no topic, filed afterwards (bug batch 28 Nov,
+  // items 3/4): from the end screen, the saved notice or Progress. Only the
+  // learner's own completed session with no topic yet; never re-files one.
+  | { action: "file"; sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" }
+  // An unconfirmed session's time (ran more than two hours past its plan):
+  // confirmed whole or trimmed. Then it counts (PR #113 B.1).
+  | { action: "confirm_time"; sessionId: string; minutes: number };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
@@ -272,6 +279,30 @@ export type NovaSessionResponse =
         // session is kept with the answer the learner gave, but it changed
         // nothing in Knowledge and is not counted by Progress.
         counted: boolean;
+        // True when it ran more than two hours past its plan: its time waits
+        // for the learner to confirm or trim it (confirm_time) before it counts.
+        needsConfirm?: boolean;
       } | null;
+      // The learner's latest session, when it was paused and left past the
+      // limit and so was saved for them (bug batch 28 Nov, item 1). Set until
+      // they start another session; the page shows it once per session.
+      autoSaved?: NovaAutoSavedSession | null;
+      // Set by "file": the finished session and the topic it is now on.
+      filed?: { sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" } | null;
     }
   | { ok: false; error: NovaSessionError; message: string };
+
+export interface NovaAutoSavedSession {
+  sessionId: string;
+  // What it was on: its topic, or its Quick Focus title.
+  label:     string | null;
+  topicName: string | null;
+  minutes:   number;
+  // False under ten minutes: kept, but not in Progress's numbers.
+  counted:   boolean;
+  // When it was paused (ISO), the moment its clock stopped.
+  pausedAt:  string | null;
+  message:   string;
+  // Its time waits for the learner to confirm or trim it (confirm_time).
+  needsConfirm?: boolean;
+}

@@ -46,6 +46,8 @@ export interface StudyTopic {
   // Archived (topic-archive.ts): out of the active lists, row and history kept.
   // Its name is still taken in its subject; adding it again restores it.
   archived?:  boolean;
+  // Not started, in progress or completed (topic-status.ts). Absent on a topic not yet saved.
+  status?:    "not_started" | "in_progress" | "completed";
 }
 
 export interface StudySubject {

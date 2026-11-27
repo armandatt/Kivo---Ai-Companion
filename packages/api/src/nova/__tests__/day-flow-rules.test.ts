@@ -1,7 +1,7 @@
 // Today's flow (day-flow-rules.ts): what each change does to the learner's
 // list for the day, and what it never does. Pure.
 
-import { applyFlowOps, clockMinutes, draftFrom, fitTo, ordered, scheduleOf, type ApplyContext, type FlowState } from "../product/day-flow-rules";
+import { applyFlowOps, clockMinutes, draftFrom, fitTo, ordered, planPicks, scheduleOf, topicScore, MIN_PLAN_ITEMS, type ApplyContext, type FlowState, type TopicSignal } from "../product/day-flow-rules";
 import type { FlowItem, NewFlowItem } from "../product/day-flow.types";
 
 const TASKS: Record<string, { title: string; minutes: number | null }> = { t1: { title: "Assignment 3", minutes: 60 }, t2: { title: "Startup pitch", minutes: 45 } };
@@ -132,5 +132,39 @@ describe("the schedule view", () => {
     ]);
     expect(clockMinutes("9:30")).toBeNull();
     expect(ordered([item("l", { status: "later" }), item("p")]).map(i => i.id)).toEqual(["p", "l"]);
+  });
+});
+
+
+// Bug batch 28 Nov, item 12: Nova's plan often had one item. A thin day is
+// filled from the learner's record (reviews due, exams, weak or in-progress
+// topics, recent notes, task dates and priority) to at least three items.
+describe("REGRESSION item 12: a day Nova plans has at least three items from the record", () => {
+  const topic = (over: Partial<TopicSignal>): TopicSignal => ({ topicId: "x", topicName: "X", subjectName: "OS", reviewDue: false, mastery: 0, reviewCount: 0, status: "not_started", examInDays: null, notedDaysAgo: null, ...over });
+  const topics: TopicSignal[] = [
+    topic({ topicId: "a", topicName: "Paging", reviewDue: true, status: "in_progress", reviewCount: 3, mastery: 0.6 }),
+    topic({ topicId: "b", topicName: "Deadlocks", examInDays: 4 }),
+    topic({ topicId: "c", topicName: "Scheduling", subjectName: "OS" }),
+    topic({ topicId: "d", topicName: "Joins", subjectName: "DBMS", status: "in_progress", reviewCount: 2, mastery: 0.3 }),
+    topic({ topicId: "e", topicName: "Done one", subjectName: "DBMS", status: "completed" }),
+  ];
+  it("ranks a review due and a near exam first, gives every pick a reason, never a completed topic, at most two per subject", () => {
+    const picks = planPicks({ tasks: [], topics }, { taskIds: new Set(), topicIds: new Set() });
+    expect(picks.map(p => p.title)).toEqual(["Paging", "Joins", "Deadlocks"]);
+    expect(picks.every(p => p.why.length > 0)).toBe(true);
+    expect(picks.find(p => p.title === "Done one")).toBeUndefined();
+    expect(topicScore(topic({ status: "completed", reviewDue: true }))?.why).toBe("its review is due");
+  });
+  it("one urgent task is no longer a whole day: the draft fills to three, saying why", () => {
+    let k = 0;
+    const d = draftFrom({ tasks: [{ id: "t1", title: "Essay", status: "todo", dueInDays: 0, estimatedMinutes: 30, subjectName: null, topicName: null, priority: null }], blocks: [], budgetMinutes: 120, now: "2026-11-28T08:00:00Z", topics }, () => `d${++k}`)!;
+    expect(d.items.length).toBeGreaterThanOrEqual(MIN_PLAN_ITEMS);
+    expect(d.items[0]!.title).toBe("Essay");
+    expect(d.reasons.join(" ")).toMatch(/Paging \(its review is due/);
+  });
+  it("without topic signals (an older caller) the draft is as before", () => {
+    let k = 0;
+    const d = draftFrom({ tasks: [{ id: "t1", title: "Essay", status: "todo", dueInDays: 0, estimatedMinutes: 30, subjectName: null, topicName: null, priority: null }], blocks: [], budgetMinutes: 120, now: "x" }, () => `d${++k}`)!;
+    expect(d.items.length).toBe(1);
   });
 });

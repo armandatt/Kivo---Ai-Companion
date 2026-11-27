@@ -266,9 +266,13 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // browser-agent.ts reads saved pages through the library (loadLibrary) as
     // material for the learner's own task in the extension; nothing it reads
     // becomes evidence or state (13 Nov).
+    // plan-context.ts names the pages saved this week (title, filing) to the
+    // planning model for "Propose a plan", through recentSavedPages only; it
+    // computes nothing about the learner and stores nothing (28 Nov, item 12).
     expect(readers.sort()).toEqual(["product/browser-agent.ts", "product/focus-context.ts", "product/knowledge-map.ts",
         "product/knowledge-trash.ts", "product/learning-events.ts", "product/note-append.ts",
-        "product/note-assist.ts", "product/note-tutor.ts", "product/resource-processing.ts", "product/setup-edit.ts", "product/workspaces.ts"]);
+        "product/note-assist.ts", "product/note-tutor.ts", "product/plan-context.ts", "product/resource-processing.ts", "product/setup-edit.ts", "product/workspaces.ts"]);
+    expect(read("product/plan-context.ts")).toMatch(/import \{ recentSavedPages \} from "\.\/learning-events";/);
     expect(read("product/workspaces.ts")).toMatch(/import \{ unfileResourcesIn \} from "\.\/learning-events";/);
     expect(read("product/setup-edit.ts")).toMatch(/import \{ refileResourcesForTopic \} from "\.\/learning-events";/);
     const map = read("product/knowledge-map.ts");

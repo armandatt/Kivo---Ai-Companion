@@ -17,7 +17,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-// POST /api/nova/day/copilot  CopilotRequest
+// POST /api/nova/day/copilot  CopilotRequest ({ proposePlan: true }: "Propose a plan", item 12)
 // Nova on Today: one model call reads the message; code asks, or returns a
 // proposal (checked like the page's own changes, written nowhere) that is
 // applied only on the learner's yes (POST /api/nova/day { action: "approve" }),

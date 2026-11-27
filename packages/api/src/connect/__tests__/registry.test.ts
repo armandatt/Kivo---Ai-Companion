@@ -16,7 +16,7 @@ describe("Kivo Connect tool registry", () => {
   test("every spec'd tool exists", () => {
     const names = TOOLS.map(t => t.name);
     for (const n of ["get_my_profile", "list_workspaces", "get_workspace_context", "get_workspace_structure", "get_dashboard_summary",
-      "search_notes", "get_note", "create_note", "update_note", "delete_note", "move_note", "link_notes", "list_recent_notes",
+      "search_notes", "get_note", "create_note", "update_note", "restore_note_version", "set_topic_status", "delete_note", "move_note", "link_notes", "list_recent_notes",
       "get_knowledge_map", "add_knowledge_node", "update_knowledge_node", "connect_knowledge_nodes", "get_node_connections", "search_knowledge_nodes", "build_knowledge_map",
       "global_search", "find_related_content", "find_knowledge_gaps", "summarize_workspace", "recommend_connections", "analyze_knowledge",
       "capture_knowledge", "organize_workspace", "preview_knowledge_changes", "execute_knowledge_changes", "check_approval"]) expect(names).toContain(n);

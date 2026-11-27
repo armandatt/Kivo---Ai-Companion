@@ -33,8 +33,14 @@ export function sessionElapsedSeconds(session: SessionClock, now: Date): number 
 
 // ── A session nobody came back to ─────────────────────────────────────────────
 // A timer left running, or paused and forgotten, is not study. Past these
-// limits the session is closed as "abandoned": it stops holding back Nova's
-// messages, and none of the time it sat open is recorded as studied.
+// limits the session is closed: it stops holding back Nova's messages, and
+// none of the time it sat open is recorded as studied.
+//
+// How it is closed depends on why (sessionClosure below). A paused session is
+// one the learner stopped themselves: the time on its clock was studied, so
+// it is SAVED as a completed session with that time, never dropped (bug batch
+// 28 Nov, item 1). A timer left running past its plan is closed as
+// "abandoned", uncounted, as before.
 //
 //   running   study time reaches the planned length plus the grace period
 //   paused    one pause lasts ABANDON_PAUSED_MINUTES, however little was studied
@@ -60,6 +66,42 @@ export interface Abandonment {
   // What is kept as the session's length: the study time on its clock, never
   // more than the planned length (or the fallback).
   countedMinutes: number;
+  // The study time on its clock, whole minutes, with no cap: what a paused
+  // session is saved with (the clock stopped at the pause).
+  studiedMinutes: number;
+  // The length it was held to (abandonmentPlanMinutes).
+  plannedMinutes: number;
+}
+
+// The marker kept on a session saved by the sweep (executionReport.autoClosed),
+// so the learner can be told and the session told apart from one they ended.
+export const AUTO_SAVED_PAUSED = "paused_too_long";
+
+// Owner decision, 28 Nov (PR #113 B.1): a timer left running past its plan is
+// saved too, with the time on its clock. When it ran more than
+// CONFIRM_OVER_PLAN_MINUTES past the plan, that time is not believed yet: the
+// session is kept as "unconfirmed" (in none of Progress's numbers) until the
+// learner confirms or trims it (confirmSessionTime).
+export const CONFIRM_OVER_PLAN_MINUTES = 120;
+export const UNCONFIRMED_STATUS = "unconfirmed";
+export const AUTO_SAVED_RUNNING = "ran_past_plan";
+
+export type SessionClosure =
+  | { status: "completed"; durationMinutes: number; autoClosed: typeof AUTO_SAVED_PAUSED | typeof AUTO_SAVED_RUNNING }
+  | { status: typeof UNCONFIRMED_STATUS; durationMinutes: number; autoClosed: typeof AUTO_SAVED_RUNNING };
+
+// Whether `studied` minutes on a plan of `planned` is too far past it to count unasked.
+export const needsTimeConfirm = (studied: number, planned: number) => studied - planned > CONFIRM_OVER_PLAN_MINUTES;
+
+// What a session past its limit becomes. Paused: saved, with the time studied
+// up to the pause. Left running: saved with the time on its clock, or kept
+// unconfirmed when that is more than two hours past the plan. Nothing is
+// abandoned any more; Progress still leaves out anything under ten minutes.
+export function sessionClosure(verdict: Abandonment): SessionClosure {
+  if (verdict.reason === "paused_too_long") return { status: "completed", durationMinutes: verdict.studiedMinutes, autoClosed: AUTO_SAVED_PAUSED };
+  return needsTimeConfirm(verdict.studiedMinutes, verdict.plannedMinutes)
+    ? { status: UNCONFIRMED_STATUS, durationMinutes: verdict.studiedMinutes, autoClosed: AUTO_SAVED_RUNNING }
+    : { status: "completed", durationMinutes: verdict.studiedMinutes, autoClosed: AUTO_SAVED_RUNNING };
 }
 
 // The length a session is held to. A missing or unusable plan is the fallback.
@@ -79,12 +121,13 @@ export function sessionAbandonment(
 
   const planned = abandonmentPlanMinutes(session.plannedDurationMinutes);
   const study   = sessionElapsedSeconds(session, now);
-  const countedMinutes = Math.min(Math.floor(study / 60), planned);
+  const studiedMinutes = Math.floor(study / 60);
+  const countedMinutes = Math.min(studiedMinutes, planned);
 
   if (session.status === "paused" && session.pausedAt) {
     const paused = now.getTime() - session.pausedAt.getTime();
-    if (Number.isFinite(paused) && paused >= ABANDON_PAUSED_MINUTES * 60_000) return { reason: "paused_too_long", countedMinutes };
+    if (Number.isFinite(paused) && paused >= ABANDON_PAUSED_MINUTES * 60_000) return { reason: "paused_too_long", countedMinutes, studiedMinutes, plannedMinutes: planned };
   }
-  if (study >= (planned + ABANDON_GRACE_MINUTES) * 60) return { reason: "ran_past_plan", countedMinutes };
+  if (study >= (planned + ABANDON_GRACE_MINUTES) * 60) return { reason: "ran_past_plan", countedMinutes, studiedMinutes, plannedMinutes: planned };
   return null;
 }

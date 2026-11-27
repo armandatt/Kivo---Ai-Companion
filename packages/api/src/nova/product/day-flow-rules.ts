@@ -257,9 +257,86 @@ export interface DraftInputs {
   blocks: Array<{ topicId?: string; topicName: string; subjectName: string; durationMinutes: number; reasons: string[] }>;
   budgetMinutes: number | null;
   now: string;
+  // The learner's topics as their record stands (bug batch 28 Nov, item 12):
+  // what the draft fills from when tasks and the planner leave it thin.
+  // Absent: an older caller; the draft is as before.
+  topics?: TopicSignal[];
 }
 
 const DRAFT_TASKS_MAX = 4;
+
+// ── Filling a thin day from the learner's own record (item 12, 28 Nov) ──────
+// A day Nova drafts has at least MIN_PLAN_ITEMS items when the record holds
+// that many, and fills the day's time up to PLAN_ITEMS_MAX. Every item is a
+// task or topic of theirs, each with the reason it was chosen, from what is
+// on record: a review due, an exam coming, a topic in progress or weak, notes
+// written on it lately, a task's priority and date. Never a topic the learner
+// marked completed (unless its review is due). Pure and deterministic.
+export const MIN_PLAN_ITEMS = 3;
+export const PLAN_ITEMS_MAX = 6;
+export const TOPIC_PLAN_MINUTES = 25;
+const PER_SUBJECT_MAX = 2;
+
+export interface TopicSignal {
+  topicId: string; topicName: string; subjectName: string;
+  reviewDue: boolean; mastery: number; reviewCount: number;
+  status: "not_started" | "in_progress" | "completed";
+  examInDays: number | null;      // the subject's next exam or dated item
+  notedDaysAgo: number | null;    // the latest note filed on it
+}
+
+export type PlanPick =
+  | { kind: "task"; id: string; title: string; minutes: number | null; score: number; why: string }
+  | { kind: "topic"; id: string; title: string; subjectName: string; minutes: number; score: number; why: string };
+
+export function topicScore(t: TopicSignal): { score: number; why: string } | null {
+  if (t.status === "completed" && !t.reviewDue) return null;
+  const parts: Array<[number, string]> = [];
+  if (t.reviewDue) parts.push([100, "its review is due"]);
+  if (t.examInDays !== null && t.examInDays >= 0 && t.examInDays <= 21) parts.push([85 - t.examInDays * 3, t.examInDays === 0 ? "its exam is today" : `its exam is in ${t.examInDays} day${t.examInDays === 1 ? "" : "s"}`]);
+  if (t.reviewCount > 0 && t.mastery < 0.4) parts.push([60, "your estimate is still weak"]);
+  if (t.status === "in_progress") parts.push([50, "you're partway through it"]);
+  if (t.notedDaysAgo !== null && t.notedDaysAgo <= 3) parts.push([20, "you wrote notes on it lately"]);
+  if (t.status === "not_started") parts.push([25, "you haven't started it yet"]);
+  if (!parts.length) return null;
+  parts.sort((a, b) => b[0] - a[0]);
+  return { score: parts.reduce((s, [n]) => s + n, 0), why: parts.slice(0, 2).map(([, w]) => w).join(" and ") };
+}
+
+export function taskScore(t: DraftInputs["tasks"][number]): { score: number; why: string } {
+  const due = t.dueInDays
+  if (due !== null && due <= 0) return { score: 200 - due, why: due === 0 ? "it's due today" : "it's overdue" };
+  const high = t.priority === "high";
+  if (due !== null && due <= 7) return { score: 90 - due * 5 + (high ? 20 : 0), why: `it's due in ${due} day${due === 1 ? "" : "s"}${high ? " and marked high priority" : ""}` };
+  if (high) return { score: 70, why: "you marked it high priority" };
+  if (due !== null) return { score: 30 - Math.min(due, 25), why: `it's due in ${due} days` };
+  return { score: t.priority === "medium" ? 22 : 15, why: "it's open on your board" };
+}
+
+// The next picks for a day, best first, leaving out what is already in it.
+export function planPicks(input: Pick<DraftInputs, "tasks" | "topics">, taken: { taskIds: Set<string>; topicIds: Set<string>; subjects?: Map<string, number> }): PlanPick[] {
+  const tasks: PlanPick[] = input.tasks.filter(t => t.status !== "done" && !taken.taskIds.has(t.id))
+    .map(t => ({ kind: "task" as const, id: t.id, title: t.title, minutes: t.estimatedMinutes, ...taskScore(t) }));
+  const perSubject = new Map(taken.subjects ?? []);
+  const topics: PlanPick[] = [];
+  const scored = (input.topics ?? []).filter(t => !taken.topicIds.has(t.topicId))
+    .map(t => ({ t, s: topicScore(t) })).filter((x): x is { t: TopicSignal; s: { score: number; why: string } } => x.s !== null)
+    .sort((a, b) => b.s.score - a.s.score || a.t.topicName.localeCompare(b.t.topicName));
+  for (const { t, s } of scored) {
+    const n = perSubject.get(t.subjectName) ?? 0;
+    if (n >= PER_SUBJECT_MAX) continue;
+    perSubject.set(t.subjectName, n + 1);
+    topics.push({ kind: "topic", id: t.topicId, title: t.topicName, subjectName: t.subjectName, minutes: TOPIC_PLAN_MINUTES, score: s.score, why: s.why });
+  }
+  return [...tasks, ...topics].sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+}
+
+// How many more a day of `count` items and `minutes` planned should take.
+export function wantMore(count: number, minutes: number, budget: number | null): boolean {
+  if (count >= PLAN_ITEMS_MAX) return false;
+  if (count < MIN_PLAN_ITEMS) return true;
+  return budget !== null && budget - minutes >= TOPIC_PLAN_MINUTES;
+}
 
 // Tasks due today or overdue come first (the learner set those dates), the
 // planner's blocks next, inside the day's time; what does not fit is kept
@@ -286,6 +363,21 @@ export function draftFrom(input: DraftInputs, newId: () => string): FlowDraft | 
     if (input.budgetMinutes !== null && used + (t.estimatedMinutes ?? 0) > input.budgetMinutes) break;
     items.push(task(t));
     reasons.push(`${t.title} is due in ${t.dueInDays === 1 ? "a day" : `${t.dueInDays} days`}; there is room for it.`);
+  }
+  // A thin day is filled from the record, each pick with its reason (item 12).
+  if (input.topics) {
+    const taken = { taskIds: new Set(items.flatMap(i => (i.taskId ? [i.taskId] : []))), topicIds: new Set(items.flatMap(i => (i.topicId ? [i.topicId] : []))) };
+    const picks = planPicks(input, taken);
+    const added: string[] = [];
+    let minutes = items.reduce((s, i) => s + (i.minutes ?? 0), 0);
+    for (const p of picks) {
+      if (!wantMore(items.length, minutes, input.budgetMinutes)) break;
+      items.push(p.kind === "task" ? task(input.tasks.find(t => t.id === p.id)!)
+        : { id: newId(), kind: "topic", taskId: null, topicId: p.id, title: p.title, subjectName: p.subjectName, topicName: p.title, minutes: p.minutes, status: "planned", at: null, sessionId: null, addedBy: "nova" });
+      minutes += p.minutes ?? 0;
+      added.push(`${p.title} (${p.why})`);
+    }
+    if (added.length) reasons.push(`From your board and map: ${added.join("; ")}.`);
   }
   if (!items.length) return null;
   const fitted = input.budgetMinutes !== null ? fitTo(items, input.budgetMinutes, { shorten: false }) : null;

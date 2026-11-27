@@ -828,6 +828,21 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    get these classes. */
 @keyframes nova-reveal { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: none; } }
 .nova-reveal { animation: nova-reveal 0.38s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+/* "Propose a plan" (bug batch 28 Nov, item 12): a whole day lands. Its cards
+   deal in one after another (rise, sharpen from a blur, settle with a little
+   overshoot), a light sweeps once across the studio, and the day's time bar
+   fills. While a plan is still being composed, placeholder cards shimmer. */
+/* The Knowledge Map's names fade in as a zoom crosses a tier (lod.ts). */
+@keyframes map-tier-fade { from { opacity: 0; } to { opacity: 1; } }
+.map-tier-fade { animation: map-tier-fade var(--tier-fade, 120ms) ease-out both; }
+@keyframes plan-deal { 0% { opacity: 0; transform: translateY(18px) scale(0.96); filter: blur(6px); } 60% { opacity: 1; transform: translateY(-2px) scale(1.005); filter: blur(0); } 100% { opacity: 1; transform: none; filter: none; } }
+.plan-deal { animation: plan-deal 0.52s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(120ms + var(--i, 0) * 75ms); }
+@keyframes plan-sweep { from { transform: translateX(-120%); opacity: 0; } 20% { opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
+.plan-sweep { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 30%, color-mix(in oklch, var(--nova) 16%, transparent) 50%, transparent 70%); animation: plan-sweep 0.9s ease-out 0.05s both; }
+@keyframes plan-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.plan-fill { transform-origin: left; animation: plan-fill 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(200ms + var(--n, 3) * 75ms); }
+@keyframes plan-compose { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.plan-compose { background: linear-gradient(90deg, color-mix(in oklch, var(--foreground) 4%, transparent) 25%, color-mix(in oklch, var(--nova) 14%, transparent) 50%, color-mix(in oklch, var(--foreground) 4%, transparent) 75%); background-size: 200% 100%; animation: plan-compose 1.4s linear infinite; animation-delay: calc(var(--i, 0) * 120ms); }
 @keyframes nova-changed {
   0%, 35% { background-color: color-mix(in oklch, var(--nova) 16%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
   100% { background-color: transparent; box-shadow: 0 0 0 1px transparent; }
@@ -866,6 +881,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --note-link: var(--nova-ink);
   color: var(--note-text);
 }
+/* The reading sans (bug batch 28 Nov, item 10): the system UI face, Inter where installed. */
+.note-prose.note-read-sans { font-family: system-ui, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif; }
 .note-prose h2.note-h1 { color: var(--note-strong); }
 .note-prose h2.note-h1::after { content: ""; display: block; width: 2.5rem; height: 2px; margin-top: 0.55rem; border-radius: 2px; background: color-mix(in oklch, var(--nova) 70%, transparent); }
 .note-prose .note-h2 { color: var(--note-strong); }
@@ -929,6 +946,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   /* Shown at once, not after their place in the queue; a change is still
      marked, without the fade. */
   .kivo-app .nova-reveal { animation: none !important; }
+  .kivo-app .plan-deal, .kivo-app .plan-fill, .kivo-app .map-tier-fade { animation: none !important; }
+  .kivo-app .plan-sweep { display: none; }
+  .kivo-app .plan-compose { animation: none !important; }
   /* Without motion the passage is lit, still, until the page clears it. */
   .kivo-app .note-flash { animation: none !important; background-color: color-mix(in oklch, var(--nova) 14%, transparent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--nova) 14%, transparent); }
   .kivo-app .nova-pane-in { animation: none !important; }

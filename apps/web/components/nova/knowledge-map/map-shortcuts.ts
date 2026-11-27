@@ -17,7 +17,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { action: 'search',      keys: ['/', 'Mod+K'],          label: 'Find on the map', group: 'Find and move' },
   { action: 'navigate',    keys: ['←', '→', '↑', '↓'],    label: 'Move to the nearest card in that direction, across the whole map (with nothing selected, start from the card in the middle of the view)', group: 'Find and move' },
   { action: 'pan',         keys: ['Shift+←→↑↓'],          label: 'Move the view', group: 'Find and move' },
-  { action: 'explore',     keys: ['Enter'],               label: 'Explore inside the selected card (a card with nothing inside shows its details)', group: 'Find and move' },
+  { action: 'explore',     keys: ['Enter'],               label: 'Explore inside the selected card; a note or saved page opens (a card with nothing inside shows its details)', group: 'Find and move' },
   { action: 'open',        keys: ['Shift+Enter'],         label: 'Show the selected card’s details', group: 'Find and move' },
   { action: 'up',          keys: ['U'],                   label: 'Up one level, out of an explored card', group: 'Find and move' },
   { action: 'next',        keys: ['G'],                   label: 'Go to the next card the search or lens points at (a gap, a match)', group: 'Find and move' },
@@ -148,6 +148,19 @@ export function enterTarget(s: { chosen: string | null; focused: string | null; 
 
 // What Enter does to it: explore inside it; for a card with nothing inside,
 // show its details (no empty map); nothing for the card already explored.
-export type EnterAction = 'explore' | 'details' | 'already' | 'none'
-export const enterAction = (target: string | null, s: { exploring: string | null; explorable: (id: string) => boolean }): EnterAction =>
-  !target ? 'none' : target === s.exploring ? 'already' : s.explorable(target) ? 'explore' : 'details'
+// A note or a saved page opens where it is read (bug batch 28 Nov, item 5:
+// Enter and double-click on a note did nothing, so notes "could not be
+// opened" from the map).
+export type EnterAction = 'explore' | 'details' | 'open' | 'already' | 'none'
+export const enterAction = (target: string | null, s: { exploring: string | null; explorable: (id: string) => boolean; opens?: (id: string) => boolean }): EnterAction =>
+  !target ? 'none' : target === s.exploring ? 'already' : s.explorable(target) ? 'explore' : s.opens?.(target) ? 'open' : 'details'
+
+// Where a card opens to, for the cards that are read elsewhere: notes and saved pages.
+export const openHrefOf = (n: { type: string; href?: string | null } | undefined | null): string | null =>
+  n && (n.type === 'note' || n.type === 'resource') && n.href ? n.href : null
+
+// What a click on a card does. The second click of a double-click (detail 2)
+// never closes the details the first one opened: the double-click acts.
+export type ClickAction = 'select' | 'toggle' | 'keep'
+export const clickAction = (selected: string | null, id: string, clicks: number): ClickAction =>
+  selected !== id ? 'select' : clicks >= 2 ? 'keep' : 'toggle'

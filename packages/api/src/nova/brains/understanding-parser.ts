@@ -91,7 +91,7 @@ export const NO_REQUEST: LearnerRequest = {
   clarity: "ambiguous", changeOfMind: false,
   action: "none", confidence: 0, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
-  asks: "none", availableMinutesMax: null, setup: null, language: null, languageRequest: null,
+  asks: "none", availableMinutesMax: null, setup: null, language: null, languageRequest: null, topicStatus: null,
 };
 
 const MAX_SETUP_TOPICS = 12;
@@ -168,6 +168,7 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
     setup,
     language:       REPLY_LANGUAGES.find(l => l === r["language"]) ?? null,
     languageRequest: REPLY_LANGUAGES.find(l => l === r["languageRequest"]) ?? null,
+    topicStatus:    r["topicStatus"] === "not_started" || r["topicStatus"] === "in_progress" || r["topicStatus"] === "completed" ? r["topicStatus"] : null,
   };
 }
 

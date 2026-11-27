@@ -29,6 +29,11 @@ import type { NovaDayView, PendingChange } from '@repo/api/nova/product/day-flow
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { cn } from '@/lib/utils'
 import { askCopilot } from './day-api'
+
+// Item 12 (28 Nov): the learner's two ways in. Plan with me talks it through;
+// Propose a plan has Nova build a whole day now, with full context.
+const PROPOSE_PLAN_CHIP = 'Propose a plan'
+const PROPOSE_PLAN_TEXT = 'Propose a full plan for today from everything you know about me.'
 import { ACCEPT, AttachmentTray, useAttachments, useDropZone } from '../attachments'
 import { LiveText, ThinkingDots, useFollowBottom } from '../chat-ui'
 import type { OpenProposal, ProposalState } from './playground'
@@ -42,7 +47,7 @@ type Turn =
       link: { href: string; label: string } | null
       error?: boolean
       // What to send again; not kept with the conversation.
-      retry?: { text: string; draftNow?: boolean; files?: SentFile[] }
+      retry?: { text: string; draftNow?: boolean; proposePlan?: boolean; files?: SentFile[] }
     }
 type NovaTurn = Extract<Turn, { role: 'nova' }>
 type SentFile = { name: string; data: string }
@@ -61,6 +66,10 @@ const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slic
 export type ApproveResult = { ok: true; flow: NovaDayView } | { ok: false; stale: boolean; message: string }
 export type CopilotHandle = {
   send: (text: string, opts?: { draftNow?: boolean }) => void
+  // Item 12: Nova proposes a whole day now, from everything it knows.
+  proposePlan: () => void
+  // A proposal made elsewhere (the plan Nova prepared at check-in), opened here to talk through and change.
+  offer: (text: string, pending: PendingChange) => void
   apply: (keep: number[] | null) => void
   discard: () => void
   fill: (text: string) => void
@@ -81,12 +90,14 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   subject: { id: string | null; name: string } | null
   onAdopt: (flow: NovaDayView, changed: string[], touched: string[]) => void
   onApprove: (p: PendingChange, keep: number[] | null) => Promise<ApproveResult>
+  // Item 12: Propose a plan through the page (the prepared plan opens at once).
+  onProposePlan?: () => void
   onUndo: () => void
   onClose?: () => void
   // What the playground draws: whether Nova is working, and the latest proposal.
   onState: (s: { thinking: boolean; proposal: OpenProposal | null }) => void
   inputRef?: React.RefObject<HTMLTextAreaElement | null>
-}>(function CopilotPanel({ flow, subject, onAdopt, onApprove, onUndo, onClose, onState, inputRef }, ref) {
+}>(function CopilotPanel({ flow, subject, onAdopt, onApprove, onUndo, onClose, onState, inputRef, onProposePlan }, ref) {
   const [turns, setTurns] = useState<Turn[]>([])
   // The day these turns belong to: they are saved under that day only.
   const [turnsDay, setTurnsDay] = useState<string | null>(null)
@@ -130,7 +141,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   const patch = (turnId: string, state: ProposalState, note?: string) =>
     setTurns(list => list.map(t => (t.id === turnId && t.role === 'nova' && t.pending ? { ...t, pending: { ...t.pending, state, note } } : t)))
 
-  async function send(text: string, opts: { draftNow?: boolean; files?: SentFile[]; shown?: string[] } = {}) {
+  async function send(text: string, opts: { draftNow?: boolean; proposePlan?: boolean; files?: SentFile[]; shown?: string[] } = {}) {
     const message = text.trim() || (opts.files?.length ? 'Look at what I attached.' : '')
     if (!message || pending) return
     setInput('')
@@ -146,14 +157,14 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     setPending(true)
     const controller = new AbortController()
     inFlight.current = controller
-    const res = await askCopilot({ message, version: flow.version, history, earlier, open: openNow, draftNow: opts.draftNow, subjectId: subject?.id ?? null, ...(opts.files?.length ? { files: opts.files } : {}) }, controller.signal, setLive)
+    const res = await askCopilot({ message, version: flow.version, history, earlier, open: openNow, draftNow: opts.draftNow, ...(opts.proposePlan ? { proposePlan: true } : {}), subjectId: subject?.id ?? null, ...(opts.files?.length ? { files: opts.files } : {}) }, controller.signal, setLive)
     inFlight.current = null
     setPending(false)
     setLive('')
     if (!res.ok) {
       if (res.error === 'aborted') { setTurns(list => [...list, { id: newId(), role: 'nova', text: 'Stopped. Nothing changed.', question: null, choices: [], pending: null, changed: [], link: null }]); return }
       if ('flow' in res && res.flow) onAdopt(res.flow, [], [])
-      setTurns(list => [...list, { id: newId(), role: 'nova', text: res.message, question: null, choices: [], pending: null, changed: [], link: null, error: true, retry: { text: message, draftNow: opts.draftNow, files: opts.files } }])
+      setTurns(list => [...list, { id: newId(), role: 'nova', text: res.message, question: null, choices: [], pending: null, changed: [], link: null, error: true, retry: { text: message, draftNow: opts.draftNow, proposePlan: opts.proposePlan, files: opts.files } }])
       return
     }
     // A new proposal replaces the open one; a yes or a no in words closes it.
@@ -189,11 +200,11 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     previews.current.push(...shown)
     void send(input, uploads.length ? { files: uploads.map(u => ({ name: u.name, data: u.data })), shown } : {})
   }
-  useImperativeHandle(ref, () => ({ send: (t, o) => void send(t, o), apply: k => void apply(k), discard, fill }))
+  useImperativeHandle(ref, () => ({ offer: (text, p) => setTurns(list => [...list, { id: newId(), role: 'nova', text, question: null, choices: [], pending: { ...p, state: 'open' }, changed: [], link: null }]), send: (t, o) => void send(t, o), proposePlan: () => void send(PROPOSE_PLAN_TEXT, { proposePlan: true }), apply: k => void apply(k), discard, fill }))
 
   const starters = subject
-    ? [`Plan time for ${subject.name}`, 'Plan my day', 'I have about an hour']
-    : ['Plan my day', 'I want to learn something new', 'I have about an hour']
+    ? [PROPOSE_PLAN_CHIP, `Plan time for ${subject.name}`, 'Plan my day with me', 'I have about an hour']
+    : [PROPOSE_PLAN_CHIP, 'Plan my day with me', 'I want to learn something new', 'I have about an hour']
 
   return (
     <section ref={panel} className="relative flex h-full min-h-0 flex-col" aria-label="Nova, planning today with you" data-copilot>
@@ -257,7 +268,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
             <div className="min-w-0 flex-1 space-y-2.5 text-[15px] leading-relaxed text-foreground/85">
               {t.text && <p className={cn('whitespace-pre-wrap', t.error && 'text-amber-200')}>{t.text}</p>}
               {t.error && t.retry && t === lastNova && !pending && (
-                <button type="button" onClick={() => { const r = t.retry!; setTurns(list => list.filter(x => x.id !== t.id)); void send(r.text, { draftNow: r.draftNow, files: r.files }) }}
+                <button type="button" onClick={() => { const r = t.retry!; setTurns(list => list.filter(x => x.id !== t.id)); void send(r.text, { draftNow: r.draftNow, proposePlan: r.proposePlan, files: r.files }) }}
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink hover:underline" data-copilot-retry>
                   <RotateCcw className="size-3.5" /> Try again
                 </button>
@@ -305,7 +316,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
       <div className="shrink-0 px-5 pb-5 pt-3">
         {turns.length === 0 && (
           <div className="mb-3 flex flex-wrap gap-1.5">
-            {starters.map(c => <button key={c} type="button" disabled={pending} onClick={() => void send(c)} className="rounded-full border border-white/12 px-3 py-1.5 text-[13px] text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40" data-copilot-chip>{c}</button>)}
+            {starters.map(c => <button key={c} type="button" disabled={pending} onClick={() => void (c === PROPOSE_PLAN_CHIP ? (onProposePlan ? onProposePlan() : send(PROPOSE_PLAN_TEXT, { proposePlan: true })) : send(c))} className="rounded-full border border-white/12 px-3 py-1.5 text-[13px] text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40" data-copilot-chip>{c}</button>)}
           </div>
         )}
         <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-2" />

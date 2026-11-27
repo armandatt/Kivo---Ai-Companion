@@ -70,6 +70,9 @@ export type TurnAction =
   | { type: "show_week" }
   // How they are doing over time, from the record: read-only.
   | { type: "show_progress" }
+  // Where a named topic of theirs stands, in their own words (item 7, 28 Nov).
+  // Matched to one of their topics by code; said back in fixed words.
+  | { type: "set_topic_status"; topic: string; status: "not_started" | "in_progress" | "completed" }
   // A change to today's plan, asked for in words. Shown back as choices; the
   // learner's tap is what changes it.
   | { type: "change_plan"; topic: string | null; minutes: number | null }
@@ -192,6 +195,11 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
   if (plausible) {
     if (asked === "week_plan") return decided({ type: "show_week" }, "asked_week", false);
     if (asked === "progress")  return decided({ type: "show_progress" }, "asked_progress", false);
+    // A topic's status changes only on an explicit, confident, clear reading
+    // that names the topic and the state. Reversible from the map.
+    if (explicit("set_topic_status") && understanding.topic !== null && req.topicStatus) {
+      return decided({ type: "set_topic_status", topic: understanding.topic, status: req.topicStatus }, "asked_topic_status", false);
+    }
     // A time stated with it comes first: the day is refitted to it, and a
     // topic in the same breath is not taken as one to leave out.
     if (asked === "change_plan" && !req.changeOfMind) {

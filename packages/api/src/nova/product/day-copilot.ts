@@ -41,7 +41,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { generateOpenAIText } from "../../services/openai.service";
 import { checkFiles } from "./workspace-generation";
 import { serverSecret } from "../../auth/secrets";
-import { changeDayFlow, loadDayFlow, previewDayFlow } from "./day-flow";
+import { changeDayFlow, loadDayFlow, planAdditions, previewDayFlow } from "./day-flow";
+import { MIN_PLAN_ITEMS } from "./day-flow-rules";
+import { planContextLines } from "./plan-context";
 import { previewOf } from "./day-flow-rules";
 import { loadNovaToday } from "./today";
 import { loadStudyStructure } from "./setup-edit";
@@ -204,7 +206,8 @@ export function copilotPrompt(flow: NovaDayView, message: string, history: Array
       taskLines.length ? taskLines.join("\n") : "(none)",
       "MAP:",
       mapLines.length ? mapLines.join("\n") : "(no subjects yet)",
-      extras.lines.length ? `CONTEXT (background, not their priorities):\n${extras.lines.join("\n")}` : null,
+      // A ranked task or topic names itself as {{kind:id}}; it is given its label here, so it can be added as itself.
+      extras.lines.length ? `CONTEXT (background, not their priorities):\n${extras.lines.map(l => l.replace(/\{\{(task|topic):([^}]+)\}\}/g, (_, k: "task" | "topic", id: string) => `[${label(k, id)}]`)).join("\n")}` : null,
       open ? `OPEN PROPOSAL (waiting for their answer):\n${open.changed.join("\n") || "(changes to today's flow)"}` : null,
       earlier.length ? `WHAT THE LEARNER SAID EARLIER TODAY (before the conversation below; their decisions and limits still hold unless they changed them since):\n${earlier.map(t => `- ${clean(t, EARLIER_TEXT_MAX)}`).join("\n")}` : null,
       history.length ? `The conversation so far:\n${history.map(h => `${h.role === "learner" ? "Learner" : "Nova"}: ${clean(h.text, 600)}`).join("\n")}` : null,
@@ -324,7 +327,7 @@ function sameId(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-async function propose(profileId: string, platformChatId: string, flow: NovaDayView, ops: FlowOp[]): Promise<{ ok: true; pending: PendingChange } | { ok: false; message: string }> {
+export async function propose(profileId: string, platformChatId: string, flow: NovaDayView, ops: FlowOp[]): Promise<{ ok: true; pending: PendingChange } | { ok: false; message: string }> {
   const dry = await previewDayFlow({ profileId, platformChatId, version: flow.version, ops, by: "nova" });
   if (!dry.ok) return { ok: false, message: dry.message };
   const view = previewOf(dry.before, dry.after);
@@ -385,6 +388,48 @@ export const loadCopilotExtras: ExtrasLoader = async ({ profileId, platformChatI
   return { lines, ...(structure ? { map: structure.subjects } : {}) };
 };
 
+// ── "Propose a plan" (bug batch 28 Nov, item 12) ─────────────────────────────
+// The learner's choice to skip the questions. Nova (the model, with the full
+// context: deadlines, exams, priorities, the Knowledge Map, goals, recent
+// study and what they said today) proposes a whole day. Code holds the rules:
+// it hands the model a shortlist ranked from the record with reasons
+// (planAdditions), keeps the day at least MIN_PLAN_ITEMS open items, tops a
+// thin proposal up from that ranking, and falls back to the ranking alone when
+// the model is unavailable. Only their own tasks and topics; nothing is written
+// until they approve. "Plan with Nova" stays the conversation that asks first.
+export const PROPOSE_PLAN_MESSAGE = "Propose a full plan for today from everything you know about me.";
+
+type Plan = Awaited<ReturnType<typeof planAdditions>>;
+const pickOp = (p: Plan["picks"][number]): FlowOp => ({ op: "add", item: p.kind === "task" ? { kind: "task", taskId: p.id, ...(p.minutes ? { minutes: p.minutes } : {}) } : { kind: "topic", topicId: p.id, minutes: p.minutes } });
+const pickWhy = (picks: Plan["picks"]) => picks.slice(0, 4).map(p => `${p.title}, because ${p.why}`).join("; ") + (picks.length > 4 ? `; and ${picks.length - 4} more` : "");
+
+// The plan from the ranking alone: no model.
+async function rankedProposal(profileId: string, platformChatId: string, flow: NovaDayView, plan: Plan, lead?: string): Promise<Ready> {
+  if (!plan.picks.length) {
+    return answer({ reply: plan.open
+      ? "Your day already has a full plan from what's on record. Tell me what you'd like to change, or choose Plan with Nova to talk it through."
+      : "There's nothing on your board or map to plan from yet. Add a task or a subject with topics, or tell me what you want to do today." });
+  }
+  const made = await propose(profileId, platformChatId, flow, plan.picks.map(pickOp));
+  if (!made.ok) return answer({ reply: `I couldn't put a plan together: ${made.message}` });
+  return answer({ reply: `${lead ?? (plan.open ? "Here's what I'd add to today" : "Here's a plan for today from your board and map")}: ${pickWhy(plan.picks)}. Apply it, or change anything first.`, pending: made.pending });
+}
+
+// Kept for callers that want the ranking alone (Telegram's quick plan).
+export async function proposeDayPlan(profileId: string, platformChatId: string, now = new Date()): Promise<CopilotResponse> {
+  const flow = await loadDayFlow(profileId, platformChatId, now);
+  return rankedProposal(profileId, platformChatId, flow, await planAdditions(profileId, platformChatId, now));
+}
+
+// What the model is told when the learner pressed Propose a plan.
+function planRequestLines(plan: Plan): string[] {
+  return [
+    `PLAN REQUEST: the learner pressed "Propose a plan". Propose a whole day now (intent propose, do not ask): at least ${MIN_PLAN_ITEMS} items in today's flow, filling their time, in a sensible order (what is due or reviewed first, harder new material while fresh, lighter work last). Personalise it to everything under LEARNER and CONTEXT: their goals and what they are learning for, their dates, how they actually study (time of day, session length), what they studied this week and how it felt, topics in progress, weak or due, and recent notes; never repeat a topic they just studied unless its review is due. Say in reply, in one or two sentences, why this day for them.`,
+    "Add their own tasks and topics with {\"op\":\"add\",\"ref\":label} using the label MAP or TASKS gives them, never as a focus item: a focus item is only for something that is not on record. A review of a topic is that topic.",
+    ...(plan.picks.length ? ["RANKED FROM THEIR RECORD (use these unless what they said or their goals clearly point elsewhere):", ...plan.picks.map((p, i) => `${i + 1}. {{${p.kind}:${p.id}}} ${p.title} (${p.kind}${p.kind === "topic" ? `, ${p.subjectName}` : ""}): ${p.why}`)] : []),
+  ];
+}
+
 // ── The copilot ──────────────────────────────────────────────────────────────
 
 export async function askCopilot(
@@ -400,7 +445,9 @@ export async function askCopilot(
   const message = clean(input?.message, MESSAGE_MAX + 1);
   if (!message) return refuse("invalid", "Say what you'd like for today.");
   if (message.length > MESSAGE_MAX) return refuse("invalid", `Keep it under ${MESSAGE_MAX} characters.`);
-  const draftNow = input?.draftNow === true;
+  const proposePlan = input?.proposePlan === true;
+  // Propose a plan is "skip the questions" with the plan request on top.
+  const draftNow = input?.draftNow === true || proposePlan;
   const files = checkFiles(input?.files);
   if (!files.ok) return refuse("invalid", files.message);
   const subjectId = typeof input?.subjectId === "string" ? input.subjectId : null;
@@ -413,6 +460,10 @@ export async function askCopilot(
   const open = sent && sent.version === flow.version && sameId(sent.id, pendingIdOf(profileId, sent.version, sent.ops)) ? sent : null;
   const openView = open ? await propose(profileId, platformChatId, flow, open.ops) : null;
   const known = await extras({ profileId, platformChatId }).catch(() => ({ lines: [] }) as CopilotExtras);
+  const plan = proposePlan ? await planAdditions(profileId, platformChatId).catch(() => null) : null;
+  // The whole learner (plan-context.ts): who they are, how they study, the
+  // last week, every topic as it stands, recent notes and pages.
+  if (plan) known.lines.push(...await planContextLines(profileId, platformChatId).catch(() => [] as string[]), ...planRequestLines(plan));
   // The selected subject is context only, and only if it is theirs (it is in their map).
   const built = copilotPrompt(flow, message, history, known, openView?.ok ? openView.pending : null, draftNow, subjectId, earlier, options.language ?? null);
   const deadlineMs = files.files.length ? COPILOT_FILES_DEADLINE_MS : COPILOT_DEADLINE_MS;
@@ -430,12 +481,15 @@ export async function askCopilot(
       const f = modelFailure(err, Date.now() - started >= deadlineMs - 25);
       if (f.problem === "unreadable" && attempt === 1 && timeLeft(deadlineMs, started) > 8_000) continue;
       logModelFailure("today_copilot", "ask", f, meta(attempt));
+      // Propose a plan still answers: from the ranking alone.
+      if (plan) return rankedProposal(profileId, platformChatId, flow, plan, "I couldn't reach my full planner just now, so here's a plan from your board and map");
       return { ...refuse("unavailable", `${f.message.replace("nothing was done", "nothing changed")}${f.retryable ? "" : " You can still plan by hand."}`), retryable: f.retryable };
     }
     read = readCopilotReply(text, built);
     if (!read && (attempt === 2 || timeLeft(deadlineMs, started) <= 8_000)) {
       const f = unreadableReply();
       logModelFailure("today_copilot", "ask", f, meta(attempt));
+      if (plan) return rankedProposal(profileId, platformChatId, flow, plan, "I couldn't reach my full planner just now, so here's a plan from your board and map");
       return { ...refuse("unavailable", f.message.replace("nothing was done", "nothing changed")), retryable: true };
     }
     if (read) logContext("today_copilot", { ...meta(attempt), intent: read.intent, ops: read.ops.length });
@@ -446,6 +500,22 @@ export async function askCopilot(
   // gave twelve messages ago is still the time they gave.
   const learnerWords = [...earlier, ...history.filter(h => h.role === "learner").map(h => h.text), message].join("\n");
   const step = decideStep(read, { learnerWords, draftNow, hasOpen: open !== null });
+  // Propose a plan: a proposal, never a question, and never a thin day.
+  if (plan) {
+    if (step.kind !== "propose") return rankedProposal(profileId, platformChatId, flow, plan);
+    const ops = [...step.ops];
+    const added = new Set(ops.flatMap(o => (o.op === "add" ? [o.item.kind === "task" ? `t:${o.item.taskId}` : o.item.kind === "topic" ? `p:${o.item.topicId}` : `f:${o.item.title}`] : [])));
+    let count = flow.items.filter(i => i.status === "planned" || i.status === "active").length + added.size - ops.filter(o => o.op === "remove").length;
+    for (const p of plan.picks) {
+      if (count >= MIN_PLAN_ITEMS) break;
+      const key = p.kind === "task" ? `t:${p.id}` : `p:${p.id}`;
+      if (added.has(key)) continue;
+      ops.push(pickOp(p)); added.add(key); count++;
+    }
+    const made = await propose(profileId, platformChatId, flow, ops);
+    if (!made.ok) return rankedProposal(profileId, platformChatId, flow, plan);
+    return answer({ reply: read.reply || "Here's a plan for today. Apply it?", pending: made.pending });
+  }
   switch (step.kind) {
     case "ask":
       return answer({ reply: step.overruled ? "" : read.reply, question: step.question, choices: step.choices });

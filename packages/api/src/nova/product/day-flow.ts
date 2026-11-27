@@ -29,7 +29,9 @@ import { listTasks, updateTask } from "./tasks";
 import { listWorkspaces } from "./workspaces";
 import { loadNovaToday } from "./today";
 import { runNovaSessionCommand } from "./session";
-import { applyFlowOps, draftFrom, ordered, type FlowState, type Resolved } from "./day-flow-rules";
+import { applyFlowOps, draftFrom, ordered, planPicks, wantMore, type FlowState, type PlanPick, type Resolved, type TopicSignal } from "./day-flow-rules";
+import { effectiveTopicStatus } from "./topic-status";
+import { recentNoteActivity } from "./notes";
 import {
   FLOW_OPS_MAX, FLOW_UNDO_MAX,
   type DayFlowResponse, type FlowCandidate, type FlowDraft, type FlowItem, type FlowItemView, type FlowOp, type FlowView, type NewFlowItem, type NovaDayView,
@@ -66,6 +68,37 @@ interface Context {
   budget:  number | null;
   activeSessionId: string | null;
   workspaceOf: (subjectName: string | null) => string | null;
+  // Each topic's record, for filling a thin day (item 12, 28 Nov).
+  signals: TopicSignal[];
+}
+
+const DAY_MS = 86_400_000;
+// What the record says about each of the learner's topics: review due,
+// mastery, status, the subject's next exam or dated item, the latest note.
+async function topicSignals(profileId: string, masteries: Awaited<ReturnType<typeof getAllTopicMasteries>>, now: Date): Promise<TopicSignal[]> {
+  if (!masteries.length) return [];
+  const [rows, exams, notes] = await Promise.all([
+    prisma.novaTopicMastery.findMany({ where: { id: { in: masteries.map(m => m.topicId) } }, select: { id: true, subjectId: true, status: true } }),
+    prisma.novaExam.findMany({ where: { profileId, scheduledAt: { gte: new Date(now.getTime() - DAY_MS) } }, select: { subjectId: true, scheduledAt: true }, orderBy: { scheduledAt: "asc" } }),
+    recentNoteActivity(profileId, new Date(now.getTime() - 14 * DAY_MS), 200),
+  ]);
+  const row = new Map(rows.map(r => [r.id, r]));
+  const examIn = new Map<string, number>();
+  for (const e of exams) if (e.subjectId && !examIn.has(e.subjectId)) examIn.set(e.subjectId, Math.max(0, Math.floor((e.scheduledAt.getTime() - now.getTime()) / DAY_MS)));
+  const noted = new Map<string, number>();
+  for (const n of notes) { if (!n.topicName) continue; const k = `${n.subjectId}\n${n.topicName!.toLowerCase()}`; if (!noted.has(k)) noted.set(k, Math.floor((now.getTime() - n.updatedAt.getTime()) / DAY_MS)); }
+  return masteries.map(m => {
+    const r = row.get(m.topicId);
+    const studied = m.reviewCount > 0 || m.lastStudied !== null;
+    return {
+      topicId: m.topicId, topicName: m.topicName, subjectName: m.subjectName,
+      reviewDue: m.reviewDueAt !== null && m.reviewDueAt.getTime() <= now.getTime(),
+      mastery: m.masteryProbability, reviewCount: m.reviewCount,
+      status: effectiveTopicStatus(r?.status ?? null, studied),
+      examInDays: r ? examIn.get(r.subjectId) ?? null : null,
+      notedDaysAgo: r ? noted.get(`${r.subjectId}\n${m.topicName.toLowerCase()}`) ?? null : null,
+    };
+  });
 }
 
 async function loadContext(profileId: string, platformChatId: string, now: Date): Promise<Context> {
@@ -85,6 +118,7 @@ async function loadContext(profileId: string, platformChatId: string, now: Date)
     budget: ready ? ready.plan.budgetMinutes : null,
     activeSessionId: ready?.activeSession?.id ?? null,
     workspaceOf: s => (s ? bySubject.get(s.toLowerCase()) ?? null : null),
+    signals: await topicSignals(profileId, topics, now).catch(() => []),
   };
 }
 
@@ -103,7 +137,19 @@ function resolver(ctx: Context): (item: NewFlowItem) => Resolved | null {
     }
     if (item.kind === "focus") {
       const title = typeof item.title === "string" ? item.title.trim() : "";
-      return title ? { kind: "focus", taskId: null, topicId: null, title, subjectName: null, topicName: null, minutes: null } : null;
+      if (!title) return null;
+      // A focus item whose words ARE one of the learner's topics (exactly, any
+      // case) is that topic: its session is filed on it and shows on the map
+      // (bug batch 28 Nov, item 3: a copilot "focus" on "Startup Valuation"
+      // started a session on no topic). Two topics of that name: left as words.
+      const key = title.toLowerCase().replace(/\s+/g, " ");
+      const same = [...ctx.topics.entries()].filter(([, t]) => t.topicName.toLowerCase().replace(/\s+/g, " ") === key);
+      if (same.length === 1) {
+        const [topicId, t] = same[0]!;
+        const block = ctx.blocks.find(b => b.topicId === topicId);
+        return { kind: "topic", taskId: null, topicId, title: t.topicName, subjectName: t.subjectName, topicName: t.topicName, minutes: block?.durationMinutes ?? null };
+      }
+      return { kind: "focus", taskId: null, topicId: null, title, subjectName: null, topicName: null, minutes: null };
     }
     return null;
   };
@@ -113,7 +159,7 @@ function draftOf(ctx: Context, now: Date): (FlowDraft & { id: string }) | null {
   // Ids that do not change between reads, so the draft shown is the draft taken.
   let n = 0;
   const draft = draftFrom({
-    tasks: [...ctx.tasks.values()], blocks: ctx.blocks, budgetMinutes: ctx.budget, now: now.toISOString(),
+    tasks: [...ctx.tasks.values()], blocks: ctx.blocks, budgetMinutes: ctx.budget, now: now.toISOString(), topics: ctx.signals,
   }, () => `d${++n}`);
   if (!draft) return null;
   const id = createHash("sha256").update(JSON.stringify(draft.items.map(i => [i.kind, i.taskId, i.topicId, i.minutes, i.status]))).digest("hex").slice(0, 16);
@@ -145,7 +191,9 @@ export function spentOn(i: Pick<FlowItem, "sessionId" | "earlierSessionIds">, se
   let total = 0, any = false;
   for (const id of sessionIdsOf(i)) {
     const s = sessions.get(id);
-    if (!s || s.status === "in_progress" || s.status === "paused") continue;
+    // Finished focus time only (bug batch 28 Nov, item 2): an open session is
+    // not done yet, and an abandoned one was not study.
+    if (!s || s.status !== "completed") continue;
     total += s.minutes; any = true;
   }
   return any ? total : null;
@@ -370,4 +418,25 @@ export async function startFocus(input: Changing & { itemId: unknown; minutes: u
     if (fresh.some(i => i.id === item.id)) await write(input.profileId, b.clock.day, row, row?.version ?? 0, { items: mark(fresh), intention: row?.intention ?? null });
   }
   return { ok: true, started: true, flow: await loadDayFlow(input.profileId, input.platformChatId, b.now), changed: [`Started ${item.title}.`], message: null };
+}
+
+// ── "Propose a plan" (item 12, 28 Nov) ───────────────────────────────────────
+// What Nova would add to today's flow as it stands, best first, each with its
+// reason: enough that the day holds at least MIN_PLAN_ITEMS open items and
+// fills its time (wantMore). Read-only: the copilot shows it as a proposal and
+// nothing is written until the learner approves it.
+export async function planAdditions(profileId: string, platformChatId: string, now = new Date()): Promise<{ picks: PlanPick[]; budget: number | null; open: number }> {
+  const [ctx, flow] = await Promise.all([loadContext(profileId, platformChatId, now), loadDayFlow(profileId, platformChatId)]);
+  const live = flow.items.filter(i => i.status === "planned" || i.status === "active");
+  const subjects = new Map<string, number>();
+  for (const i of live) if (i.kind === "topic" && i.subjectName) subjects.set(i.subjectName, (subjects.get(i.subjectName) ?? 0) + 1);
+  const taken = { taskIds: new Set(flow.items.flatMap(i => (i.taskId ? [i.taskId] : []))), topicIds: new Set(flow.items.flatMap(i => (i.topicId ? [i.topicId] : []))), subjects };
+  const all = planPicks({ tasks: [...ctx.tasks.values()], topics: ctx.signals }, taken);
+  const picks: PlanPick[] = [];
+  let count = live.length, minutes = live.reduce((s, i) => s + (i.minutes ?? 0), 0);
+  for (const p of all) {
+    if (!wantMore(count, minutes, ctx.budget)) break;
+    picks.push(p); count++; minutes += p.minutes ?? 0;
+  }
+  return { picks, budget: ctx.budget, open: live.length };
 }

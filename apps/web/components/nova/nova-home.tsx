@@ -14,6 +14,9 @@ import { useTasks } from './tasks/use-tasks'
 import { firstName } from './format'
 import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
+import { AutoSavedNotice } from './auto-saved-notice'
+import { usePreparedPlan } from './today/prepared-plan'
+import { SessionTopicAsk } from './session-topic'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
 import { mapHref, noteHref } from './today/flow-list'
@@ -54,6 +57,7 @@ export function NovaHome({ view, refreshing }: Props) {
   const board = useTasks()
   const day = useDayFlow()
   const live = useNovaSession()
+  const prepared = usePreparedPlan(day.flow !== null)
   const nova = useRef<CopilotHandle>(null)
   const copilotInput = useRef<HTMLTextAreaElement>(null)
 
@@ -141,6 +145,30 @@ export function NovaHome({ view, refreshing }: Props) {
     if (window.matchMedia('(min-width: 1024px)').matches) showNova(true); else setNovaOnPhone(true)
   }, [])
   const ask = useCallback((text: string) => { openNova(); nova.current?.send(text, { draftNow: text.toLowerCase().startsWith('just draft') }) }, [openNova])
+  // Propose a plan (item 12): Nova's prepared plan opens at once, as the
+  // studio's proposal (the deal-in animation); not prepared yet, it is
+  // composed now (one full-context model call) while the studio shows it.
+  const [composing, setComposing] = useState(false)
+  const proposePlan = useCallback(async () => {
+    openNova()
+    const offer = (p: NonNullable<typeof prepared.plan>) => nova.current?.offer(p.reply, p.pending)
+    if (prepared.plan) { offer(prepared.plan); return }
+    setComposing(true)
+    const got = await prepared.prepareNow()
+    setComposing(false)
+    if (got) offer(got); else nova.current?.proposePlan()
+  }, [openNova, prepared])
+
+  // From the check-in on Telegram (item 12): ?plan=own starts planning with
+  // Nova; ?plan=prepared lands on the prepared plan, which is already on top.
+  const arrived = useRef(false)
+  useEffect(() => {
+    if (arrived.current || !day.flow) return
+    arrived.current = true
+    const how = new URLSearchParams(window.location.search).get('plan')
+    if (how === 'own') window.setTimeout(() => ask('Plan my day with me'), 300)
+    if (how === 'prepared') window.setTimeout(() => void proposePlan(), 600)
+  }, [day.flow, ask, proposePlan])
   // A task made from Add to today: due today, like one made on today's board.
   const createTask = useCallback(async (title: string) => {
     const made = await board.createTask({ title, dueDay: day.flow?.day ?? null })
@@ -162,7 +190,7 @@ export function NovaHome({ view, refreshing }: Props) {
   }, [day, flow, dueOutside])
 
   const date = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
-  const starters = subject ? [`Plan time for ${subject.subjectName}`, 'Plan my day', 'Just draft something'] : ['Plan my day with Nova', 'I want to learn something new', 'I have about an hour']
+  const starters = subject ? [`Plan time for ${subject.subjectName}`, 'Plan my day', 'Just draft something'] : ['Plan my day with me', 'I want to learn something new', 'I have about an hour']
 
   return (
     <div className="-mx-6 -mb-6 flex min-h-[calc(100vh-1rem)] lg:-mt-6" data-today-workspace>
@@ -225,6 +253,10 @@ export function NovaHome({ view, refreshing }: Props) {
           )}
 
           {quickError && <p role="alert" className="mt-3 text-sm text-amber-200" data-quick-focus-error>{quickError}</p>}
+          {!live.session && live.autoSaved && (<>
+            <AutoSavedNotice saved={live.autoSaved} onDismiss={live.dismissAutoSaved} />
+            {!live.autoSaved.topicName && <div className="mt-2"><SessionTopicAsk topicName={null} after busy={live.pending !== null} onChoose={(subjectId, topicName) => live.fileSession(live.autoSaved!.sessionId, subjectId, topicName)} /></div>}
+          </>)}
           {quickSaved && !live.session && live.ended && (
             <section role="status" className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-nova/25 bg-nova/[0.05] px-4 py-3 text-sm" data-quick-focus-saved>
               <span className="text-foreground">Saved: {minutesLabel(live.ended.minutes)} of focus.</span>
@@ -232,6 +264,10 @@ export function NovaHome({ view, refreshing }: Props) {
               <Link href="/progress#recent-sessions" className="font-medium text-nova-ink hover:underline">Recent sessions</Link>
               <button type="button" onClick={() => setQuickSaved(false)} aria-label="Dismiss" className="ml-auto text-subtle hover:text-foreground"><X className="size-3.5" /></button>
             </section>
+          )}
+          {/* Items 3/4 (28 Nov): a Quick Focus ended on no topic is filed here, after End. */}
+          {quickSaved && !live.session && live.ended && !live.ended.topicName && (
+            <div className="mt-2" data-quick-focus-file><SessionTopicAsk topicName={null} after busy={live.pending !== null} onChoose={(subjectId, topicName) => live.fileSession(live.ended!.sessionId, subjectId, topicName)} /></div>
           )}
 
           {/* ── A session running, or one that just ended ──────────────── */}
@@ -258,7 +294,7 @@ export function NovaHome({ view, refreshing }: Props) {
             </div>
           )}
 
-          {/* ── The playground ──────────────────────────────────────────── */}
+          {/* ── The playground (item 12: Nova's prepared plan opens here, instantly, on Propose a plan) ── */}
           <div className="mt-5">
             {day.loadError && !flow ? (
               <div role="alert" className="rounded-2xl border border-red-400/30 px-4 py-3 text-sm text-foreground/80">{day.loadError} <button type="button" onClick={() => void day.load()} className="ml-2 underline">Try again</button></div>
@@ -269,7 +305,10 @@ export function NovaHome({ view, refreshing }: Props) {
                 onView={v => void day.act({ action: 'view', view: v }, { quiet: true })}
                 onApply={keep => nova.current?.apply(keep)} onDiscard={() => nova.current?.discard()}
                 onChange={() => { openNova(); nova.current?.fill('Change something: ') }}
-                onAsk={ask} onAdd={() => setAdding(true)} />
+                onAsk={ask} onAdd={() => setAdding(true)}
+                onPropose={() => void proposePlan()} composing={composing}
+                ready={prepared.plan ? new Date(prepared.plan.preparedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : null}
+                onTakeDraft={() => { if (flow?.draft?.id) void day.act({ action: 'accept', draftId: flow.draft.id }) }} />
             )}
           </div>
 
@@ -330,8 +369,8 @@ export function NovaHome({ view, refreshing }: Props) {
           role={novaOnPhone ? 'dialog' : undefined} aria-modal={novaOnPhone ? true : undefined} aria-label="Nova" data-today-nova>
           <CopilotPanel ref={nova} flow={flow} inputRef={copilotInput}
             subject={subject ? { id: subject.subjectId ?? null, name: subject.subjectName } : null}
-            onAdopt={day.adopt} onApprove={day.approve} onUndo={() => void day.undo()}
-            onState={setStudio}
+            onAdopt={day.adopt} onApprove={async (p, keep) => { const r = await day.approve(p, keep); if (r.ok && prepared.plan && p.id === prepared.plan.pending.id) void prepared.close('taken'); return r }} onUndo={() => void day.undo()}
+            onState={setStudio} onProposePlan={() => void proposePlan()}
             onClose={() => { if (novaOnPhone) setNovaOnPhone(false); else showNova(false) }} />
         </aside>
       )}

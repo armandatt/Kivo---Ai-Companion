@@ -12,7 +12,10 @@ import { getNote, searchNoteBodies } from "../nova/product/notes";
 import { workspaceSummaries } from "../nova/product/workspaces";
 import type { Scope } from "./oauth-rules";
 import type { ConnectLearner } from "./learner";
-import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, type Change, type ChangeReport } from "./changes";
+import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, REPLACE_REVIEW_CHARS, replaceNeedsReview, type Change, type ChangeReport } from "./changes";
+import { NOTE_BODY_MAX } from "../nova/product/notes.types";
+import { listNoteVersions } from "../nova/product/note-versions";
+import { setTopicStatus } from "../nova/product/topic-status";
 import { execute, planStatus, preview } from "./plans";
 import { finishKeyed, idempotencyKeyOk, priorResult, recordAudit, recordKeyed, type AuditOutcome } from "./audit";
 import { discardNoteImages, imagesInText, noteImageMeta, noteImagesByIds, saveNoteImageBytes } from "../nova/product/note-images";
@@ -170,7 +173,8 @@ async function applyOrPreview(ctx: ToolContext, tool: string, key: string | unde
   if (!need.needed) return keyedApply(ctx, tool, key, changes);
   const p = await preview(previewCtx(ctx), changes);
   if (!p.planId) return fail("invalid_input", "These changes cannot be made as given; nothing was changed.", { preview: { summary: p.summary, ...reportOut(p.report, ctx.origin) } });
-  return fail("approval_required", approvalMessage(need.why, p.items.some(i => i.destructive)), {
+  const text = changes.some(c => c.op === "create_note" || c.op === "append_to_note" || c.op === "insert_into_note" || c.op === "replace_note_body" || c.op === "edit_note_text");
+  return fail("approval_required", approvalMessage(need.why, p.items.some(i => i.destructive), text), {
     planId: p.planId, expiresAt: p.expiresAt, approveUrl: p.approveUrl, summary: p.summary, changes,
   });
 }
@@ -178,8 +182,13 @@ async function applyOrPreview(ctx: ToolContext, tool: string, key: string | unde
 // What the assistant is told when a change waits for the learner: show the
 // summary in the conversation, give the one link, and read the outcome with
 // check_approval (approving on Kivo applies it; nothing to repeat).
-const approvalMessage = (why: string[], destructive: boolean) =>
-  `Nothing has changed yet: this needs the learner's approval because ${why.join(" and ")}. Show them the summary in plain words and the approveUrl as one link (${destructive ? "it deletes something" : "one click"}). When they approve on Kivo it is applied there at once; then call check_approval with planId for the result. If they decline, nothing happens.`;
+// A plan carrying note text is not kept on Kivo (plans.ts), so after the
+// approval the assistant sends the same changes to execute_knowledge_changes.
+const approvalMessage = (why: string[], destructive: boolean, text = false) =>
+  `Nothing has changed yet: this needs the learner's approval because ${why.join(" and ")}. Show them the summary in plain words and the approveUrl as one link (${destructive ? "it deletes something" : "one click"}). `
+  + (text
+    ? "It carries note text, which Kivo does not keep while it waits: once check_approval says approved, call execute_knowledge_changes with planId, expiresAt and exactly these changes to apply it. If they decline, nothing happens."
+    : "When they approve on Kivo it is applied there at once; then call check_approval with planId for the result. If they decline, nothing happens.");
 
 const previewCtx = (ctx: ToolContext) => ({ userId: ctx.learner.userId, grantId: ctx.learner.grantId, profileId: ctx.learner.profileId, clientName: ctx.learner.clientName, origin: ctx.origin });
 
@@ -225,7 +234,7 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "get_workspace_structure", title: "Workspace structure", kind: "read", scopes: ["workspace:read"],
-    description: "Read-only. The full hierarchy: subjects inside subjects, topics inside topics, with ids and whether each topic has been studied. Use before adding or moving subjects and topics.",
+    description: "Read-only. The full hierarchy: subjects inside subjects, topics inside topics, with ids, whether each topic has been studied, and its status (not_started | in_progress | completed: the learner's word, else in_progress once studied). Use before adding or moving subjects and topics.",
     input: { workspace: workspaceArg },
     handler: async (a, ctx) => {
       const { st, ws } = await structureAndWorkspace(ctx, a.workspace);
@@ -294,6 +303,8 @@ export const TOOLS: ToolDef[] = [
         text: n.body.slice(from, from + size), textLength: n.body.length, offset: from, more: from + size < n.body.length,
         links: { outgoing: n.links.outgoing.map(x => ({ title: x.title, noteId: x.noteId, topicId: x.topicId })), backlinks: n.links.backlinks.map(x => ({ title: x.title, noteId: x.noteId })) },
         images, ...returned,
+        // Earlier text kept before changes (restore_note_version), newest first.
+        versions: (await listNoteVersions(ctx.learner.profileId, n.id)).slice(0, 10).map(v => ({ versionId: v.id, savedAt: v.createdAt, before: v.reason, characters: v.characters })),
         ...(images.length && !a.includeImages ? { imagesHint: "Set includeImages: true to look at the images." } : {}),
       } };
     },
@@ -337,10 +348,17 @@ export const TOOLS: ToolDef[] = [
     },
   }),
   def({
-    name: "update_note", title: "Add to or rename a note", kind: "write", scopes: ["notes:write"], meta: { "openai/fileParams": ["files"] },
-    description: "Writes. Adds text and/or images (screenshots, diagrams) to an existing note; nothing already there is changed or removed; applied at once. By default at the end under a dated divider; afterHeading puts them at the end of that section instead. Images: images [{ data (base64) | url, caption }], or in ChatGPT the attached files. Renaming (newTitle) is reviewed: nothing changes until the learner approves the old and new title on Kivo (you get approveUrl and planId; then check_approval); send images in a separate call. Send baseUpdatedAt from get_note: if the note changed since, nothing is overwritten and you get a conflict. Text or an image already in the note is not added twice. " + NO_BYTES_HINT,
+    name: "update_note", title: "Edit, add to or rename a note", kind: "write", scopes: ["notes:write"], meta: { "openai/fileParams": ["files"] },
+    description: "Writes. Changes an existing note in ONE of these ways per call. Always send baseUpdatedAt from get_note: if the note changed since, nothing is overwritten and you get a conflict.\n"
+      + "1. edits [{ find, replace }]: replace exact passages (copy them from get_note, character for character). Each find must occur exactly once in the note, or nothing at all is changed and you are told which edit failed (missing, or found several times: give a longer passage). Applied at once. Use this to correct or rewrite part of a note.\n"
+      + `2. replaceBody: the note's whole new text. Applied at once only for a note under ${REPLACE_REVIEW_CHARS.toLocaleString("en-US")} characters that keeps at least half of its words; a longer note, or a replace removing more than half of the existing text, waits for the learner's approval on Kivo (approveUrl, planId, then check_approval). Prefer edits.\n`
+      + "3. appendText and/or images (screenshots, diagrams): added, nothing already there changed; at the end under a dated divider, or at the end of the section afterHeading. Images: images [{ data (base64) | url, caption }], or in ChatGPT the attached files. Text or an image already in the note is not added twice.\n"
+      + "4. newTitle: renaming is reviewed by the learner (approveUrl, planId, check_approval).\n"
+      + "Before every edit, replace or append the note's current text is kept as a version: restore_note_version puts it back. " + NO_BYTES_HINT,
     input: {
       noteId: z.string().min(1).max(50), appendText: z.string().min(1).max(200_000).optional(), newTitle: z.string().trim().min(1).max(200).optional(),
+      replaceBody: z.string().max(NOTE_BODY_MAX).optional().describe("The note's whole new text (Markdown). Replaces everything in it."),
+      edits: z.array(z.object({ find: z.string().min(1).max(20_000), replace: z.string().max(200_000) })).min(1).max(20).optional().describe("Exact passages to replace; each find must occur exactly once."),
       images: imagesArg, files: filesArg, fileCaptions: fileCaptionsArg,
       afterHeading: z.string().trim().min(1).max(200).optional().describe("Put the text/images at the end of the section under this heading (its words, as in the note)."),
       baseUpdatedAt: z.string().max(40), idempotencyKey: idemArg,
@@ -348,7 +366,19 @@ export const TOOLS: ToolDef[] = [
     handler: async (a, ctx) => {
       const id = rowId("note", a.noteId);
       const hasImages = !!(a.images?.length || a.files?.length);
-      if (!a.appendText && !a.newTitle && !hasImages) return fail("invalid_input", "Give appendText, images, newTitle, or a combination.");
+      // Replacing and editing (bug batch 28 Nov, item 6): one way per call.
+      if (a.replaceBody !== undefined || a.edits) {
+        if ((a.replaceBody !== undefined && a.edits) || a.appendText || a.newTitle || hasImages || a.afterHeading) return fail("invalid_input", "replaceBody and edits each go in a call of their own (no appendText, images, afterHeading or newTitle with them). Nothing was changed.");
+        if (a.edits) return keyedApply(ctx, "update_note", a.idempotencyKey, [{ op: "edit_note_text", noteId: id, edits: a.edits, baseUpdatedAt: a.baseUpdatedAt }]);
+        const note = await getNote(ctx.learner.profileId, id);
+        if (!note) return fail("not_found", "No note of the learner's has that id.");
+        const change = { op: "replace_note_body" as const, noteId: id, body: a.replaceBody!, baseUpdatedAt: a.baseUpdatedAt };
+        // A short note is replaced at once; a long one waits for the learner (read here, on the server).
+        // A short note keeping most of its words is replaced at once; a long note, or a replace
+        // removing more than half its words, waits for the learner (read here, on the server).
+        return replaceNeedsReview(note.body, a.replaceBody!) ? applyOrPreview(ctx, "update_note", a.idempotencyKey, [change]) : keyedApply(ctx, "update_note", a.idempotencyKey, [change]);
+      }
+      if (!a.appendText && !a.newTitle && !hasImages) return fail("invalid_input", "Give edits, replaceBody, appendText, images or newTitle.");
       // A rename is a restructure (K-10): it and any text sent with it wait
       // for the learner's approval as one plan, guarded on the version read.
       if (a.newTitle) {
@@ -377,6 +407,29 @@ export const TOOLS: ToolDef[] = [
         return fromReport(ctx, w.report, { images: imagesOut(w.stored) });
       });
     },
+  }),
+  def({
+    name: "set_topic_status", title: "Set where a topic stands", kind: "write", scopes: ["knowledge:write"],
+    description: "Writes. Sets one of the learner's topics to not_started, in_progress or completed, applied at once. Only when the learner says where it stands (\"I've finished WACC\", \"mark DCF as in progress\"): never because time was studied, and never on your own judgement of their mastery. Give topicId (from get_workspace_structure or get_knowledge_map, \"topic:<id>\" or the row id) or subjectId with topicName.",
+    input: {
+      topicId: z.string().min(1).max(50).optional(), subjectId: z.string().min(1).max(50).optional(), topicName: z.string().trim().min(1).max(120).optional(),
+      status: z.enum(["not_started", "in_progress", "completed"]), idempotencyKey: idemArg,
+    },
+    handler: async (a, ctx) => {
+      const at = a.topicId ? { topicId: rowId("topic", a.topicId) } : a.subjectId && a.topicName ? { subjectId: rowId("subject", a.subjectId), topicName: a.topicName } : null;
+      if (!at) return fail("invalid_input", "Give topicId, or subjectId with topicName. Nothing was changed.");
+      return keyedRun(ctx, "set_topic_status", a.idempotencyKey, async () => {
+        const r = await setTopicStatus(ctx.learner.profileId, at, a.status);
+        if (!r.ok) return { result: fail(r.error === "not_found" ? "not_found" : "invalid_input", `${r.message} Nothing was changed.`), outcome: "refused", resources: { error: r.error } };
+        return { result: ok({ topicId: `topic:${r.topicId}`, topic: r.topicName, status: r.status, changed: r.changed, message: r.changed ? `${r.topicName} is now ${r.status.replace("_", " ")}.` : `${r.topicName} was already ${r.status.replace("_", " ")}.` }), outcome: "ok", resources: { items: [{ type: "topic", id: r.topicId }] } };
+      });
+    },
+  }),
+  def({
+    name: "restore_note_version", title: "Undo a change to a note", kind: "write", scopes: ["notes:write"],
+    description: "Writes. Puts back a note's text as it was before the last edit, replace, append or link (or before the version you name: versionId from get_note's versions). The text it replaces is kept as a version too, so this can itself be undone. Applied at once. The title is not changed.",
+    input: { noteId: z.string().min(1).max(50), versionId: z.string().min(1).max(40).optional(), idempotencyKey: idemArg },
+    handler: (a, ctx) => keyedApply(ctx, "restore_note_version", a.idempotencyKey, [{ op: "restore_note_version", noteId: rowId("note", a.noteId), ...(a.versionId ? { versionId: a.versionId } : {}) }]),
   }),
   def({
     name: "delete_note", title: "Delete a note", kind: "structural", destructive: true, scopes: ["notes:write"],

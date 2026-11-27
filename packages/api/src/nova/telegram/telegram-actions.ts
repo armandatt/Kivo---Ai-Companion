@@ -10,7 +10,8 @@
 
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
-import { lastSessionWasAbandoned, loadNovaSession, runNovaSessionCommand } from "../product/session";
+import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
+import { setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -26,7 +27,7 @@ import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
   progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
-  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor,
+  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor, closedSessionText,
 } from "./telegram-replies";
 import type { OptionAction, PlanChangeKind, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
@@ -262,14 +263,41 @@ export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resum
   if (!result.ok) {
     return done(`session_${action}`, { text: notRunningText(ctx, result) }, false);
   }
-  if (!result.session) return done(`session_${action}`, { text: textFor(ctx.language).nothingRunning }, false);
+  if (!result.session) {
+    const saved = result.autoSaved;
+    return done(`session_${action}`, { text: saved ? closedSessionText(ctx.language, saved) : textFor(ctx.language).nothingRunning }, false);
+  }
   return done(`session_${action}`, sessionReply(result.session));
+}
+
+// "I've finished WACC" (item 7, 28 Nov): the topic named is matched, by code,
+// to exactly one of the learner's live topics (name, any case). Two of that
+// name, or none: said so, nothing changed. Worded here, never by the model.
+export async function setTopicStatusFromWords(ctx: ActionContext, topic: string, status: TopicStatus): Promise<ActionResult> {
+  const hi = ctx.language !== "english";
+  const same = await topicsNamed(ctx.profileId, topic);
+  if (same.length === 0) {
+    return done("set_topic_status", { text: hi ? `"${topic}" naam ka koi topic nahi mila. Map pe topic khol ke wahan status set kar sakte ho.` : `I couldn't find a topic called "${topic}". You can set it on the Knowledge Map: open the topic and choose its status.` }, false);
+  }
+  if (same.length > 1) {
+    const where = same.map(t => t.subjectName).join(", ");
+    return done("set_topic_status", { text: hi ? `"${topic}" ek se zyada subjects mein hai (${where}). Map pe sahi wala khol ke status set karo.` : `You have "${topic}" in more than one subject (${where}). Open the right one on the Knowledge Map and set it there.` }, false);
+  }
+  const r = await setTopicStatus(ctx.profileId, { topicId: same[0]!.id }, status, ctx.now);
+  if (!r.ok) return done("set_topic_status", { text: hi ? "Ye save nahi hua. Map pe try karo." : "That didn't save. Try it on the Knowledge Map." }, false);
+  const word = TOPIC_STATUS_LABEL[status].toLowerCase();
+  return done("set_topic_status", { text: r.changed
+    ? (hi ? `Done: ${r.topicName} ab "${word}" hai.` : `Done: ${r.topicName} is now marked ${word}.`)
+    : (hi ? `${r.topicName} pehle se "${word}" hai.` : `${r.topicName} was already marked ${word}.`) });
 }
 
 export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome | null): Promise<ActionResult> {
   const session = await loadNovaSession(ctx.chatId, ctx.now);
   if (!session) {
-    const text = await lastSessionWasAbandoned(ctx.profileId) ? textFor(ctx.language).sessionAbandoned : textFor(ctx.language).nothingRunning;
+    const how = await lastClosure(ctx.profileId);
+    const text = how?.kind === "abandoned" ? textFor(ctx.language).sessionAbandoned
+      : how?.kind === "saved" ? closedSessionText(ctx.language, how.saved)
+      : textFor(ctx.language).nothingRunning;
     return done("ask_outcome", { text }, false);
   }
   return done("ask_outcome", outcomeReply(session.topicName, stated));
@@ -283,6 +311,13 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   }
   // Closed by someone else a moment ago (the web app, a second tap): the
   // evidence is theirs and nothing was written twice.
+  if (result.ended?.needsConfirm) {
+    const m = result.ended.minutes;
+    return done("session_end", { text: ctx.language !== "english"
+      ? `Ye session ${m} min chala, plan se do ghante se zyada. Abhi count nahi kiya: Today pe confirm karo kitna padha, ya kam kar do.`
+      : `That ran ${m} min, more than two hours past its plan, so it isn't counted yet. Confirm how long you studied (or trim it) on Today.` });
+  }
+  if (!result.ended && result.autoSaved) return done("session_end", { text: closedSessionText(ctx.language, result.autoSaved) }, false);
   if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
   return done("session_end", endedReply(result.ended));
 }

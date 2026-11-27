@@ -11,7 +11,9 @@
 export type MapNodeType = "subject" | "topic" | "task" | "note" | "resource";
 export type MapLevel    = "weak" | "developing" | "solid";
 
-export const MAP_NOTES_MAX     = 150;
+// Every note is drawn (28 Nov 2026): far out a note is a cheap pill, and the
+// map culls what is off screen. A guard against a pathological account only.
+export const MAP_NOTES_MAX     = 5000;
 export const MAP_RESOURCES_MAX = 150;
 
 interface NodeBase {
@@ -50,8 +52,16 @@ export type MapNode =
       studied?: boolean;
       // What the plan said about it: an explanation, a milestone's effort, goals and done-when.
       details?: { explanation?: string | null; weeks?: number | null; hoursPerWeek?: number | null; goals?: string[]; exercises?: string[]; project?: string | null; completion?: string | null };
-      // Finished sessions that fed the topic. 0: declared, never studied.
+      // Finished sessions on the topic (completed, ten minutes or more, the
+      // way Progress counts them). 0: declared, never studied.
       sessions: number;
+      // Their minutes together. Absent from an older API.
+      focusedMinutes?: number;
+      // Where it stands (bug batch 28 Nov, item 7): the learner's word when
+      // statusSet, else implied (in_progress once it has a session). Absent
+      // from an older API.
+      status?: "not_started" | "in_progress" | "completed";
+      statusSet?: boolean;
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
       // The review schedule's date has come (retention-engine.ts isDueForReview),

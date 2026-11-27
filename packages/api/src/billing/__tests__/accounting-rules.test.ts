@@ -133,7 +133,9 @@ describe("Nova credits from measured cost", () => {
 describe("feature classes", () => {
   it("class every usage feature, and only the named ones are not the learner's", () => {
     const notNova = USAGE_FEATURES.filter(f => featureClass(f) !== "nova");
-    expect(notNova.sort()).toEqual(["capture_placement", "extension_agent", "extension_intent", "other", "rex", "saved_page_processing", "saved_page_retry", "scheduled_nova_message"].sort());
+    // prepared_plan (PR #113 B.3): the day plan Nova prepares at check-in is Kivo's, never the learner's allowance.
+    expect(notNova.sort()).toEqual(["capture_placement", "extension_agent", "extension_intent", "other", "prepared_plan", "rex", "saved_page_processing", "saved_page_retry", "scheduled_nova_message"].sort());
+    expect(featureClass("prepared_plan")).toBe("kivo");
     expect(featureClass("extension_agent")).toBe("browser");
     expect(featureClass("scheduled_nova_message")).toBe("kivo");
     expect(featureClass("rex")).toBe("system");

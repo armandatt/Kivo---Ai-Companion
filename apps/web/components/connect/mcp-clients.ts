@@ -9,6 +9,17 @@
 
 export const MCP_URL = 'https://www.thekivo.in/api/mcp'
 
+// The one address every assistant connects to (bug batch 28 Nov, item 8): the
+// production URL on Kivo itself (thekivo.in, with or without www), and this
+// server's own address anywhere else (local development, staging), so a copy
+// made there connects to that server.
+export function mcpAddressFor(origin: string): string {
+  try {
+    const host = new URL(origin).hostname
+    return host === 'thekivo.in' || host === 'www.thekivo.in' ? MCP_URL : `${new URL(origin).origin}/api/mcp`
+  } catch { return MCP_URL }
+}
+
 // The setup-and-use demonstration on the guide (founder review #04): a real
 // recording of adding Kivo in Claude or ChatGPT, signing in, allowing, a read
 // and a write that reaches Kivo. None exists yet (it needs the owner's own
@@ -79,7 +90,9 @@ export const MCP_TOOLS: Array<{ group: string; items: Array<[name: string, what:
     ['get_note', 'Read one note, and look at its images when asked', 'read'],
     ['list_recent_notes', 'Notes you changed most recently', 'read'],
     ['create_note', 'Create a note, with screenshots or images if given, optionally filed under a subject or topic', 'write'],
-    ['update_note', 'Add text or images to a note, at the end or under a heading (at once), or rename it (needs approval)', 'write'],
+    ['update_note', 'Edit exact passages of a note, replace its whole text (needs approval for a note of 2,000+ characters or a replace removing more than half its text), add text or images at the end or under a heading, or rename it (needs approval). The text before each change is kept.', 'write'],
+    ['restore_note_version', 'Undo a change to a note: put back its text as it was before the last edit, replace or addition', 'write'],
+    ['set_topic_status', 'Mark a topic not started, in progress or completed, when you say where it stands', 'write'],
     ['link_notes', 'Link a note to another note or a topic', 'write'],
     ['move_note', 'Refile a note under another subject or topic', 'approval'],
     ['delete_note', 'Delete a note', 'approval'],

@@ -1041,3 +1041,9 @@ export async function backfillLibrary(options: { apply: boolean; batch?: number 
   }
   return { scanned, typed, keyed };
 }
+
+// Pages the learner saved since a moment, newest first (title and filing only):
+// what plan-context.ts tells the planning model (item 12, 28 Nov).
+export async function recentSavedPages(profileId: string, since: Date, take: number): Promise<Array<{ title: string; topicName: string | null }>> {
+  return prisma.novaLearningEvent.findMany({ where: { profileId, eventType: "resource_saved", occurredAt: { gte: since } }, orderBy: { occurredAt: "desc" }, take, select: { title: true, topicName: true } });
+}

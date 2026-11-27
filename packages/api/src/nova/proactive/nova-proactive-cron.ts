@@ -18,6 +18,8 @@
 // window as before. Every learner the tick looks at ends in exactly one
 // outcome, and the tick logs the count of each.
 
+import { preparePlan, loadPreparedPlan } from "../product/prepared-plan";
+import { publicAppUrl } from "../../auth/auth-deps";
 import { prisma } from "@repo/db/client";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { getOverdueTopics } from "../engines/retention-engine";
@@ -351,13 +353,18 @@ async function deliver(
   const rec    = quiet || type === "task_due" ? null : view.recommendation;
 
   let text = row.text;
+  let preparedReady = false;
   if (!text) {
     const lines: string[] = [];
     // A check-in's reason is that they asked for it; that is not a fact to tell them.
     if (fresh && type !== "daily_checkin") lines.push(capitalize(fresh.candidate.reason));
     if (rec)   lines.push(`Recommended now: ${rec.topicName} (${rec.subjectName}), ${rec.durationMinutes} min${rec.reasons[0] ? `, because ${rec.reasons[0]}` : ""}`);
+    // Item 12 (28 Nov): at check-in Nova prepares today's plan (full context,
+    // kept apart, never applied by itself) and says it is ready on Today.
+    const prepared = type === "daily_checkin" && process.env.NOVA_PREPARED_PLANS !== "off" ? await prepareForCheckin(profile.id, chatId) : null;
+    if (prepared) { preparedReady = true; lines.push(`Nova prepared today's plan, ready to take or change on Today: ${prepared.join(", ")}`); }
     // A check-in with nothing to recommend asks; it never invents a plan.
-    if (type === "daily_checkin" && !rec) lines.push("Nothing is planned for today yet");
+    else if (type === "daily_checkin" && !rec) lines.push("Nothing is planned for today yet");
     if (fresh?.windowBasis === "learning_dna" && !quiet) lines.push("Their recorded sessions usually fall around this time of day");
     const input: ProactiveWordingInput = {
       type, studentName: profile.user.displayName, facts: lines,
@@ -408,6 +415,9 @@ async function deliver(
     for (let i = 0; i < all.length; i += 2) buttons.push(all.slice(i, i + 2));
   }
 
+  // The prepared plan opens on Today, where it is taken, changed or set aside.
+  // Both ways in, the learner's choice: Nova's prepared plan, or their own.
+  if (preparedReady) buttons.push([{ text: "See Nova's plan", url: `${publicAppUrl()}/home?plan=prepared` }, { text: "Plan my own way", url: `${publicAppUrl()}/home?plan=own` }]);
   const result = await client.sendMessage(chatId, text, buttons);
   const log = (outcome: string) => console.log(JSON.stringify({
     ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type, occurrence: row.occurrenceKey,
@@ -442,3 +452,23 @@ async function deliver(
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Prepares today's plan at check-in (one model call, bounded by the copilot's
+// own deadline). The titles it would add, or null (nothing to plan from, or it
+// failed: Today prepares it on opening instead).
+async function prepareForCheckin(profileId: string, chatId: string): Promise<string[] | null> {
+  try {
+    const run = (async () => {
+      const made = await preparePlan(profileId, chatId, "check_in");
+      if (!made) return null;
+      const view = await loadPreparedPlan(profileId, chatId);
+      const titles = view?.pending.items.filter(i => i.change === "added").map(i => i.title) ?? [];
+      return titles.length ? titles.slice(0, 5) : null;
+    })();
+    // Bounded by the copilot's own deadline (COPILOT_DEADLINE_MS): no timer here.
+    return await run;
+  } catch (err) {
+    console.error(JSON.stringify({ layer: "nova_proactive", event: "prepare_plan_failed", profileId, error: err instanceof Error ? err.name : "unknown" }));
+    return null;
+  }
+}

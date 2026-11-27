@@ -790,6 +790,10 @@ model NovaAcademicProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+
+  // How the learner reads notes (bug batch 28 Nov, item 10): "<font>:<size>",
+  // font sans | serif | mono, size s | m | l. Null: the default (sans, m).
+  noteReading String?
 }
 
 model NovaSubject {
@@ -856,6 +860,13 @@ model NovaTopicMastery {
   // What the plan said about it: an explanation and its sources, and for a
   // milestone its effort, goals, exercises, project, done-when and resources.
   details  Json?
+  // Where the learner says the topic stands (bug batch 28 Nov, item 7):
+  // "not_started" | "in_progress" | "completed". Null: not said; shown as
+  // in_progress once it has a finished session, else not_started
+  // (product/topic-status.ts). Only the learner (map, filing, Nova, an
+  // assistant on their behalf) completes a topic; time never does.
+  status          String?
+  statusChangedAt DateTime?
   parent   NovaTopicMastery?  @relation("NovaTopicTree", fields: [parentId], references: [id], onDelete: SetNull)
   children NovaTopicMastery[] @relation("NovaTopicTree")
 
@@ -998,12 +1009,34 @@ model NovaNote {
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   images  NovaNoteImage[]
   attachments NovaNoteAttachment[]
+  versions NovaNoteVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([profileId, updatedAt])
   @@index([profileId, subjectId])
+}
+
+// A note as it was just before a change that rewrote its text (bug batch
+// 28 Nov, item 6): Kivo Connect's replace, edit and append, and a restore.
+// The newest NOTE_VERSIONS_KEPT per note are kept; restoring one saves the
+// current text as a version first, so an undo can itself be undone.
+model NovaNoteVersion {
+  id        String   @id @default(cuid())
+  noteId    String
+  profileId String
+  title     String
+  body      String   @db.Text
+  // What replaced it: "replace" | "edit" | "append" | "insert" | "link" | "restore".
+  reason    String
+  // Who made that change: "kivo_connect" (an assistant) or "web".
+  source    String   @default("kivo_connect")
+  createdAt DateTime @default(now())
+
+  note NovaNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, createdAt])
 }
 
 // A highlight the learner made on a PDF in the reader beside a note. Keyed by
@@ -2181,4 +2214,24 @@ model NovaImportJob {
 
   @@unique([profileId, packageId])
   @@index([profileId, createdAt])
+}
+
+// The plan Nova prepares for a learner's day at their check-in time (bug
+// batch 28 Nov, item 12): one full-context proposal, kept apart from their
+// flow. Never applied by itself: the learner takes it (all or the items they
+// keep), tweaks it with Nova, or sets it aside. One per learner per local day.
+model NovaPreparedPlan {
+  id         String   @id @default(cuid())
+  profileId  String
+  day        String   // the learner's local day, YYYY-MM-DD
+  ops        Json     // FlowOp[] (adds), as proposed
+  reply      String   @db.Text   // Nova's few words on why this day
+  // ready | taken | dismissed
+  status     String   @default("ready")
+  // check_in (prepared by the scheduler) | first_open (prepared when Today was opened)
+  trigger    String
+  preparedAt DateTime @default(now())
+  closedAt   DateTime?
+
+  @@unique([profileId, day])
 }

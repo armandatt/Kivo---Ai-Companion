@@ -16,20 +16,35 @@ import {
   setSessionLength,
   setSessionDetails,
   setSessionTopic,
+  fileEndedSession,
+  markUnconfirmed,
+  confirmSessionTime,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
 import { parseReflection } from "./focus-context";
+import { setTopicStatus } from "./topic-status";
 import type { ReflectionResponse } from "./focus-context.types";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
-import { ABANDONED_STATUS } from "../engines/session-clock";
-import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
+import { ABANDONED_STATUS, AUTO_SAVED_PAUSED, AUTO_SAVED_RUNNING, UNCONFIRMED_STATUS, abandonmentPlanMinutes, needsTimeConfirm } from "../engines/session-clock";
+import type { NovaAutoSavedSession, NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
   const snapshot = await loadStudySnapshot(platformChatId);
   if (!snapshot.activeSession) return null;
   return { ...toSessionView(snapshot.activeSession, now), details: await detailsOf(snapshot.activeSession.id) };
+}
+
+// The running session, and when nothing runs, the last session if it was a
+// paused one saved for the learner (GET /api/nova/session), so the page can
+// say so instead of the session silently going away.
+export async function loadNovaSessionState(platformChatId: string, now = new Date()): Promise<{ session: NovaSessionView | null; autoSaved: NovaAutoSavedSession | null }> {
+  const snapshot = await loadStudySnapshot(platformChatId);
+  if (snapshot.activeSession) return { session: { ...toSessionView(snapshot.activeSession, now), details: await detailsOf(snapshot.activeSession.id) }, autoSaved: null };
+  if (!snapshot.profileId) return { session: null, autoSaved: null };
+  const how = await lastClosure(snapshot.profileId);
+  return { session: null, autoSaved: how?.kind === "saved" ? how.saved : null };
 }
 
 // A session's Quick Focus details, read only for the page.
@@ -53,12 +68,48 @@ const SESSION_ABANDONED = {
 // Whether the learner's most recent session is one that was closed as
 // abandoned. False again as soon as they start another.
 export async function lastSessionWasAbandoned(profileId: string): Promise<boolean> {
+  return (await lastClosure(profileId))?.kind === "abandoned";
+}
+
+// The words for a paused session that was saved for the learner.
+export function autoSavedMessage(minutes: number, counted: boolean): string {
+  const time = `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return counted
+    ? `Your paused session was left paused for over two hours, so it was saved with the ${time} you studied before the pause.`
+    : `Your paused session was left paused for over two hours, so it was saved with the ${time} you studied before the pause. Under ten minutes isn't counted in Progress.`;
+}
+
+// How the learner's most recent session (not one they reported afterwards)
+// was closed for them, if it was: abandoned, or saved after a long pause.
+// null once they start another, or when they closed it themselves.
+export async function lastClosure(profileId: string): Promise<{ kind: "abandoned" } | { kind: "saved"; saved: NovaAutoSavedSession } | null> {
   const last = await prisma.novaStudySession.findFirst({
     where:   { profileId, activityType: { not: SELF_REPORTED_ACTIVITY } },
     orderBy: { createdAt: "desc" },
-    select:  { status: true },
+    select:  { id: true, status: true, durationMinutes: true, topicName: true, currentFocus: true, executionReport: true },
   });
-  return last?.status === ABANDONED_STATUS;
+  if (!last) return null;
+  if (last.status === ABANDONED_STATUS) return { kind: "abandoned" };
+  const report = last.executionReport as { autoClosed?: unknown; pausedAt?: unknown; backfilled?: unknown; endedBy?: unknown } | null;
+  // Its time waits for the learner's word (B.1): said on their return.
+  if (last.status === UNCONFIRMED_STATUS) {
+    return { kind: "saved", saved: {
+      sessionId: last.id, label: last.topicName ?? last.currentFocus ?? null, topicName: last.topicName, minutes: last.durationMinutes, counted: false,
+      pausedAt: null, needsConfirm: true,
+      message: `This session ran ${last.durationMinutes} minutes, well past its plan, so it isn't counted yet. Confirm how long you studied, or trim it.`,
+    } };
+  }
+  // Saved later by the backfill (persistence/session-backfill.ts): old news, not announced.
+  if (last.status !== "completed" || (report?.autoClosed !== AUTO_SAVED_PAUSED && report?.autoClosed !== AUTO_SAVED_RUNNING) || report?.endedBy || report.backfilled) return null;
+  const counted = last.durationMinutes >= COUNTED_SESSION_MINUTES;
+  return { kind: "saved", saved: {
+    sessionId: last.id, label: last.topicName ?? last.currentFocus ?? null, topicName: last.topicName,
+    minutes: last.durationMinutes, counted,
+    pausedAt: typeof report.pausedAt === "string" ? report.pausedAt : null,
+    message: report?.autoClosed === AUTO_SAVED_RUNNING
+      ? `Your session was left running past its plan, so it was saved with the ${last.durationMinutes} minutes on its clock.${counted ? "" : " Under ten minutes isn't counted in Progress."}`
+      : autoSavedMessage(last.durationMinutes, counted),
+  } };
 }
 
 export async function runNovaSessionCommand(
@@ -75,6 +126,22 @@ export async function runNovaSessionCommand(
     return { ok: false, error: "onboarding_incomplete", message: "Finish setting up with Nova first." };
   }
 
+  // Confirming or trimming an unconfirmed session's time (B.1).
+  if (command.action === "confirm_time") {
+    const done = await confirmSessionTime(profileId, command.sessionId, command.minutes);
+    if (!done) return { ok: false, error: "invalid", message: "That session has nothing to confirm." };
+    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null };
+  }
+
+  // Filing a finished session touches no open session and no clock.
+  if (command.action === "file") {
+    const named = await fileEndedSession(profileId, command.sessionId, command.subjectId, command.topicName);
+    if (!named) return { ok: false, error: "invalid", message: "That session can't be filed there. It may already be on a topic." };
+    // Where the topic stands, when the learner said so while filing (item 7).
+    const st = command.topicStatus ? await setTopicStatus(profileId, { subjectId: command.subjectId, topicName: named }, command.topicStatus, now) : null;
+    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null, filed: { sessionId: command.sessionId, subjectId: command.subjectId, topicName: named, ...(st?.ok ? { topicStatus: st.status } : {}) } };
+  }
+
   // An End is taken as it comes: a session that is still open is ended as a
   // session, however long it ran (persistence/nova-persistence.ts,
   // endStudySession). Any other command first closes a session that is past
@@ -83,12 +150,20 @@ export async function runNovaSessionCommand(
   const left   = command.action !== "end" && snapshot.activeSession !== null
     && await abandonIfStale(snapshot.activeSession.id, now).catch(() => false);
   const active = left ? null : snapshot.activeSession;
-  if (left && command.action !== "start") return SESSION_ABANDONED;
+  // A Pause or Resume that finds its session already closed for the learner
+  // says how: saved (paused too long), or abandoned (left running).
+  const closedForThem = async (): Promise<NovaSessionResponse | null> => {
+    const how = await lastClosure(profileId);
+    if (how?.kind === "abandoned") return SESSION_ABANDONED;
+    if (how?.kind === "saved") return { ok: true, session: null, ended: null, autoSaved: how.saved };
+    return null;
+  };
+  if (left && command.action !== "start") return (await closedForThem()) ?? SESSION_ABANDONED;
   const check  = checkSessionCommand(command, active);
   if (check.verdict === "reject") {
     // "Nothing is running" has a reason worth giving when the reason is that
     // the last session was closed for them.
-    if (check.error === "no_active_session" && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
+    if (check.error === "no_active_session") { const why = await closedForThem(); if (why) return why; }
     return { ok: false, error: check.error, message: check.message };
   }
   if (check.verdict === "noop") {
@@ -125,6 +200,7 @@ export async function runNovaSessionCommand(
       select: { id: true },
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
+    const studied = Math.floor(sessionElapsedSeconds(active, now) / 60);
     const closed = await persistSessionEnd({
       userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface,
       outcome: command.outcome, now,
@@ -132,7 +208,7 @@ export async function runNovaSessionCommand(
     // Not closed by this call. Either it was ended elsewhere a moment ago
     // (nothing was written twice, and there is nothing new to report), or
     // the sweep abandoned it first, which the learner is told.
-    if (!closed && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
+    if (!closed) { const why = await closedForThem(); if (why) return why; }
     if (closed) {
       ended = {
         sessionId: active.id,
@@ -142,6 +218,11 @@ export async function runNovaSessionCommand(
         topicRecorded: active.subjectId !== null && Boolean(active.topicName),
         counted:       sessionElapsedSeconds(active, now) >= COUNTED_SESSION_MINUTES * 60,
       };
+      // More than two hours past its plan (B.1): recorded in full, its time
+      // waiting for the learner's word before Progress counts it.
+      if (needsTimeConfirm(studied, abandonmentPlanMinutes(active.plannedDurationMinutes)) && await markUnconfirmed(profileId, active.id, now)) {
+        ended = { ...ended, counted: false, needsConfirm: true };
+      }
     }
   }
 

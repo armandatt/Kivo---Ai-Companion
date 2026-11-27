@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SHORTCUTS, enterAction, enterTarget, isMacPlatform, isTypingTarget, keyLabel, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
+import { SHORTCUTS, clickAction, enterAction, enterTarget, openHrefOf, isMacPlatform, isTypingTarget, keyLabel, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
 
 test('each listed key does what the help panel says', () => {
   const cases: Array<[Parameters<typeof shortcutFor>[0], string]> = [
@@ -115,4 +115,24 @@ test('Enter explores; a card with nothing inside opens details; the explored car
   assert.equal(enterAction('leaf', { exploring: null, explorable }), 'details')
   assert.equal(enterAction('unit', { exploring: 'unit', explorable }), 'already')
   assert.equal(enterAction(null, { exploring: null, explorable }), 'none')
+})
+
+// Bug batch 28 Nov, item 5: notes could not be opened from the map. A
+// double-click on a note selected it, then the second click closed its
+// details, and the double-click itself did nothing; Enter only showed details.
+test('REGRESSION item 5: Enter and double-click open a note or saved page; the second click of a double-click keeps the details', () => {
+  const note = { type: 'note', href: '/notes/n1' }
+  assert.equal(openHrefOf(note), '/notes/n1')
+  assert.equal(openHrefOf({ type: 'resource', href: '/saved?page=p1' }), '/saved?page=p1')
+  assert.equal(openHrefOf({ type: 'topic', href: '/knowledge?topic=t' }), null, 'a topic is explored, not left')
+  assert.equal(openHrefOf({ type: 'note' }), null)
+
+  const opens = (id: string) => id === 'note:n1'
+  assert.equal(enterAction('note:n1', { exploring: null, explorable: () => false, opens }), 'open')
+  assert.equal(enterAction('topic:t', { exploring: null, explorable: () => false, opens }), 'details', 'unchanged for other cards')
+  assert.equal(enterAction('topic:t', { exploring: null, explorable: () => true, opens }), 'explore')
+
+  assert.equal(clickAction(null, 'note:n1', 1), 'select')
+  assert.equal(clickAction('note:n1', 'note:n1', 2), 'keep', 'the double-click’s second click')
+  assert.equal(clickAction('note:n1', 'note:n1', 1), 'toggle', 'a later single click still hides the details')
 })
