@@ -17,3 +17,21 @@ describe("REGRESSION item 6: applyExactEdits", () => {
     expect(applyExactEdits("Phase One", [{ find: "phase one", replace: "x" }]).ok).toBe(false);
   });
 });
+
+// PR #113 B.2: a whole-text replace waits for approval when the note is long,
+// or when it removes more than half the note's words, whatever its length.
+import { removedShare, replaceNeedsReview } from "../../connect/changes";
+describe("REGRESSION B.2: when a replace needs approval", () => {
+  it("measures the share of words removed", () => {
+    expect(removedShare("a b c d", "a b c d e")).toBe(0);
+    expect(removedShare("a b c d", "a b")).toBe(0.5);
+    expect(removedShare("a b c d", "x y z")).toBe(1);
+    expect(removedShare("", "x")).toBe(0);
+  });
+  it("long, or more than half removed: reviewed; short and mostly kept: at once", () => {
+    expect(replaceNeedsReview("x ".repeat(1000), "x ".repeat(1000))).toBe(true);
+    expect(replaceNeedsReview("one two three four", "one two three four five")).toBe(false);
+    expect(replaceNeedsReview("one two three four", "one two")).toBe(false);
+    expect(replaceNeedsReview("one two three four", "one")).toBe(true);
+  });
+});

@@ -68,6 +68,26 @@ export type Change = z.infer<typeof ChangeSchema>;
 // A note at least this long is not replaced whole without the learner's
 // approval (update_note's replaceBody; bug batch 28 Nov, item 6).
 export const REPLACE_REVIEW_CHARS = 2_000;
+// Nor, whatever its length, is a replace that removes more than this share of
+// the note's existing words (owner decision 28 Nov, PR #113 B.2).
+export const REPLACE_REVIEW_REMOVED = 0.5;
+
+// The share of the old text's words (case-insensitive, as a multiset) that
+// the new text no longer has. 0 for an empty note. Pure.
+export function removedShare(before: string, after: string): number {
+  const words = (t: string) => t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const old = words(before);
+  if (!old.length) return 0;
+  const left = new Map<string, number>();
+  for (const w of words(after)) left.set(w, (left.get(w) ?? 0) + 1);
+  let kept = 0;
+  for (const w of old) { const n = left.get(w) ?? 0; if (n > 0) { kept++; left.set(w, n - 1); } }
+  return 1 - kept / old.length;
+}
+
+// Whether a whole-text replace of `before` by `after` waits for the learner.
+export const replaceNeedsReview = (before: string, after: string) =>
+  before.length >= REPLACE_REVIEW_CHARS || removedShare(before, after) > REPLACE_REVIEW_REMOVED;
 
 export const DESTRUCTIVE = new Set<Change["op"]>(["remove_topic", "remove_subject", "delete_note"]);
 export const RESTRUCTURE = new Set<Change["op"]>(["rename_subject", "rename_topic", "rename_note", "move_subject", "move_topic", "file_note"]);

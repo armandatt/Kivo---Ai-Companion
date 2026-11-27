@@ -12,7 +12,7 @@ import { getNote, searchNoteBodies } from "../nova/product/notes";
 import { workspaceSummaries } from "../nova/product/workspaces";
 import type { Scope } from "./oauth-rules";
 import type { ConnectLearner } from "./learner";
-import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, REPLACE_REVIEW_CHARS, type Change, type ChangeReport } from "./changes";
+import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, REPLACE_REVIEW_CHARS, replaceNeedsReview, type Change, type ChangeReport } from "./changes";
 import { NOTE_BODY_MAX } from "../nova/product/notes.types";
 import { listNoteVersions } from "../nova/product/note-versions";
 import { setTopicStatus } from "../nova/product/topic-status";
@@ -351,7 +351,7 @@ export const TOOLS: ToolDef[] = [
     name: "update_note", title: "Edit, add to or rename a note", kind: "write", scopes: ["notes:write"], meta: { "openai/fileParams": ["files"] },
     description: "Writes. Changes an existing note in ONE of these ways per call. Always send baseUpdatedAt from get_note: if the note changed since, nothing is overwritten and you get a conflict.\n"
       + "1. edits [{ find, replace }]: replace exact passages (copy them from get_note, character for character). Each find must occur exactly once in the note, or nothing at all is changed and you are told which edit failed (missing, or found several times: give a longer passage). Applied at once. Use this to correct or rewrite part of a note.\n"
-      + `2. replaceBody: the note's whole new text. Applied at once for a note under ${REPLACE_REVIEW_CHARS.toLocaleString("en-US")} characters; a longer note waits for the learner's approval on Kivo (approveUrl, planId, then check_approval). Prefer edits for a long note.\n`
+      + `2. replaceBody: the note's whole new text. Applied at once only for a note under ${REPLACE_REVIEW_CHARS.toLocaleString("en-US")} characters that keeps at least half of its words; a longer note, or a replace removing more than half of the existing text, waits for the learner's approval on Kivo (approveUrl, planId, then check_approval). Prefer edits.\n`
       + "3. appendText and/or images (screenshots, diagrams): added, nothing already there changed; at the end under a dated divider, or at the end of the section afterHeading. Images: images [{ data (base64) | url, caption }], or in ChatGPT the attached files. Text or an image already in the note is not added twice.\n"
       + "4. newTitle: renaming is reviewed by the learner (approveUrl, planId, check_approval).\n"
       + "Before every edit, replace or append the note's current text is kept as a version: restore_note_version puts it back. " + NO_BYTES_HINT,
@@ -374,7 +374,9 @@ export const TOOLS: ToolDef[] = [
         if (!note) return fail("not_found", "No note of the learner's has that id.");
         const change = { op: "replace_note_body" as const, noteId: id, body: a.replaceBody!, baseUpdatedAt: a.baseUpdatedAt };
         // A short note is replaced at once; a long one waits for the learner (read here, on the server).
-        return note.body.length < REPLACE_REVIEW_CHARS ? keyedApply(ctx, "update_note", a.idempotencyKey, [change]) : applyOrPreview(ctx, "update_note", a.idempotencyKey, [change]);
+        // A short note keeping most of its words is replaced at once; a long note, or a replace
+        // removing more than half its words, waits for the learner (read here, on the server).
+        return replaceNeedsReview(note.body, a.replaceBody!) ? applyOrPreview(ctx, "update_note", a.idempotencyKey, [change]) : keyedApply(ctx, "update_note", a.idempotencyKey, [change]);
       }
       if (!a.appendText && !a.newTitle && !hasImages) return fail("invalid_input", "Give edits, replaceBody, appendText, images or newTitle.");
       // A rename is a restructure (K-10): it and any text sent with it wait

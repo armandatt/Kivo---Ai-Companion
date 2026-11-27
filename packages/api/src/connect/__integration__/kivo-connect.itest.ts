@@ -599,10 +599,15 @@ test("REGRESSION item 6: update_note edits, replaces, keeps versions, and undoes
   // Mixing ways in one call is refused.
   assert.equal((await call("update_note", { noteId: id, edits: [{ find: "Paxos", replace: "P" }], appendText: "x", baseUpdatedAt: (await now()).updatedAt }, c.ctx)).ok, false);
 
-  // A short note is replaced at once.
-  const replaced = await call("update_note", { noteId: id, replaceBody: "# Paxos\nRewritten whole.", baseUpdatedAt: (await now()).updatedAt }, c.ctx);
+  // A short note that keeps most of its words is replaced at once.
+  const replaced = await call("update_note", { noteId: id, replaceBody: "# Paxos\nPaxos has two phases.\nPhase one: prepare.\nPhase two: accept.\nRewritten whole.", baseUpdatedAt: (await now()).updatedAt }, c.ctx);
   assert.equal(replaced.ok, true, JSON.stringify(replaced));
-  assert.equal((await now()).body, "# Paxos\nRewritten whole.");
+  assert.equal((await now()).body, "# Paxos\nPaxos has two phases.\nPhase one: prepare.\nPhase two: accept.\nRewritten whole.");
+
+  // PR #113 B.2: removing more than half of a short note's text waits for approval too.
+  const wiped = await call("update_note", { noteId: id, replaceBody: "Something else entirely.", baseUpdatedAt: (await now()).updatedAt }, c.ctx);
+  assert.equal(wiped.error, "approval_required", JSON.stringify(wiped));
+  assert.match((await now()).body, /Rewritten whole/, "nothing replaced before approval");
 
   // Undo twice: back to the edit, then back to the original.
   assert.equal((await call("restore_note_version", { noteId: id }, c.ctx)).ok, true);

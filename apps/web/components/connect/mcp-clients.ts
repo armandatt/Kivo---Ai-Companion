@@ -90,7 +90,7 @@ export const MCP_TOOLS: Array<{ group: string; items: Array<[name: string, what:
     ['get_note', 'Read one note, and look at its images when asked', 'read'],
     ['list_recent_notes', 'Notes you changed most recently', 'read'],
     ['create_note', 'Create a note, with screenshots or images if given, optionally filed under a subject or topic', 'write'],
-    ['update_note', 'Edit exact passages of a note, replace its whole text (a long note needs approval), add text or images at the end or under a heading, or rename it (needs approval). The text before each change is kept.', 'write'],
+    ['update_note', 'Edit exact passages of a note, replace its whole text (needs approval for a note of 2,000+ characters or a replace removing more than half its text), add text or images at the end or under a heading, or rename it (needs approval). The text before each change is kept.', 'write'],
     ['restore_note_version', 'Undo a change to a note: put back its text as it was before the last edit, replace or addition', 'write'],
     ['set_topic_status', 'Mark a topic not started, in progress or completed, when you say where it stands', 'write'],
     ['link_notes', 'Link a note to another note or a topic', 'write'],
