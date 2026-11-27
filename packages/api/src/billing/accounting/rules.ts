@@ -197,6 +197,7 @@ export type FeatureClass = "nova" | "browser" | "kivo" | "system";
 const FEATURE_CLASS: Record<string, FeatureClass> = {
   extension_agent: "browser",
   scheduled_nova_message: "kivo",   // proactive Telegram messages Nova decides to send
+  prepared_plan: "kivo",            // the day plan Nova prepares at check-in (PR #113 B.3)
   capture_placement: "kivo",        // auto-filing a capture (small model)
   extension_intent: "kivo",         // routing a side-panel message to Ask or the agent
   saved_page_processing: "kivo",    // background reading of a saved page

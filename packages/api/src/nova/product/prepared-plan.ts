@@ -15,6 +15,23 @@ import { loadDayFlow } from "./day-flow";
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { localHour, localMinute, resolveTimezone } from "../engines/learner-calendar";
 import type { FlowOp, PendingChange } from "./day-flow.types";
+import { recentNoteActivity } from "./notes";
+import { startInteraction } from "../../services/llm-usage";
+
+// Only for learners active in the last ACTIVE_DAYS days (owner decision 28 Nov,
+// PR #113 B.3): a study session, a note edited, today's flow touched or a
+// message to Nova. Nobody's plan is prepared for an account nobody opens.
+export const ACTIVE_DAYS = 7;
+export async function activeWithin(profileId: string, platformChatId: string, now = new Date(), days = ACTIVE_DAYS): Promise<boolean> {
+  const since = new Date(now.getTime() - days * 86_400_000);
+  const [sessions, notes, flows, messages] = await Promise.all([
+    prisma.novaStudySession.count({ where: { profileId, sessionDate: { gte: since } } }),
+    recentNoteActivity(profileId, since, 1),
+    prisma.novaDayFlow.count({ where: { profileId, updatedAt: { gte: since } } }),
+    prisma.companionMessage.count({ where: { user: { platformChatId }, role: "user", createdAt: { gte: since } } }),
+  ]);
+  return sessions > 0 || notes.length > 0 || flows > 0 || messages > 0;
+}
 
 export type PreparedTrigger = "check_in" | "first_open";
 
@@ -38,7 +55,14 @@ export async function preparePlan(
   const flow = await loadDayFlow(profileId, platformChatId);
   const had = await prisma.novaPreparedPlan.findUnique({ where: { profileId_day: { profileId, day: flow.day } }, select: { id: true, day: true } });
   if (had) return had;
-  const res = await ask(profileId, platformChatId, { message: PROPOSE_PLAN_MESSAGE, proposePlan: true, version: flow.version });
+  if (process.env.NOVA_PREPARED_PLANS === "off") return null;
+  if (!await activeWithin(profileId, platformChatId)) return null;
+  // Its model call is recorded in the AI telemetry as "prepared_plan" (B.3),
+  // background at check-in; never counted against the learner's allowance.
+  const res = await startInteraction({
+    feature: "prepared_plan", surface: trigger === "check_in" ? "background" : "web", learner: platformChatId, profileId,
+    requestId: `prepared:${profileId}:${flow.day}`, isBackground: trigger === "check_in", isAllowanceCounted: false,
+  }, () => ask(profileId, platformChatId, { message: PROPOSE_PLAN_MESSAGE, proposePlan: true, version: flow.version }));
   if (!res.ok || !res.pending) return null;
   try {
     const row = await prisma.novaPreparedPlan.create({

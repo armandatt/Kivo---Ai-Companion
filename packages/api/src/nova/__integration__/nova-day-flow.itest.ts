@@ -329,12 +329,14 @@ test("REGRESSION item 12: the prepared plan is made once a day, never applied by
   const L = await learner();
   let calls = 0;
   const ask = (async (p: string, c: string, raw: unknown) => { calls++; return askCopilot(p, c, raw, (async () => JSON.stringify({ intent: "propose", reply: "Today: the assignment, then SQL joins.", ops: [{ op: "add", ref: "c1" }] })) as never) }) as never;
+  // Active this week (B.3: only active learners get a prepared plan).
+  await changeDayFlow({ profileId: L.profileId, platformChatId: L.id, version: 0, by: "learner", ops: [{ op: "set_intention", text: "A good day" }] });
   const made = await preparePlan(L.profileId, L.id, "check_in", ask);
   assert.ok(made);
   assert.ok(await preparePlan(L.profileId, L.id, "check_in", ask));
   assert.equal(calls, 1, "once a day");
   const flow = await loadDayFlow(L.profileId, L.id);
-  assert.equal(flow.saved, false, "the flow is untouched");
+  assert.equal(flow.items.length, 0, "the flow holds nothing it did not hold: the plan is kept apart");
   const view = await loadPreparedPlan(L.profileId, L.id);
   assert.ok(view && view.pending.ops.length >= 3 && view.trigger === "check_in");
   assert.equal(view!.reply, "Today: the assignment, then SQL joins.");
@@ -343,4 +345,27 @@ test("REGRESSION item 12: the prepared plan is made once a day, never applied by
   assert.ok(taken.ok);
   assert.equal(await closePreparedPlan(L.profileId, view!.day, "taken"), true);
   assert.equal(await loadPreparedPlan(L.profileId, L.id), null, "not offered again today");
+});
+
+// PR #113 B.3: plans are prepared only for learners active in the last seven
+// days, the call is attributed to "prepared_plan" in the AI telemetry, and
+// NOVA_PREPARED_PLANS=off turns it off.
+test("REGRESSION B.3: no prepared plan for an inactive learner or when switched off; its model call is tagged prepared_plan", async () => {
+  const { preparePlan, activeWithin } = await import("../product/prepared-plan.js");
+  const { currentUsageContext } = await import("../../services/llm-usage.js");
+  const L = await learner();
+  // learner() made tasks and a setup but no activity yet: nothing prepared.
+  let calls = 0; let feature: string | undefined;
+  const ask = (async (p: string, c: string, raw: unknown) => { calls++; feature = currentUsageContext()?.feature; return askCopilot(p, c, raw, (async () => JSON.stringify({ intent: "propose", reply: "A day.", ops: [{ op: "add", ref: "c1" }] })) as never) }) as never;
+  assert.equal(await activeWithin(L.profileId, L.id), false);
+  assert.equal(await preparePlan(L.profileId, L.id, "check_in", ask), null);
+  assert.equal(calls, 0, "no model call for an inactive learner");
+  // Active (today's flow touched): prepared, and the call is tagged.
+  await changeDayFlow({ profileId: L.profileId, platformChatId: L.id, version: 0, by: "learner", ops: [{ op: "set_intention", text: "Ship it" }] });
+  assert.equal(await activeWithin(L.profileId, L.id), true);
+  process.env.NOVA_PREPARED_PLANS = "off";
+  try { assert.equal(await preparePlan(L.profileId, L.id, "check_in", ask), null); } finally { delete process.env.NOVA_PREPARED_PLANS; }
+  assert.equal(calls, 0, "off means off");
+  assert.ok(await preparePlan(L.profileId, L.id, "check_in", ask));
+  assert.deepEqual([calls, feature], [1, "prepared_plan"]);
 });
