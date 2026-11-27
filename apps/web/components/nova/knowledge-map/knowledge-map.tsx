@@ -25,6 +25,7 @@ import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLeve
 import { clickAction, enterAction, enterTarget, openHrefOf, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
 import { planCardLabels, type LabelCandidate } from './far-labels'
 import { LOD, tierAtZoom, type Tier } from './lod'
+import { setTopicStatusOnMap } from './topic-status-api'
 import { ARRIVE_PARAM, arrivedFromImport, openingView, opensWithEntrance } from './opening-view'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
@@ -371,11 +372,8 @@ function TopicStatusPicker({ node, onChanged }: { node: Extract<MapNode, { type:
     if (status === shown || busy) return
     const was = shown
     setShown(status); setBusy(true); setError(null)
-    try {
-      const r = await fetch('/api/nova/topics/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topicId: node.id.replace(/^topic:/, ''), status }) })
-      const b = await r.json().catch(() => null) as { ok?: boolean; message?: string } | null
-      if (!b?.ok) { setShown(was); setError(b?.message ?? 'That didn’t save. Try again.') } else onChanged()
-    } catch { setShown(was); setError('That didn’t save. Try again.') }
+    const r = await setTopicStatusOnMap(node.id.replace(/^topic:/, ''), status)
+    if (!r.ok) { setShown(was); setError(r.message) } else onChanged()
     setBusy(false)
   }
   return (
