@@ -17,7 +17,7 @@ import {
   setSessionDetails,
   setSessionTopic,
   fileEndedSession,
-  closeUnconfirmed,
+  markUnconfirmed,
   confirmSessionTime,
   abandonIfStale,
   saveSessionNote,
@@ -200,21 +200,15 @@ export async function runNovaSessionCommand(
       select: { id: true },
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
-    // More than two hours past its plan (B.1): closed, its time waiting for the learner's word.
     const studied = Math.floor(sessionElapsedSeconds(active, now) / 60);
-    if (needsTimeConfirm(studied, abandonmentPlanMinutes(active.plannedDurationMinutes))) {
-      if (await closeUnconfirmed(active.id, studied, command.outcome)) {
-        ended = { sessionId: active.id, topicName: active.topicName, minutes: Math.max(1, studied), outcome: command.outcome, topicRecorded: false, counted: false, needsConfirm: true };
-      } else { const why = await closedForThem(); if (why) return why; }
-    }
-    const closed = ended ? false : await persistSessionEnd({
+    const closed = await persistSessionEnd({
       userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface,
       outcome: command.outcome, now,
     });
     // Not closed by this call. Either it was ended elsewhere a moment ago
     // (nothing was written twice, and there is nothing new to report), or
     // the sweep abandoned it first, which the learner is told.
-    if (!closed && !ended) { const why = await closedForThem(); if (why) return why; }
+    if (!closed) { const why = await closedForThem(); if (why) return why; }
     if (closed) {
       ended = {
         sessionId: active.id,
@@ -224,6 +218,11 @@ export async function runNovaSessionCommand(
         topicRecorded: active.subjectId !== null && Boolean(active.topicName),
         counted:       sessionElapsedSeconds(active, now) >= COUNTED_SESSION_MINUTES * 60,
       };
+      // More than two hours past its plan (B.1): recorded in full, its time
+      // waiting for the learner's word before Progress counts it.
+      if (needsTimeConfirm(studied, abandonmentPlanMinutes(active.plannedDurationMinutes)) && await markUnconfirmed(profileId, active.id, now)) {
+        ended = { ...ended, counted: false, needsConfirm: true };
+      }
     }
   }
 

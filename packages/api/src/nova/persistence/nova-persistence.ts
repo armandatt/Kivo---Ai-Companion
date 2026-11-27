@@ -476,13 +476,18 @@ export async function fileEndedSession(profileId: string, sessionId: string, sub
 }
 
 // An End more than two hours past the plan (owner decision 28 Nov, PR #113
-// B.1): the session is closed, but its time waits for the learner to confirm
-// or trim it, and it is in none of Progress's numbers until then.
-export async function closeUnconfirmed(sessionId: string, minutes: number, outcome: string | null): Promise<boolean> {
+// B.1): the End is recorded in full (report, mastery, Learning DNA), then
+// its time waits for the learner: marked unconfirmed, it is in none of
+// Progress's numbers (nor Learning DNA's) until they confirm or trim it.
+export async function markUnconfirmed(profileId: string, sessionId: string, now: Date): Promise<boolean> {
+  const row = await prisma.novaStudySession.findFirst({ where: { id: sessionId, profileId, status: "completed" }, select: { executionReport: true } });
+  if (!row) return false;
+  const report = (row.executionReport && typeof row.executionReport === "object" ? row.executionReport : {}) as Record<string, unknown>;
   const done = await prisma.novaStudySession.updateMany({
-    where: { id: sessionId, status: { in: OPEN_STATUSES } },
-    data:  { status: UNCONFIRMED_STATUS, durationMinutes: minutes, executionReport: { autoClosed: AUTO_SAVED_RUNNING, endedBy: "learner", outcome } },
+    where: { id: sessionId, profileId, status: "completed" },
+    data:  { status: UNCONFIRMED_STATUS, executionReport: { ...report, autoClosed: AUTO_SAVED_RUNNING, endedBy: "learner", awaitingConfirm: true } as object },
   });
+  if (done.count === 1) await refreshLearningDna(profileId, now).catch(err => console.error("[nova:dna] refresh failed", err));
   return done.count === 1;
 }
 
@@ -497,6 +502,7 @@ export async function confirmSessionTime(profileId: string, sessionId: string, m
     where: { id: sessionId, profileId, status: UNCONFIRMED_STATUS },
     data:  { status: "completed", durationMinutes: kept, executionReport: { ...report, confirmed: true, recordedMinutes: row.durationMinutes } as object },
   });
+  if (done.count === 1) await refreshLearningDna(profileId, new Date()).catch(err => console.error("[nova:dna] refresh failed", err));
   return done.count === 1 ? { minutes: kept } : null;
 }
 

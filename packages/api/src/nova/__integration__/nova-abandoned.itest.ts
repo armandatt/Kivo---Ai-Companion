@@ -528,3 +528,24 @@ test("REGRESSION item 1 backfill: abandoned-while-paused rows become saved sessi
   // Old news: the page does not announce a backfilled session.
   assert.equal((await loadNovaSessionState(l.chat, plus(t0, 700))).autoSaved, null);
 });
+
+// PR #113 B.1: an End far past the plan records the End in full (report,
+// mastery record) and keeps only its TIME waiting; confirming counts it.
+test("REGRESSION B.1: End more than two hours past the plan records its evidence, waits for the time, and counts once confirmed", async () => {
+  const l = await learner();
+  const t0 = ist("09:00");
+  await start(l, t0, 25);
+  const before = await learned(l);
+  const ended = await end(l, plus(t0, 25 + 150));
+  assert.ok(ended.ok && ended.ended?.needsConfirm === true && ended.ended.counted === false, JSON.stringify(ended));
+  const [row] = await rows(l);
+  assert.equal(row!.status, "unconfirmed");
+  assert.ok(row!.executionReport !== null, "the End's report is kept");
+  assert.equal((await learned(l)).history, before.history + 1, "the End's evidence reached mastery as any End does");
+  let progress = await loadNovaProgress(l.chat, { now: plus(t0, 200) });
+  assert.ok(progress.status === "ready" && progress.overview.learningMinutes === 0, "not counted yet");
+  assert.ok((await runNovaSessionCommand(l.chat, { action: "confirm_time", sessionId: row!.id, minutes: 90 }, plus(t0, 200))).ok);
+  progress = await loadNovaProgress(l.chat, { now: plus(t0, 201) });
+  assert.ok(progress.status === "ready" && progress.overview.learningMinutes === 90, "counted as confirmed");
+  assert.deepEqual(await statuses(l), [["completed", 90]]);
+});

@@ -53,8 +53,15 @@ type Outcome = "struggled" | "okay" | "good" | "crushed_it" | null;
 async function session(chat: string, start: Date, minutes: number, outcome: Outcome, topicName = "Deadlocks", subjectName = "Operating Systems", plannedMinutes = 25) {
   const started = await runNovaSessionCommand(chat, { action: "start", topicName, subjectName, plannedMinutes }, start);
   assert.ok(started.ok && started.session, "session started");
-  const ended = await runNovaSessionCommand(chat, { action: "end", outcome }, new Date(start.getTime() + minutes * 60_000));
+  const at = new Date(start.getTime() + minutes * 60_000);
+  const ended = await runNovaSessionCommand(chat, { action: "end", outcome }, at);
   assert.ok(ended.ok && ended.ended, "session ended");
+  // PR #113 B.1: more than two hours past its plan, the time waits for the
+  // learner's word; here they confirm all of it, as a learner who did study would.
+  if (ended.ok && ended.ended?.needsConfirm) {
+    const ok = await runNovaSessionCommand(chat, { action: "confirm_time", sessionId: ended.ended.sessionId, minutes }, at);
+    assert.ok(ok.ok, "time confirmed");
+  }
 }
 
 // Everything except the Learning DNA row, as it stands.
