@@ -998,12 +998,34 @@ model NovaNote {
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   images  NovaNoteImage[]
   attachments NovaNoteAttachment[]
+  versions NovaNoteVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([profileId, updatedAt])
   @@index([profileId, subjectId])
+}
+
+// A note as it was just before a change that rewrote its text (bug batch
+// 28 Nov, item 6): Kivo Connect's replace, edit and append, and a restore.
+// The newest NOTE_VERSIONS_KEPT per note are kept; restoring one saves the
+// current text as a version first, so an undo can itself be undone.
+model NovaNoteVersion {
+  id        String   @id @default(cuid())
+  noteId    String
+  profileId String
+  title     String
+  body      String   @db.Text
+  // What replaced it: "replace" | "edit" | "append" | "insert" | "link" | "restore".
+  reason    String
+  // Who made that change: "kivo_connect" (an assistant) or "web".
+  source    String   @default("kivo_connect")
+  createdAt DateTime @default(now())
+
+  note NovaNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, createdAt])
 }
 
 // A highlight the learner made on a PDF in the reader beside a note. Keyed by

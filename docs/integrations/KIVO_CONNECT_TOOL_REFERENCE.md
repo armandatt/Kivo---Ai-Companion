@@ -22,7 +22,8 @@ Class: **R** read-only, **W** ordinary write (applied at once, audited, read bac
 | `get_note` | R | notes:read | text in 30k-character pages, filing, links, `updatedAt`, `images` (list); `includeImages: true` returns the images themselves (see Images) |
 | `list_recent_notes` | R | notes:read | newest first |
 | `create_note` | W | notes:write | one note, optionally with images after the text; same title → skipped, use `update_note` |
-| `update_note` | W / S | notes:write | append text and/or images (W), at the end under a dated divider or at the end of a section (`afterHeading`, op `insert_into_note`); rename (S: `rename_note`, approved first, with any text sent alongside; images not allowed with a rename); `baseUpdatedAt` required (conflict otherwise) |
+| `update_note` | W / S | notes:write | one way per call. `edits [{find, replace}]` (W, op `edit_note_text`): exact passages, each must occur exactly once or nothing changes. `replaceBody` (op `replace_note_body`): whole text; W for a note under 2,000 characters, S (approved first) for a longer one. Append text and/or images (W), at the end under a dated divider or at the end of a section (`afterHeading`, op `insert_into_note`); rename (S: `rename_note`, approved first, with any text sent alongside; images not allowed with a rename). The note's text before every edit/replace/append/link is kept as a version (`NovaNoteVersion`, newest 20). `baseUpdatedAt` required (conflict otherwise) |
+| `restore_note_version` | W | notes:write | undo: puts back the newest kept version (or `versionId` from `get_note.versions`); the replaced text is kept as a version too; title unchanged |
 | `link_notes` | W | notes:write | `[[link]]` to an existing note or topic, under `## Related` |
 | `move_note` | S | notes:write | refile under a subject/topic |
 | `delete_note` | S | notes:write | delete (always approved first) |
@@ -76,7 +77,7 @@ Node ids are resolved against the learner's own study structure: another learner
 
 ### Change vocabulary (`changes.ts ChangeSchema`)
 
-`add_subject`, `add_topics`, `describe_topic`, `rename_subject`, `rename_topic`, `move_subject`, `move_topic`, `remove_topic`, `remove_subject`, `create_note`, `append_to_note`, `insert_into_note`, `file_note`, `rename_note`, `link_notes`, `delete_note`. Subjects and topics apply as one versioned batch through Subject Studio (topics with recorded study are never deleted: Subject Studio's rule); notes one by one, each guarded.
+`add_subject`, `add_topics`, `describe_topic`, `rename_subject`, `rename_topic`, `move_subject`, `move_topic`, `remove_topic`, `remove_subject`, `create_note`, `append_to_note`, `insert_into_note`, `replace_note_body` (always approved first in a batch), `edit_note_text`, `restore_note_version`, `file_note`, `rename_note`, `link_notes`, `delete_note`. Subjects and topics apply as one versioned batch through Subject Studio (topics with recorded study are never deleted: Subject Studio's rule); notes one by one, each guarded.
 
 ### Results of a write
 

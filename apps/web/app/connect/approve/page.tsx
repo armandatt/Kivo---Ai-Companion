@@ -22,6 +22,7 @@ type Outcome = 'applied' | 'approved' | 'declined' | null
 const VERB: Record<string, string> = {
   add: 'Add', describe: 'Explain', rename: 'Rename', move: 'Move', delete: 'Delete',
   create: 'Create', append: 'Add to', file: 'Move', link: 'Link',
+  replace: 'Replace the text of', edit: 'Edit', restore: 'Restore',
 }
 
 function ItemRow({ item }: { item: Item }) {

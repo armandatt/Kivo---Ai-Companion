@@ -21,6 +21,8 @@ import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from "../nova/product/n
 import { linkedTitles, linkKey } from "../nova/product/note-links";
 import { appendToBody } from "../nova/product/note-capture";
 import { flat } from "./similarity";
+import { applyExactEdits, noteVersion, saveNoteVersion } from "../nova/product/note-versions";
+import { prisma } from "@repo/db/client";
 import { insertAt, sectionEnd } from "./images";
 
 export const CHANGES_MAX = 60;
@@ -52,9 +54,20 @@ export const ChangeSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("file_note"), noteId: id, subjectId: id.nullable().optional(), subjectName: name.optional(), topicName: z.string().trim().max(NOTE_TOPIC_MAX).nullable().optional(), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("link_notes"), fromNoteId: id, toNoteTitle: z.string().trim().min(1).max(NOTE_TITLE_MAX).optional(), toTopicName: name.optional() }),
   z.object({ op: z.literal("rename_note"), noteId: id, title: z.string().trim().min(1).max(NOTE_TITLE_MAX), baseUpdatedAt: z.string().max(40).optional() }),
+  // Bug batch 28 Nov, item 6. The whole text replaced (always reviewed here;
+  // update_note applies it at once only for a short note, read server-side),
+  // exact passages replaced (each found exactly once, all or nothing), and a
+  // version put back. Each saves the text it replaces as a version first.
+  z.object({ op: z.literal("replace_note_body"), noteId: id, body: z.string().max(NOTE_BODY_MAX), baseUpdatedAt: z.string().max(40) }),
+  z.object({ op: z.literal("edit_note_text"), noteId: id, edits: z.array(z.object({ find: z.string().min(1).max(20_000), replace: z.string().max(200_000) })).min(1).max(20), baseUpdatedAt: z.string().max(40) }),
+  z.object({ op: z.literal("restore_note_version"), noteId: id, versionId: id.optional() }),
   z.object({ op: z.literal("delete_note"), noteId: id }),
 ]);
 export type Change = z.infer<typeof ChangeSchema>;
+
+// A note at least this long is not replaced whole without the learner's
+// approval (update_note's replaceBody; bug batch 28 Nov, item 6).
+export const REPLACE_REVIEW_CHARS = 2_000;
 
 export const DESTRUCTIVE = new Set<Change["op"]>(["remove_topic", "remove_subject", "delete_note"]);
 export const RESTRUCTURE = new Set<Change["op"]>(["rename_subject", "rename_topic", "rename_note", "move_subject", "move_topic", "file_note"]);
@@ -65,6 +78,7 @@ export function approvalNeeded(changes: Change[]): { needed: boolean; why: strin
   const why: string[] = [];
   if (changes.some(c => DESTRUCTIVE.has(c.op))) why.push("it deletes something");
   if (changes.some(c => RESTRUCTURE.has(c.op))) why.push("it moves, renames or refiles existing items");
+  if (changes.some(c => c.op === "replace_note_body")) why.push("it replaces the whole text of a note");
   const units = changes.reduce((n, c) => n + unitsOf(c), 0);
   if (units > ORDINARY_MAX) why.push(`it changes ${units} items at once (more than ${ORDINARY_MAX})`);
   return { needed: why.length > 0, why };
@@ -191,7 +205,7 @@ export async function stateOf(profileId: string, changes: Change[]): Promise<{ s
 // cannot be found is said so ("a note that no longer exists").
 
 export interface ApprovalItem {
-  action: "add" | "describe" | "rename" | "move" | "delete" | "create" | "append" | "file" | "link";
+  action: "add" | "describe" | "rename" | "move" | "delete" | "create" | "append" | "file" | "link" | "replace" | "edit" | "restore";
   kind: "subject" | "topic" | "note";
   name: string;              // the item as it is called now (or will be, when added)
   where: string | null;      // where it is now ("Physics › Mechanics")
@@ -280,6 +294,15 @@ export function approvalItem(c: Change, st: StudyStructure, notes: NoteVersion[]
       const detail = `${c.text.length.toLocaleString("en-US")} characters at the end`;
       return item({ action: "append", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Add ${detail} of note ${quote(noteName(c.noteId))}`);
     }
+    case "replace_note_body": {
+      const detail = `whole text replaced with ${c.body.length.toLocaleString("en-US")} characters (the current text is kept as a version)`;
+      return item({ action: "replace", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Replace the text of note ${quote(noteName(c.noteId))}: ${detail}`);
+    }
+    case "edit_note_text": {
+      const detail = `${c.edits.length} passage${c.edits.length === 1 ? "" : "s"} replaced`;
+      return item({ action: "edit", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Edit note ${quote(noteName(c.noteId))}: ${detail}`);
+    }
+    case "restore_note_version": return item({ action: "restore", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail: "its previous text" }, `Put back the previous text of note ${quote(noteName(c.noteId))}`);
     case "insert_into_note": {
       const detail = c.afterHeading ? `at the end of the section ${quote(c.afterHeading)}` : "at the end";
       return item({ action: "append", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Add to note ${quote(noteName(c.noteId))} ${detail}`);
@@ -446,6 +469,7 @@ async function applyNoteChange(profileId: string, index: number, c: Change, st: 
       if (flat(note.body).includes(flat(c.text))) return { index, op: c.op, status: "skipped", message: "That text is already in the note.", resource: { type: "note", id: note.id, title: note.title } };
       const body = appendToBody(note.body, c.text, today());
       if (body === null) return fail("The note would be longer than a note can hold.");
+      await saveNoteVersion(profileId, note, "append");
       const res = await updateNote(profileId, note.id, { body, baseUpdatedAt: note.updatedAt });
       if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message };
       return { index, op: c.op, status: "updated", message: `Added to "${res.note.title}".`, resource: { type: "note", id: res.note.id, title: res.note.title } };
@@ -464,9 +488,46 @@ async function applyNoteChange(profileId: string, index: number, c: Change, st: 
       }
       const body = insertAt(note.body, place, c.text);
       if (body.length > NOTE_BODY_MAX) return fail("The note would be longer than a note can hold.");
+      await saveNoteVersion(profileId, note, "insert");
       const res = await updateNote(profileId, note.id, { body, baseUpdatedAt: note.updatedAt });
       if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message, resource: at };
       return { index, op: c.op, status: "updated", message: `Added to "${res.note.title}"${c.afterHeading ? ` under "${c.afterHeading}"` : ""}.`, resource: { type: "note", id: res.note.id, title: res.note.title } };
+    }
+    case "replace_note_body":
+    case "edit_note_text": {
+      const note = await getNote(profileId, c.noteId);
+      if (!note) return fail("That note is not one of the learner's.");
+      const at = { type: "note" as const, id: note.id, title: note.title };
+      if (new Date(c.baseUpdatedAt).getTime() !== new Date(note.updatedAt).getTime()) return { index, op: c.op, status: "failed", message: `The note changed since it was read (now ${note.updatedAt}). Read it again; nothing was overwritten.`, resource: at };
+      let body: string;
+      if (c.op === "replace_note_body") body = c.body;
+      else {
+        const e = applyExactEdits(note.body, c.edits);
+        if (!e.ok) return { index, op: c.op, status: "failed", message: e.reason === "missing"
+          ? `Edit ${e.index + 1}: that passage is not in the note (it must match exactly). Nothing was changed.`
+          : `Edit ${e.index + 1}: that passage is in the note ${e.count} times; give a longer passage that occurs once. Nothing was changed.`, resource: at };
+        body = e.body;
+      }
+      if (body === note.body) return { index, op: c.op, status: "skipped", message: "The note already says exactly that.", resource: at };
+      if (body.length > NOTE_BODY_MAX) return fail("The note would be longer than a note can hold.");
+      const versionId = await saveNoteVersion(profileId, note, c.op === "replace_note_body" ? "replace" : "edit");
+      const res = await updateNote(profileId, note.id, { body, baseUpdatedAt: note.updatedAt });
+      if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message, resource: at };
+      return { index, op: c.op, status: "updated", message: `${c.op === "replace_note_body" ? "Replaced the text of" : "Edited"} "${res.note.title}". The previous text is kept (version ${versionId}); restore_note_version undoes it.`, resource: { type: "note", id: res.note.id, title: res.note.title } };
+    }
+    case "restore_note_version": {
+      const note = await getNote(profileId, c.noteId);
+      if (!note) return fail("That note is not one of the learner's.");
+      const at = { type: "note" as const, id: note.id, title: note.title };
+      const v = await noteVersion(profileId, note.id, c.versionId);
+      if (!v) return { index, op: c.op, status: "failed", message: "This note has no earlier version to put back.", resource: at };
+      if (v.body === note.body) return { index, op: c.op, status: "skipped", message: "The note already has that text.", resource: at };
+      await saveNoteVersion(profileId, note, "restore");
+      const res = await updateNote(profileId, note.id, { body: v.body, baseUpdatedAt: note.updatedAt });
+      if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message, resource: at };
+      // The version put back is used up, so a second undo goes one further back.
+      await prisma.novaNoteVersion.deleteMany({ where: { id: v.id, profileId } });
+      return { index, op: c.op, status: "updated", message: `Put back the previous text of "${res.note.title}". The text it replaced is kept as a version too.`, resource: { type: "note", id: res.note.id, title: res.note.title } };
     }
     case "file_note": {
       const note = await getNote(profileId, c.noteId);
@@ -490,6 +551,7 @@ async function applyNoteChange(profileId: string, index: number, c: Change, st: 
         return fail(`The learner has no topic named "${target}".`);
       }
       if (linkedTitles(note.body).some(t => linkKey(t) === linkKey(target))) return { index, op: c.op, status: "skipped", message: `"${note.title}" already links to [[${target}]].`, resource: { type: "note", id: note.id, title: note.title } };
+      await saveNoteVersion(profileId, note, "link");
       const res = await updateNote(profileId, note.id, { body: withRelatedLink(note.body, target), baseUpdatedAt: note.updatedAt });
       if (!res.ok) return fail(res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message);
       return { index, op: c.op, status: "updated", message: `"${note.title}" now links to [[${target}]].`, resource: { type: "note", id: note.id, title: note.title } };
@@ -527,6 +589,8 @@ async function verify(profileId: string, changes: Change[], items: ItemResult[])
       if (n && (c.op === "append_to_note" || c.op === "insert_into_note")) ok = flat(n.body).includes(flat(c.text));
       if (n && c.op === "create_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
       if (n && c.op === "rename_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
+      if (n && c.op === "replace_note_body") ok = n.body === c.body;
+      if (n && c.op === "edit_note_text") ok = c.edits.every(e => n.body.includes(e.replace));
       if (n && c.op === "link_notes") ok = linkedTitles(n.body).some(t => linkKey(t) === linkKey(c.toNoteTitle ?? c.toTopicName ?? ""));
       checks.push({ what: `note "${it.resource.title}" ${c.op === "create_note" ? "exists" : "has the change"}`, ok });
     } else if (c.op === "add_subject") {
