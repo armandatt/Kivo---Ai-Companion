@@ -3,9 +3,22 @@
 
 export const STANDARD_BLOCK = 25
 
-export function suggestedFor(item: { minutes: number | null; ref: { minutes: number | null } | null; spentMinutes?: number | null; remainingMinutes?: number | null }): { minutes: number; basis: 'today' | 'remaining' | 'estimate' | 'standard' } {
-  // What is left, never under the shortest session (5 minutes).
-  if (item.minutes && item.spentMinutes && item.remainingMinutes != null) return { minutes: Math.max(5, item.remainingMinutes), basis: 'remaining' }
+// "Remaining" is today's planned minutes for the item less the focus time
+// already finished on it today (product/day-flow.ts: spentOn, completed
+// sessions only). The same numbers give "N focused today" on the list, so the
+// two can never disagree.
+//
+// Bug batch 28 Nov, item 2: with today's time used up (28 focused of 25) the
+// suggestion used to floor 0 at 5 and say "5 minutes left". Now it says the
+// day's time is done and offers a fresh round instead.
+export const SHORTEST_SESSION = 5
+
+export function suggestedFor(item: { minutes: number | null; ref: { minutes: number | null } | null; spentMinutes?: number | null; remainingMinutes?: number | null }): { minutes: number; basis: 'today' | 'remaining' | 'again' | 'estimate' | 'standard' } {
+  if (item.minutes && item.spentMinutes && item.remainingMinutes != null) {
+    // Today's time is used up (or all but a sliver of it): another round, not "time left".
+    if (item.remainingMinutes < SHORTEST_SESSION) return { minutes: Math.min(item.minutes, STANDARD_BLOCK), basis: 'again' }
+    return { minutes: item.remainingMinutes, basis: 'remaining' }
+  }
   if (item.minutes) return { minutes: item.minutes, basis: 'today' }
   if (item.ref?.minutes) return { minutes: item.ref.minutes, basis: 'estimate' }
   return { minutes: STANDARD_BLOCK, basis: 'standard' }

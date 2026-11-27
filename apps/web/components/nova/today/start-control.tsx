@@ -54,7 +54,7 @@ export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
         className={cn('inline-flex items-center gap-1.5 rounded-l-lg bg-action font-semibold text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-colors hover:bg-action-hover disabled:opacity-50',
           lg ? 'h-11 gap-2 rounded-l-xl pl-4 pr-3.5 text-[15px]' : 'h-8 pl-2.5 pr-2 text-xs')}
         title={`Start ${item.title} for ${label(s.minutes)}`} data-start-suggested>
-        {busy ? <Loader2 className={lg ? 'size-4 animate-spin' : 'size-3.5 animate-spin'} /> : <Play className={lg ? 'size-4 fill-current' : 'size-3.5'} />} {lg ? `Start ${label(s.minutes)} focus` : `Start · ${label(s.minutes)}`}
+        {busy ? <Loader2 className={lg ? 'size-4 animate-spin' : 'size-3.5 animate-spin'} /> : <Play className={lg ? 'size-4 fill-current' : 'size-3.5'} />} {s.basis === 'again' ? (lg ? `Study again · ${label(s.minutes)}` : `Again · ${label(s.minutes)}`) : lg ? `Start ${label(s.minutes)} focus` : `Start · ${label(s.minutes)}`}
       </button>
       <button ref={toggle} type="button" disabled={disabled} onClick={() => setOpen(o => !o)} aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
         className={cn('inline-flex items-center border-l border-action-foreground/20 bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-50', lg ? 'h-11 rounded-r-xl px-2.5' : 'h-8 rounded-r-lg px-1.5')}
@@ -68,7 +68,7 @@ export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">This session</p>
           <button type="button" onClick={() => start(s.minutes)} className="mt-2 flex w-full items-center justify-between rounded-lg bg-nova/10 px-2.5 py-2 text-left hover:bg-nova/15" data-duration="suggested">
             <span className="font-medium text-foreground">Suggested: {label(s.minutes)}</span>
-            <span className="text-[11px] text-subtle">{s.basis === 'today' ? 'today’s time' : s.basis === 'remaining' ? `left of today’s ${label(item.minutes ?? 0)}` : s.basis === 'estimate' ? 'its estimate' : 'a standard block'}</span>
+            <span className="text-[11px] text-subtle">{s.basis === 'today' ? 'today’s time' : s.basis === 'remaining' ? `left of today’s ${label(item.minutes ?? 0)}` : s.basis === 'again' ? `today’s ${label(item.minutes ?? 0)} done · another round` : s.basis === 'estimate' ? 'its estimate' : 'a standard block'}</span>
           </button>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {quickLengths(s.minutes).map(m => (

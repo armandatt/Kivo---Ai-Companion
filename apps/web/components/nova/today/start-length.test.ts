@@ -12,8 +12,17 @@ test('after 25 of 60 minutes: the 35 left, said as what is left', () => {
   assert.deepEqual(suggestedFor({ minutes: 60, ref: null, spentMinutes: 25, remainingMinutes: 35 }), { minutes: 35, basis: 'remaining' })
 })
 
-test('time used up: the shortest session, not zero and not the whole time again', () => {
-  assert.deepEqual(suggestedFor({ minutes: 30, ref: null, spentMinutes: 40, remainingMinutes: 0 }), { minutes: 5, basis: 'remaining' })
+// Bug batch 28 Nov, item 2: "28 focused minutes today" beside "Start with 5
+// minutes remaining". With today's time used up there is nothing remaining;
+// the offer is another round, said as such.
+test('REGRESSION item 2: time used up is "done, another round", never "5 minutes remaining"', () => {
+  assert.deepEqual(suggestedFor({ minutes: 25, ref: null, spentMinutes: 28, remainingMinutes: 0 }), { minutes: 25, basis: 'again' })
+  assert.deepEqual(suggestedFor({ minutes: 60, ref: null, spentMinutes: 58, remainingMinutes: 2 }), { minutes: 25, basis: 'again' }, 'a sliver left is done too')
+  assert.deepEqual(suggestedFor({ minutes: 15, ref: null, spentMinutes: 20, remainingMinutes: 0 }), { minutes: 15, basis: 'again' }, 'never longer than the day’s time')
+})
+
+test('what is left, when at least the shortest session is left', () => {
+  assert.deepEqual(suggestedFor({ minutes: 30, ref: null, spentMinutes: 25, remainingMinutes: 5 }), { minutes: 5, basis: 'remaining' })
 })
 
 test('no time for today: the estimate, then a standard block (unchanged)', () => {

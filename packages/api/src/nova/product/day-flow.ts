@@ -145,7 +145,9 @@ export function spentOn(i: Pick<FlowItem, "sessionId" | "earlierSessionIds">, se
   let total = 0, any = false;
   for (const id of sessionIdsOf(i)) {
     const s = sessions.get(id);
-    if (!s || s.status === "in_progress" || s.status === "paused") continue;
+    // Finished focus time only (bug batch 28 Nov, item 2): an open session is
+    // not done yet, and an abandoned one was not study.
+    if (!s || s.status !== "completed") continue;
     total += s.minutes; any = true;
   }
   return any ? total : null;

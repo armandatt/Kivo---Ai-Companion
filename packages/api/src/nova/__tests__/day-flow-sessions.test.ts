@@ -40,3 +40,13 @@ describe("sessions on one item", () => {
     expect(spentOn(item({ sessionId: "s9" }), new Map([["s9", ended(30)]]))).toBe(30);
   });
 });
+
+// Bug batch 28 Nov, item 2: "focused today" and "remaining" come from finished
+// sessions only. An abandoned session was not study and is left out of both.
+describe("REGRESSION item 2: spentOn counts completed sessions only", () => {
+  it("leaves out abandoned and open sessions", () => {
+    const i = { sessionId: "s3", earlierSessionIds: ["s1", "s2"] };
+    expect(spentOn(i, new Map([["s1", { status: "completed", minutes: 28 }], ["s2", { status: "abandoned", minutes: 25 }], ["s3", { status: "paused", minutes: 0 }]]))).toBe(28);
+    expect(spentOn({ sessionId: "s2", earlierSessionIds: [] }, new Map([["s2", { status: "abandoned", minutes: 25 }]]))).toBeNull();
+  });
+});
