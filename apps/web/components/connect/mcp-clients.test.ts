@@ -74,3 +74,12 @@ test('REGRESSION item 8: the MCP address is the production URL on Kivo, and the 
   assert.ok(page.indexOf('<McpAddressCard') < page.indexOf('ASSISTANTS.map'), 'the address comes first on the page')
   assert.doesNotMatch(page.slice(page.indexOf('function McpAddressCard')), /Gemini|Grok|Copilot|Perplexity/, 'no assistant is named that has not been verified')
 })
+
+// Item 13 (28 Nov, owner request): the page says what connecting does, offers a path for other assistants, and keeps the safety line.
+test('the AI Assistants page explains itself: what it can do, other assistants, and that nothing connects without Allow', async () => {
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync(new URL('./assistants-page.tsx', import.meta.url), 'utf8')
+  assert.match(page, /data-mcp-can/)
+  assert.match(page, /function OtherAssistant/)
+  assert.match(page, /Nothing connects until you press Allow/)
+})
