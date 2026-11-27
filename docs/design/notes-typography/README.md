@@ -1,6 +1,6 @@
-# Notes typography (bug batch 28 Nov, item 10): proposal
+# Notes typography (bug batch 28 Nov, item 10)
 
-Shipped as its own commit so it can be dropped on its own.
+**Shipped as the default** (owner decision 28 Nov, PR #113 B.4), with the reading setting kept. Its own commit (defa690), so it can still be reverted on its own.
 
 | | Before | After (default) |
 |---|---|---|
