@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useStartSession } from '../use-start-session'
 import { ArrowUp, ArrowUpRight, ChevronsDownUp, Eraser, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
 import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
@@ -21,7 +22,7 @@ import { filingChoices, placementLabel, placementOf, planLink, samePlacement, ty
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
-import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
+import { clickAction, enterAction, enterTarget, openHrefOf, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
 import { planFarLabels, type Blocker, type LabelCandidate } from './far-labels'
 import { ARRIVE_PARAM, arrivedFromImport, openingView, opensWithEntrance } from './opening-view'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
@@ -779,7 +780,7 @@ export interface CardActs {
   pointerMove(e: React.PointerEvent<SVGGElement>): void
   pointerUp(e: React.PointerEvent<SVGGElement>): void
   pointerCancel(): void
-  click(id: string): void
+  click(id: string, clicks?: number): void
   dbl(id: string): void
   focus(id: string): void
   hover(id: string | null): void
@@ -828,7 +829,7 @@ const MapCard = memo(function MapCard({ n, x: px, y: py, detail, kids, inside, c
         'data-node-id': n.id,
         onPointerDown: (e: React.PointerEvent<SVGGElement>) => a().pointerDown(e, n.id), onPointerMove: (e: React.PointerEvent<SVGGElement>) => a().pointerMove(e),
         onPointerUp: (e: React.PointerEvent<SVGGElement>) => a().pointerUp(e), onPointerCancel: () => a().pointerCancel(),
-        onClick: () => a().click(n.id), onDoubleClick: () => a().dbl(n.id), onFocus: () => a().focus(n.id),
+        onClick: (e: React.MouseEvent<SVGGElement>) => a().click(n.id, e.detail), onDoubleClick: () => a().dbl(n.id), onFocus: () => a().focus(n.id),
         onPointerEnter: () => a().hover(n.id), onPointerLeave: () => a().hover(null),
       } : { 'aria-hidden': true, 'data-copy-of': n.id })}
       className={cn('subject-tone group/card outline-none', live ? 'map-card' : 'map-copy pointer-events-none', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
@@ -914,6 +915,7 @@ const MapCard = memo(function MapCard({ n, x: px, y: py, detail, kids, inside, c
 })
 
 export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void; pendingScope?: string | null }) {
+  const router = useRouter()
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
   // Branches folded away: what hangs from these cards is not drawn.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -1835,7 +1837,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       case 'explore':
         if (!target) { if (onCanvas) { act(); say('Select a card first: find it with / or move to it with the arrow keys.') } return }
         act()
-        switch (enterAction(target, { exploring: focus, explorable: id => canExplore(tree, id) })) {
+        switch (enterAction(target, { exploring: focus, explorable: id => canExplore(tree, id), opens: id => openHrefOf(byId.get(id)) !== null })) {
+          case 'open': router.push(openHrefOf(byId.get(target))!); return
           case 'already': say(`You are exploring ${byId.get(target)?.label ?? 'this card'}. U goes up a level.`); return
           // Nothing inside: no empty map. Its details instead, and why.
           case 'details': select(target); say(`Nothing is inside ${byId.get(target)?.label ?? 'this card'} to explore; its details are open.`); return
@@ -2018,14 +2021,21 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const cardActs = useRef<CardActs | null>(null)
   cardActs.current = {
     pointerDown: onCardPointerDown, pointerMove: onCardPointerMove, pointerUp: onCardPointerUp, pointerCancel: onCardPointerCancel,
-    click: id => {
+    click: (id, clicks) => {
       if (swallowClick.current) { swallowClick.current = false; return }
       pendingSelect.current = null
       lastChosen.current = id
-      if (selected === id) { setDetailOpen(o => !o); return }
+      const did = clickAction(selected, id, clicks ?? 1)
+      if (did === 'keep') return
+      if (did === 'toggle') { setDetailOpen(o => !o); return }
       select(id)
     },
-    dbl: id => { if (tree.children.get(id)?.length) explore(id) },
+    // Double-click: a note or saved page opens; a card with something inside is explored.
+    dbl: id => {
+      const href = openHrefOf(byId.get(id))
+      if (href) { router.push(href); return }
+      if (tree.children.get(id)?.length) explore(id)
+    },
     focus: id => { lastChosen.current = id },
     hover: hoverCard,
     chip: id => { if (canExplore(tree, id)) explore(id) },
