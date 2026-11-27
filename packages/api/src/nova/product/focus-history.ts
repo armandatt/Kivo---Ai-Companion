@@ -40,3 +40,15 @@ export async function recentSessions(profileId: string, take = RECENT_SESSIONS):
     };
   });
 }
+
+// Finished sessions on each topic, counted as Progress counts them (completed,
+// timed, ten minutes or more), with their minutes: the Knowledge Map's
+// session numbers (item 3, 28 Nov).
+export async function sessionsByTopic(profileId: string): Promise<Array<{ subjectId: string; topicName: string; sessions: number; minutes: number }>> {
+  const rows = await prisma.novaStudySession.groupBy({
+    by: ["subjectId", "topicName"],
+    where: { profileId, status: "completed", activityType: { not: SELF_REPORTED_ACTIVITY }, subjectId: { not: null }, topicName: { not: null }, durationMinutes: { gte: COUNTED_SESSION_MINUTES } },
+    _count: { _all: true }, _sum: { durationMinutes: true },
+  });
+  return rows.map(r => ({ subjectId: r.subjectId!, topicName: r.topicName!, sessions: r._count._all, minutes: r._sum.durationMinutes ?? 0 }));
+}

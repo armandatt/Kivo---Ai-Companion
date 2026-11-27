@@ -31,6 +31,7 @@ import { loadNovaToday } from "./today";
 import { runNovaSessionCommand } from "./session";
 import { applyFlowOps, draftFrom, ordered, planPicks, wantMore, type FlowState, type PlanPick, type Resolved, type TopicSignal } from "./day-flow-rules";
 import { effectiveTopicStatus } from "./topic-status";
+import { recentNoteActivity } from "./notes";
 import {
   FLOW_OPS_MAX, FLOW_UNDO_MAX,
   type DayFlowResponse, type FlowCandidate, type FlowDraft, type FlowItem, type FlowItemView, type FlowOp, type FlowView, type NewFlowItem, type NovaDayView,
@@ -79,13 +80,13 @@ async function topicSignals(profileId: string, masteries: Awaited<ReturnType<typ
   const [rows, exams, notes] = await Promise.all([
     prisma.novaTopicMastery.findMany({ where: { id: { in: masteries.map(m => m.topicId) } }, select: { id: true, subjectId: true, status: true } }),
     prisma.novaExam.findMany({ where: { profileId, scheduledAt: { gte: new Date(now.getTime() - DAY_MS) } }, select: { subjectId: true, scheduledAt: true }, orderBy: { scheduledAt: "asc" } }),
-    prisma.novaNote.findMany({ where: { profileId, topicName: { not: null }, updatedAt: { gte: new Date(now.getTime() - 14 * DAY_MS) } }, select: { subjectId: true, topicName: true, updatedAt: true }, orderBy: { updatedAt: "desc" }, take: 200 }),
+    recentNoteActivity(profileId, new Date(now.getTime() - 14 * DAY_MS), 200),
   ]);
   const row = new Map(rows.map(r => [r.id, r]));
   const examIn = new Map<string, number>();
   for (const e of exams) if (e.subjectId && !examIn.has(e.subjectId)) examIn.set(e.subjectId, Math.max(0, Math.floor((e.scheduledAt.getTime() - now.getTime()) / DAY_MS)));
   const noted = new Map<string, number>();
-  for (const n of notes) { const k = `${n.subjectId}\n${n.topicName!.toLowerCase()}`; if (!noted.has(k)) noted.set(k, Math.floor((now.getTime() - n.updatedAt.getTime()) / DAY_MS)); }
+  for (const n of notes) { if (!n.topicName) continue; const k = `${n.subjectId}\n${n.topicName!.toLowerCase()}`; if (!noted.has(k)) noted.set(k, Math.floor((now.getTime() - n.updatedAt.getTime()) / DAY_MS)); }
   return masteries.map(m => {
     const r = row.get(m.topicId);
     const studied = m.reviewCount > 0 || m.lastStudied !== null;

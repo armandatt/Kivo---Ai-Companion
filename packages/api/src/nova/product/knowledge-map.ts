@@ -41,7 +41,7 @@ import {
   type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type MapWorkspace, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 import { boardHref } from "./companion";
-import { COUNTED_SESSION_MINUTES } from "../engines/study-session-engine";
+import { sessionsByTopic } from "./focus-history";
 import { effectiveTopicStatus, parseTopicStatus } from "./topic-status";
 
 export interface MapInputs {
@@ -289,7 +289,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
 
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [allTopics, noted, saved, allTasks, sessionRows] = await Promise.all([
+  const [allTopics, noted, saved, allTasks, topicSessions] = await Promise.all([
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
       select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true, status: true },
@@ -297,13 +297,8 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),
     listTaskOutline(profileId),
-    prisma.novaStudySession.groupBy({
-      by: ["subjectId", "topicName"],
-      where: { profileId, status: "completed", subjectId: { not: null }, topicName: { not: null }, durationMinutes: { gte: COUNTED_SESSION_MINUTES } },
-      _count: { _all: true }, _sum: { durationMinutes: true },
-    }),
+    sessionsByTopic(profileId),
   ]);
-  const sessionsByTopic = sessionRows.map(r => ({ subjectId: r.subjectId!, topicName: r.topicName!, sessions: r._count._all, minutes: r._sum.durationMinutes ?? 0 }));
   // A workspace's subjects and every subject inside them.
   const inScope = new Set(chosen ? chosen.subjectIds : allSubjects.map(s => s.id));
   for (let grew = true; chosen && grew;) {
@@ -324,7 +319,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
     subjects, topics: allTopics.filter(t => inScope.has(t.subjectId)),
     notes: scoped(noted.notes), resources: scoped(saved.resources), tasks: allTasks.filter(t => top.has(t.id)),
     totals: { notes: chosen ? scoped(noted.notes).length : noted.total, resources: chosen ? scoped(saved.resources).length : saved.total },
-    sessionsByTopic,
+    sessionsByTopic: topicSessions,
     workspaceId: chosen?.id ?? null, workspaces: workspaces.map(w => ({ id: w.id, title: w.title, kind: w.kind })),
   });
 }

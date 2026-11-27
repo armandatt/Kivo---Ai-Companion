@@ -11,6 +11,8 @@ import { localHour, localMinute, resolveTimezone } from "../engines/learner-cale
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaLearningDna } from "./learning-dna";
 import { effectiveTopicStatus } from "./topic-status";
+import { recentNoteActivity } from "./notes";
+import { recentSavedPages } from "./learning-events";
 
 const DAY_MS = 86_400_000;
 const TOPIC_LINES = 60;
@@ -26,8 +28,8 @@ export async function planContextLines(profileId: string, platformChatId: string
     getAllTopicMasteries(profileId, now).catch(() => []),
     prisma.novaTopicMastery.findMany({ where: { subject: { profileId }, archivedAt: null }, select: { id: true, status: true } }).catch(() => []),
     prisma.novaStudySession.findMany({ where: { profileId, status: "completed", sessionDate: { gte: weekAgo } }, orderBy: { sessionDate: "desc" }, take: 15, select: { sessionDate: true, durationMinutes: true, topicName: true, currentFocus: true, executionReport: true } }).catch(() => []),
-    prisma.novaNote.findMany({ where: { profileId, updatedAt: { gte: weekAgo } }, orderBy: { updatedAt: "desc" }, take: 10, select: { title: true, topicName: true, updatedAt: true } }).catch(() => []),
-    prisma.novaLearningEvent.findMany({ where: { profileId, eventType: "resource_saved", occurredAt: { gte: weekAgo } }, orderBy: { occurredAt: "desc" }, take: 8, select: { title: true, topicName: true } }).catch(() => [] as Array<{ title: string | null; topicName: string | null }>),
+    recentNoteActivity(profileId, weekAgo, 10).catch(() => []),
+    recentSavedPages(profileId, weekAgo, 8).catch(() => [] as Array<{ title: string; topicName: string | null }>),
   ]);
   const lines: string[] = [];
   const zone = resolveTimezone(profile?.timezone ?? prefs?.timezone ?? null);

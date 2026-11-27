@@ -653,3 +653,10 @@ export async function searchNoteBodies(profileId: string, terms: string[], optio
     subjectId: r.subjectId, subjectName: r.subject?.name ?? null, topicName: r.topicName, createdAt: r.createdAt, updatedAt: r.updatedAt,
   }));
 }
+
+// The learner's notes edited since a moment, newest first, without their text:
+// what planning reads (day-flow.ts, plan-context.ts; item 12, 28 Nov). Titles
+// and filing only; a note's words never reach a brain.
+export async function recentNoteActivity(profileId: string, since: Date, take: number): Promise<Array<{ title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>> {
+  return prisma.novaNote.findMany({ where: { profileId, updatedAt: { gte: since } }, orderBy: { updatedAt: "desc" }, take, select: { title: true, subjectId: true, topicName: true, updatedAt: true } });
+}

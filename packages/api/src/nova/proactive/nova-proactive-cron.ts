@@ -453,10 +453,9 @@ async function deliver(
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// Prepares today's plan at check-in, within a bound so one learner's model call
-// cannot hold the tick. The titles it would add, or null (nothing to plan from,
-// or it did not finish in time: Today prepares it on opening instead).
-const PREPARE_AT_CHECKIN_MS = 30_000;
+// Prepares today's plan at check-in (one model call, bounded by the copilot's
+// own deadline). The titles it would add, or null (nothing to plan from, or it
+// failed: Today prepares it on opening instead).
 async function prepareForCheckin(profileId: string, chatId: string): Promise<string[] | null> {
   try {
     const run = (async () => {
@@ -466,7 +465,8 @@ async function prepareForCheckin(profileId: string, chatId: string): Promise<str
       const titles = view?.pending.items.filter(i => i.change === "added").map(i => i.title) ?? [];
       return titles.length ? titles.slice(0, 5) : null;
     })();
-    return await Promise.race([run, new Promise<null>(r => setTimeout(() => r(null), PREPARE_AT_CHECKIN_MS))]);
+    // Bounded by the copilot's own deadline (COPILOT_DEADLINE_MS): no timer here.
+    return await run;
   } catch (err) {
     console.error(JSON.stringify({ layer: "nova_proactive", event: "prepare_plan_failed", profileId, error: err instanceof Error ? err.name : "unknown" }));
     return null;
