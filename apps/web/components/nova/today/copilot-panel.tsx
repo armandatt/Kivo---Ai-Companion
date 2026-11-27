@@ -90,12 +90,14 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   subject: { id: string | null; name: string } | null
   onAdopt: (flow: NovaDayView, changed: string[], touched: string[]) => void
   onApprove: (p: PendingChange, keep: number[] | null) => Promise<ApproveResult>
+  // Item 12: Propose a plan through the page (the prepared plan opens at once).
+  onProposePlan?: () => void
   onUndo: () => void
   onClose?: () => void
   // What the playground draws: whether Nova is working, and the latest proposal.
   onState: (s: { thinking: boolean; proposal: OpenProposal | null }) => void
   inputRef?: React.RefObject<HTMLTextAreaElement | null>
-}>(function CopilotPanel({ flow, subject, onAdopt, onApprove, onUndo, onClose, onState, inputRef }, ref) {
+}>(function CopilotPanel({ flow, subject, onAdopt, onApprove, onUndo, onClose, onState, inputRef, onProposePlan }, ref) {
   const [turns, setTurns] = useState<Turn[]>([])
   // The day these turns belong to: they are saved under that day only.
   const [turnsDay, setTurnsDay] = useState<string | null>(null)
@@ -314,7 +316,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
       <div className="shrink-0 px-5 pb-5 pt-3">
         {turns.length === 0 && (
           <div className="mb-3 flex flex-wrap gap-1.5">
-            {starters.map(c => <button key={c} type="button" disabled={pending} onClick={() => void (c === PROPOSE_PLAN_CHIP ? send(PROPOSE_PLAN_TEXT, { proposePlan: true }) : send(c))} className="rounded-full border border-white/12 px-3 py-1.5 text-[13px] text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40" data-copilot-chip>{c}</button>)}
+            {starters.map(c => <button key={c} type="button" disabled={pending} onClick={() => void (c === PROPOSE_PLAN_CHIP ? (onProposePlan ? onProposePlan() : send(PROPOSE_PLAN_TEXT, { proposePlan: true })) : send(c))} className="rounded-full border border-white/12 px-3 py-1.5 text-[13px] text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40" data-copilot-chip>{c}</button>)}
           </div>
         )}
         <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-2" />

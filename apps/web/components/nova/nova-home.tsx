@@ -15,7 +15,7 @@ import { firstName } from './format'
 import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
 import { AutoSavedNotice } from './auto-saved-notice'
-import { PreparedPlanCard, usePreparedPlan } from './today/prepared-plan'
+import { usePreparedPlan } from './today/prepared-plan'
 import { SessionTopicAsk } from './session-topic'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
@@ -145,6 +145,20 @@ export function NovaHome({ view, refreshing }: Props) {
     if (window.matchMedia('(min-width: 1024px)').matches) showNova(true); else setNovaOnPhone(true)
   }, [])
   const ask = useCallback((text: string) => { openNova(); nova.current?.send(text, { draftNow: text.toLowerCase().startsWith('just draft') }) }, [openNova])
+  // Propose a plan (item 12): Nova's prepared plan opens at once, as the
+  // studio's proposal (the deal-in animation); not prepared yet, it is
+  // composed now (one full-context model call) while the studio shows it.
+  const [composing, setComposing] = useState(false)
+  const proposePlan = useCallback(async () => {
+    openNova()
+    const offer = (p: NonNullable<typeof prepared.plan>) => nova.current?.offer(p.reply, p.pending)
+    if (prepared.plan) { offer(prepared.plan); return }
+    setComposing(true)
+    const got = await prepared.prepareNow()
+    setComposing(false)
+    if (got) offer(got); else nova.current?.proposePlan()
+  }, [openNova, prepared])
+
   // From the check-in on Telegram (item 12): ?plan=own starts planning with
   // Nova; ?plan=prepared lands on the prepared plan, which is already on top.
   const arrived = useRef(false)
@@ -153,8 +167,8 @@ export function NovaHome({ view, refreshing }: Props) {
     arrived.current = true
     const how = new URLSearchParams(window.location.search).get('plan')
     if (how === 'own') window.setTimeout(() => ask('Plan my day with me'), 300)
-    if (how === 'prepared') window.setTimeout(() => document.querySelector('[data-prepared-plan]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 1200)
-  }, [day.flow, ask])
+    if (how === 'prepared') window.setTimeout(() => void proposePlan(), 600)
+  }, [day.flow, ask, proposePlan])
   // A task made from Add to today: due today, like one made on today's board.
   const createTask = useCallback(async (title: string) => {
     const made = await board.createTask({ title, dueDay: day.flow?.day ?? null })
@@ -280,25 +294,20 @@ export function NovaHome({ view, refreshing }: Props) {
             </div>
           )}
 
-          {/* ── The plan Nova prepared at check-in (item 12): a suggestion until taken ── */}
+          {/* ── The playground (item 12: Nova's prepared plan opens here, instantly, on Propose a plan) ── */}
           <div className="mt-5">
-            {flow && prepared.plan && (
-              <PreparedPlanCard plan={prepared.plan} flow={flow}
-                onTake={async (p, keep) => { const r = await day.approve(p, keep); if (r.ok) void prepared.close('taken'); return r }}
-                onTweak={plan => { openNova(); nova.current?.offer(`${plan.reply} Tell me what to change, or apply it as it is.`, plan.pending) }}
-                onDismiss={() => void prepared.close('dismissed')} />
-            )}
             {day.loadError && !flow ? (
               <div role="alert" className="rounded-2xl border border-red-400/30 px-4 py-3 text-sm text-foreground/80">{day.loadError} <button type="button" onClick={() => void day.load()} className="ml-2 underline">Try again</button></div>
             ) : (
-              <Playground flow={prepared.plan && flow ? { ...flow, draft: null } : flow} proposal={studio.proposal} thinking={studio.thinking} busy={day.busy} touched={day.touched}
+              <Playground flow={flow} proposal={studio.proposal} thinking={studio.thinking} busy={day.busy} touched={day.touched}
                 sessionRunning={sessionRunning} starting={startingItem} starters={starters}
                 onOps={(l: FlowOp[]) => void day.ops(l)} onStart={(i, m) => void startItem(i, m)}
                 onView={v => void day.act({ action: 'view', view: v }, { quiet: true })}
                 onApply={keep => nova.current?.apply(keep)} onDiscard={() => nova.current?.discard()}
                 onChange={() => { openNova(); nova.current?.fill('Change something: ') }}
                 onAsk={ask} onAdd={() => setAdding(true)}
-                onPropose={() => { openNova(); nova.current?.proposePlan() }}
+                onPropose={() => void proposePlan()} composing={composing}
+                ready={prepared.plan ? new Date(prepared.plan.preparedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : null}
                 onTakeDraft={() => { if (flow?.draft?.id) void day.act({ action: 'accept', draftId: flow.draft.id }) }} />
             )}
           </div>
@@ -360,8 +369,8 @@ export function NovaHome({ view, refreshing }: Props) {
           role={novaOnPhone ? 'dialog' : undefined} aria-modal={novaOnPhone ? true : undefined} aria-label="Nova" data-today-nova>
           <CopilotPanel ref={nova} flow={flow} inputRef={copilotInput}
             subject={subject ? { id: subject.subjectId ?? null, name: subject.subjectName } : null}
-            onAdopt={day.adopt} onApprove={day.approve} onUndo={() => void day.undo()}
-            onState={setStudio}
+            onAdopt={day.adopt} onApprove={async (p, keep) => { const r = await day.approve(p, keep); if (r.ok && prepared.plan && p.id === prepared.plan.pending.id) void prepared.close('taken'); return r }} onUndo={() => void day.undo()}
+            onState={setStudio} onProposePlan={() => void proposePlan()}
             onClose={() => { if (novaOnPhone) setNovaOnPhone(false); else showNova(false) }} />
         </aside>
       )}

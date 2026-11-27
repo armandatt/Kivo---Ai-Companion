@@ -66,11 +66,12 @@ export async function pastCheckin(platformChatId: string, now = new Date()): Pro
 // the flow are left out; nothing left, or set aside, or taken: null.
 export async function loadPreparedPlan(
   profileId: string, platformChatId: string,
-  opts: { prepareIfMissing?: boolean; now?: Date; ask?: typeof askCopilot } = {},
+  // force: prepare now whatever the time (the learner pressed Propose a plan).
+  opts: { prepareIfMissing?: boolean; force?: boolean; now?: Date; ask?: typeof askCopilot } = {},
 ): Promise<PreparedPlanView | null> {
   const flow = await loadDayFlow(profileId, platformChatId, opts.now);
   let row = await prisma.novaPreparedPlan.findUnique({ where: { profileId_day: { profileId, day: flow.day } } });
-  if (!row && opts.prepareIfMissing && await pastCheckin(platformChatId, opts.now)) {
+  if (!row && opts.prepareIfMissing && (opts.force || await pastCheckin(platformChatId, opts.now))) {
     await preparePlan(profileId, platformChatId, "first_open", opts.ask).catch(err => { console.error("[nova:prepared_plan] prepare failed", err); return null; });
     row = await prisma.novaPreparedPlan.findUnique({ where: { profileId_day: { profileId, day: flow.day } } });
   }

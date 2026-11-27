@@ -62,9 +62,9 @@ const EXAMPLE = [
 // choice. Plan with Nova talks it through (Nova asks first); Propose a plan
 // has Nova build one at once from their board and map. When the record holds
 // enough, Nova's own suggestion is already shown, with why, to take as it is.
-function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, busy }: {
+function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, busy, ready }: {
   onStart: (text: string) => void; onPropose: () => void; starters: string[]; thinking: boolean
-  draft: NovaDayView['draft']; onTakeDraft: () => void; busy: boolean
+  draft: NovaDayView['draft']; onTakeDraft: () => void; busy: boolean; ready: string | null
 }) {
   const shown = draft && draft.items.length ? draft : null
   return (
@@ -80,9 +80,10 @@ function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, bus
             <span className="text-xs opacity-80">A few quick questions, then a plan</span>
           </button>
           <button type="button" disabled={thinking} onClick={onPropose}
-            className="flex flex-col items-start gap-0.5 rounded-xl border border-nova/40 bg-nova/[0.08] px-4 py-3 text-left text-foreground transition-colors hover:bg-nova/15 disabled:opacity-50" data-propose-plan>
+            className="relative flex flex-col items-start gap-0.5 rounded-xl border border-nova/40 bg-nova/[0.08] px-4 py-3 text-left text-foreground transition-colors hover:bg-nova/15 disabled:opacity-50" data-propose-plan>
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Sparkles aria-hidden className="size-4 text-nova-ink" /> Propose a plan</span>
-            <span className="text-xs text-foreground/60">Nova drafts it now from your record</span>
+            <span className="text-xs text-foreground/60">{ready ? 'Already prepared, opens at once' : 'Nova drafts it now from your record'}</span>
+            {ready && <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-nova/15 px-2 py-0.5 text-[10px] font-semibold text-nova-ink" data-plan-ready><span aria-hidden className="studio-breathe size-1.5 rounded-full bg-current" /> Ready · {ready}</span>}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -132,6 +133,21 @@ function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, bus
   )
 }
 
+// While Nova composes a plan that was not ready yet (item 12): placeholder
+// cards shimmer where the plan will land. Rarely seen: the plan is usually
+// prepared before the learner asks.
+function Composing() {
+  return (
+    <div className="px-4 py-5 sm:px-7 sm:py-7" role="status" aria-live="polite" data-plan-composing>
+      <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-nova-ink"><Sparkles aria-hidden className="size-3.5 animate-pulse" /> Nova is composing your day</p>
+      <p className="mt-1 text-sm text-foreground/60">Reading your deadlines, reviews, map and goals…</p>
+      <ol className="mt-5 space-y-2" aria-hidden>
+        {[0, 1, 2, 3].map(i => <li key={i} className="plan-compose h-[62px] rounded-2xl border border-white/8" style={{ ['--i' as string]: i, opacity: 1 - i * 0.18 }} />)}
+      </ol>
+    </div>
+  )
+}
+
 function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
   proposal: OpenProposal; flow: NovaDayView; busy: boolean
   onApply: (keep: number[] | null) => void
@@ -152,8 +168,11 @@ function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
   const live = proposal.state === 'open' || proposal.state === 'applying'
   const word = { added: 'New', moved: 'Moved', changed: 'Changed', same: null } as const
 
+  // A whole day lands with the plan animation (item 12); a small change as before.
+  const dealt = p.size === 'plan'
   return (
-    <div className="px-4 py-5 sm:px-7 sm:py-7" data-playground-proposal={proposal.state}>
+    <div className="relative px-4 py-5 sm:px-7 sm:py-7" data-playground-proposal={proposal.state}>
+      {dealt && <span aria-hidden className="plan-sweep" />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-nova-ink"><Sparkles aria-hidden className="size-3.5" /> Nova’s proposal</p>
@@ -167,7 +186,7 @@ function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
       <ol ref={box} className="mt-5 space-y-2" aria-label="The proposed flow">
         {items.map((i, k) => (
           <li key={i.id} data-flip={i.id} style={{ ...toneStyle(i.subjectName), ['--i' as string]: k }}
-            className={cn('subject-tone nova-reveal relative flex items-center gap-3 overflow-hidden rounded-2xl border bg-background/50 py-3 pl-4 pr-3 backdrop-blur-sm',
+            className={cn('subject-tone relative flex items-center gap-3 overflow-hidden rounded-2xl border bg-background/50 py-3 pl-4 pr-3 backdrop-blur-sm', dealt ? 'plan-deal' : 'nova-reveal',
               i.change === 'same' ? 'border-white/8' : 'studio-pending border-transparent bg-[var(--sc-faint)]')} data-proposed-item={i.change}>
             <span aria-hidden className="absolute inset-y-2 left-0 w-1 rounded-full bg-[var(--sc)]" />
             <span className="grid size-7 shrink-0 place-items-center rounded-full border-2 border-[var(--sc-edge)] text-[11px] font-semibold tabular-nums text-[var(--sc-ink)]">{k + 1}</span>
@@ -183,6 +202,11 @@ function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
           </li>
         ))}
       </ol>
+      {dealt && p.budgetMinutes ? (
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/8" aria-hidden data-plan-timebar>
+          <div className={cn('plan-fill h-full rounded-full', over > 0 ? 'bg-amber-400' : 'bg-nova')} style={{ width: `${Math.min(100, (p.plannedMinutes / p.budgetMinutes) * 100)}%`, ['--n' as string]: items.length }} />
+        </div>
+      ) : null}
       {later.length > 0 && <p className="mt-3 text-xs text-foreground/55">If there’s time: {later.map(i => i.title).join(', ')}</p>}
       {p.removed.length > 0 && <p className="mt-2 text-xs text-foreground/55">Out of today: <span className="line-through decoration-foreground/40">{p.removed.map(r => r.title).join(', ')}</span>{p.removed.some(r => r.kind === 'task') ? ' · the tasks stay on your board' : ''}</p>}
 
@@ -220,7 +244,7 @@ function Proposal({ proposal, flow, busy, onApply, onDiscard, onChange }: {
   )
 }
 
-export function Playground({ flow, proposal, thinking, busy, touched, sessionRunning, starting, starters, onOps, onStart, onView, onApply, onDiscard, onChange, onAsk, onAdd, onPropose, onTakeDraft }: {
+export function Playground({ flow, proposal, thinking, busy, touched, sessionRunning, starting, starters, onOps, onStart, onView, onApply, onDiscard, onChange, onAsk, onAdd, onPropose, onTakeDraft, composing = false, ready = null }: {
   flow: NovaDayView | null
   proposal: OpenProposal | null
   thinking: boolean
@@ -240,6 +264,9 @@ export function Playground({ flow, proposal, thinking, busy, touched, sessionRun
   // Item 12: Nova builds a plan now; and taking Nova's own suggestion as it is.
   onPropose: () => void
   onTakeDraft: () => void
+  // Item 12: a plan being composed now; and when Nova's plan is already prepared, since when.
+  composing?: boolean
+  ready?: string | null
 }) {
   const [left, setLeft] = useState('')
   const list = useRef<HTMLDivElement>(null)
@@ -270,10 +297,12 @@ export function Playground({ flow, proposal, thinking, busy, touched, sessionRun
 
       {!flow ? (
         <div aria-busy="true" className="h-80 animate-pulse" />
+      ) : composing && !showing ? (
+        <Composing />
       ) : showing ? (
         <Proposal key={showing.pending.id} proposal={showing} flow={flow} busy={busy} onApply={onApply} onDiscard={onDiscard} onChange={onChange} />
       ) : !hasFlow ? (
-        <Empty onStart={onAsk} onPropose={onPropose} starters={starters} thinking={thinking} draft={flow?.draft ?? null} onTakeDraft={onTakeDraft} busy={busy} />
+        <Empty onStart={onAsk} onPropose={onPropose} starters={starters} thinking={thinking} draft={flow?.draft ?? null} onTakeDraft={onTakeDraft} busy={busy} ready={ready} />
       ) : (
         <div className="px-3 py-5 sm:px-6 sm:py-6" data-playground-saved>
           <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-3">

@@ -8,19 +8,21 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-// GET /api/nova/day/prepared  → { ok, prepared: PreparedPlanView | null }
+// GET /api/nova/day/prepared[?now=1]  → { ok, prepared: PreparedPlanView | null }
+// ?now=1: the learner pressed Propose a plan; prepare it now, whatever the time.
 // The plan Nova prepared for today (item 12, 28 Nov; product/prepared-plan.ts).
 // Prepared at check-in; if it was not, prepared now on opening (past their
 // check-in time) with one model call, at most once a day. Never applied
 // here: taking it is the copilot's approve with this pending change.
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const access = await requireDayLearner()
     if (access.denied) return access.denied
     const limited = await rateGate("day.copilot", { learner: access.platformChatId })
     if (limited) return limited
     // At most one model call per learner per day (one row per day), so reading it is not metered.
-    const prepared = await loadPreparedPlan(access.profileId, access.platformChatId, { prepareIfMissing: true })
+    const force = new URL(req.url).searchParams.get("now") === "1"
+    const prepared = await loadPreparedPlan(access.profileId, access.platformChatId, { prepareIfMissing: true, force })
     return NextResponse.json({ ok: true, prepared }, { headers: { "cache-control": "no-store" } })
   } catch (err) {
     console.error("[nova/day/prepared]", err)

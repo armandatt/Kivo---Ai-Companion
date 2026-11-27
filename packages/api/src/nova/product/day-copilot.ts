@@ -43,6 +43,7 @@ import { checkFiles } from "./workspace-generation";
 import { serverSecret } from "../../auth/secrets";
 import { changeDayFlow, loadDayFlow, planAdditions, previewDayFlow } from "./day-flow";
 import { MIN_PLAN_ITEMS } from "./day-flow-rules";
+import { planContextLines } from "./plan-context";
 import { previewOf } from "./day-flow-rules";
 import { loadNovaToday } from "./today";
 import { loadStudyStructure } from "./setup-edit";
@@ -205,7 +206,8 @@ export function copilotPrompt(flow: NovaDayView, message: string, history: Array
       taskLines.length ? taskLines.join("\n") : "(none)",
       "MAP:",
       mapLines.length ? mapLines.join("\n") : "(no subjects yet)",
-      extras.lines.length ? `CONTEXT (background, not their priorities):\n${extras.lines.join("\n")}` : null,
+      // A ranked task or topic names itself as {{kind:id}}; it is given its label here, so it can be added as itself.
+      extras.lines.length ? `CONTEXT (background, not their priorities):\n${extras.lines.map(l => l.replace(/\{\{(task|topic):([^}]+)\}\}/g, (_, k: "task" | "topic", id: string) => `[${label(k, id)}]`)).join("\n")}` : null,
       open ? `OPEN PROPOSAL (waiting for their answer):\n${open.changed.join("\n") || "(changes to today's flow)"}` : null,
       earlier.length ? `WHAT THE LEARNER SAID EARLIER TODAY (before the conversation below; their decisions and limits still hold unless they changed them since):\n${earlier.map(t => `- ${clean(t, EARLIER_TEXT_MAX)}`).join("\n")}` : null,
       history.length ? `The conversation so far:\n${history.map(h => `${h.role === "learner" ? "Learner" : "Nova"}: ${clean(h.text, 600)}`).join("\n")}` : null,
@@ -422,8 +424,9 @@ export async function proposeDayPlan(profileId: string, platformChatId: string, 
 // What the model is told when the learner pressed Propose a plan.
 function planRequestLines(plan: Plan): string[] {
   return [
-    `PLAN REQUEST: the learner pressed "Propose a plan". Propose a whole day now (intent propose, do not ask): at least ${MIN_PLAN_ITEMS} items in today's flow, filling their time, in a sensible order (what is due or reviewed first, harder new material while fresh, lighter work last). Personalise it to their goals, dates, how they have been studying and anything they said today; say in reply, briefly, why this day.`,
-    ...(plan.picks.length ? ["RANKED FROM THEIR RECORD (use these by their labels unless what they said or their goals clearly point elsewhere):", ...plan.picks.map((p, i) => `${i + 1}. ${p.title} (${p.kind}${p.kind === "topic" ? `, ${p.subjectName}` : ""}): ${p.why}`)] : []),
+    `PLAN REQUEST: the learner pressed "Propose a plan". Propose a whole day now (intent propose, do not ask): at least ${MIN_PLAN_ITEMS} items in today's flow, filling their time, in a sensible order (what is due or reviewed first, harder new material while fresh, lighter work last). Personalise it to everything under LEARNER and CONTEXT: their goals and what they are learning for, their dates, how they actually study (time of day, session length), what they studied this week and how it felt, topics in progress, weak or due, and recent notes; never repeat a topic they just studied unless its review is due. Say in reply, in one or two sentences, why this day for them.`,
+    "Add their own tasks and topics with {\"op\":\"add\",\"ref\":label} using the label MAP or TASKS gives them, never as a focus item: a focus item is only for something that is not on record. A review of a topic is that topic.",
+    ...(plan.picks.length ? ["RANKED FROM THEIR RECORD (use these unless what they said or their goals clearly point elsewhere):", ...plan.picks.map((p, i) => `${i + 1}. {{${p.kind}:${p.id}}} ${p.title} (${p.kind}${p.kind === "topic" ? `, ${p.subjectName}` : ""}): ${p.why}`)] : []),
   ];
 }
 
@@ -458,7 +461,9 @@ export async function askCopilot(
   const openView = open ? await propose(profileId, platformChatId, flow, open.ops) : null;
   const known = await extras({ profileId, platformChatId }).catch(() => ({ lines: [] }) as CopilotExtras);
   const plan = proposePlan ? await planAdditions(profileId, platformChatId).catch(() => null) : null;
-  if (plan) known.lines.push(...planRequestLines(plan));
+  // The whole learner (plan-context.ts): who they are, how they study, the
+  // last week, every topic as it stands, recent notes and pages.
+  if (plan) known.lines.push(...await planContextLines(profileId, platformChatId).catch(() => [] as string[]), ...planRequestLines(plan));
   // The selected subject is context only, and only if it is theirs (it is in their map).
   const built = copilotPrompt(flow, message, history, known, openView?.ok ? openView.pending : null, draftNow, subjectId, earlier, options.language ?? null);
   const deadlineMs = files.files.length ? COPILOT_FILES_DEADLINE_MS : COPILOT_DEADLINE_MS;
