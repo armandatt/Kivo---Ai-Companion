@@ -832,6 +832,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    deal in one after another (rise, sharpen from a blur, settle with a little
    overshoot), a light sweeps once across the studio, and the day's time bar
    fills. While a plan is still being composed, placeholder cards shimmer. */
+/* The Knowledge Map's names fade in as a zoom crosses a tier (lod.ts). */
+@keyframes map-tier-fade { from { opacity: 0; } to { opacity: 1; } }
+.map-tier-fade { animation: map-tier-fade var(--tier-fade, 120ms) ease-out both; }
 @keyframes plan-deal { 0% { opacity: 0; transform: translateY(18px) scale(0.96); filter: blur(6px); } 60% { opacity: 1; transform: translateY(-2px) scale(1.005); filter: blur(0); } 100% { opacity: 1; transform: none; filter: none; } }
 .plan-deal { animation: plan-deal 0.52s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(120ms + var(--i, 0) * 75ms); }
 @keyframes plan-sweep { from { transform: translateX(-120%); opacity: 0; } 20% { opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
@@ -943,7 +946,7 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   /* Shown at once, not after their place in the queue; a change is still
      marked, without the fade. */
   .kivo-app .nova-reveal { animation: none !important; }
-  .kivo-app .plan-deal, .kivo-app .plan-fill { animation: none !important; }
+  .kivo-app .plan-deal, .kivo-app .plan-fill, .kivo-app .map-tier-fade { animation: none !important; }
   .kivo-app .plan-sweep { display: none; }
   .kivo-app .plan-compose { animation: none !important; }
   /* Without motion the passage is lit, still, until the page clears it. */

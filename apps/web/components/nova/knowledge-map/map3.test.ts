@@ -70,7 +70,8 @@ test('zoom to a subject: the whole region shows, never closer than the cap', () 
   assert.equal(v.k, 1)
   const big = viewOfBox({ minX: 0, minY: 0, maxX: 4000, maxY: 2000 }, 1200, 800)
   assert.ok(big.k < 0.3 && (4000 * big.k) <= 1200 - 96 + 1)
-  assert.equal(detailAt(0.25), 0); assert.equal(detailAt(0.4), 0); assert.equal(detailAt(0.58), 1); assert.equal(detailAt(0.7), 2)
+  // 28 Nov: lod.ts tiers; the full face from the close tier (a 180-unit card 140px on screen, zoom 0.78).
+  assert.equal(detailAt(0.25), 0); assert.equal(detailAt(0.4), 0); assert.equal(detailAt(0.7), 0); assert.equal(detailAt(0.8), 2)
 })
 
 const n = (id: string, type: MapNode['type'], label: string, extra: Record<string, unknown> = {}) => ({ id, type, label, href: null, subjectId: 's', ...extra }) as unknown as MapNode

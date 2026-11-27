@@ -23,7 +23,8 @@ import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
 import { clickAction, enterAction, enterTarget, openHrefOf, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
-import { planFarLabels, type Blocker, type LabelCandidate } from './far-labels'
+import { planCardLabels, type LabelCandidate } from './far-labels'
+import { LOD, tierAtZoom, type Tier } from './lod'
 import { ARRIVE_PARAM, arrivedFromImport, openingView, opensWithEntrance } from './opening-view'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
@@ -38,7 +39,7 @@ import { nextStep, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
 import { GAP_LABEL, LENSES, STATE_LABEL, STATUS_LABEL, statusOf, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
-import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
+import { minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
 import { EDGE_MS, LARGE_MAP, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
@@ -68,7 +69,7 @@ const MIN_K = 0.1, MAX_K = 2.5
 // the length of an ordinary one.
 const MAP_SESSION_MINUTES = 25
 
-// The zoom a card found with Find (or asked for by a link) is brought in at, at least: its title and facts show (overview.ts detailAt 2 from 0.62).
+// The zoom a card found with Find (or asked for by a link) is brought in at, at least: its full face shows (lod.ts close: 140px, zoom 0.78).
 const FIND_K = 0.9
 // The height the lens bar (Structure · Learning · Gaps) takes on the canvas's top edge, in screen pixels.
 const LENS_BAR = 48
@@ -872,6 +873,8 @@ const MapCard = memo(function MapCard({ n, x: px, y: py, detail, kids, inside, c
       className={cn('subject-tone group/card outline-none', live ? 'map-card' : 'map-copy pointer-events-none', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
       data-node={n.type} data-depth-thickness={th}
     >
+      {/* Far out a card is a plain pill: its name shows on hover and focus. */}
+      {live && detail === 0 && <title>{n.label}</title>}
       <g className={live ? arriving : undefined} style={live && arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
         <CardGround n={n} detail={detail} at={at} />
         <g className={cn('map-lift', copy || dragging ? 'map-raise' : undefined)} transform={LIFT_SPLIT}>
@@ -1559,7 +1562,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
 
   // Shows the card's details, keeping it selected.
   // readable: brought in at least to the zoom where a card's title and facts
-  // show (overview.ts detailAt 2), never pulled further out than it is.
+  // show (lod.ts close tier), never pulled further out than it is.
   const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean; readable?: boolean } = {}) => {
     setSelected(id)
     lastChosen.current = id
@@ -1913,7 +1916,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // subjects' names (drawn at a readable size); then titles; then facts.
   // Deferred: crossing a threshold redraws every card's face, which on a large
   // map is a long frame. The zoom itself goes first and the faces follow.
-  const detail: CardDetail = useDeferredValue(detailAt(t.k))
+  // The tier (lod.ts): from a card's width on screen, with hysteresis so a
+  // zoom resting near a threshold never flickers. Far and mid draw the cards'
+  // shapes (names over them, inside each card); close draws the full faces.
+  const tierRef = useRef<Tier | null>(null)
+  const tierNow = tierAtZoom(t.k, tierRef.current)
+  tierRef.current = tierNow
+  const tier: Tier = useDeferredValue(tierNow)
+  const detail: CardDetail = tier === 'close' ? 2 : 0
   const textScale = 1 / Math.max(t.k, 0.0001)
   // "Recent" is judged against when the map was read.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- read again with each new reading of the map
@@ -2133,7 +2143,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     }
     return out
   }, [drawn, cover, glideCover, placed, selected, hover, dragAt])
-  const landingDetail = glideCover ? Math.min(detail, detailAt(glideCover.k)) as CardDetail : detail
+  const landingDetail = glideCover ? Math.min(detail, tierAtZoom(glideCover.k) === 'close' ? 2 : 0) as CardDetail : detail
   const nodeLayer = useMemo(() => shownCards.map(({ n, landing }) => {
     const card = cardPropsOf(n)
     if (!card) return null
@@ -2155,8 +2165,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const near = drawn.filter(n => (neighbourIds.has(n.id) || n.id === selected) && n.id !== focusId)
     const self = byId.get(focusId!)
     const copies = [...near.map(n => cardPropsOf(n, n.id === selected ? 'focus' : 'near')), self ? cardPropsOf(self, 'focus') : null]
-    return <>{sugg}{copies.map(p => (p ? <MapCard key={`copy-${p.n.id}`} {...p} /> : null))}{rings}</>
-  }, [focusOn, focusId, selected, neighbourIds, allLines, drawRing, drawSuggestion, suggestions, overviewOn, drawn, byId, cardPropsOf])
+    // Far and mid, the raised copies carry their names too (inside each card),
+    // or the lit cards would cover the names drawn under them.
+    const ks = 1 / Math.max(t.k, 0.0001)
+    const named = tier === 'close' ? [] : planCardLabels([...near, ...(self ? [self] : [])].flatMap(n => {
+      const p = placed.at.get(n.id)
+      return p ? [{ id: n.id, x: p.x, y: p.y, text: n.label, kind: n.type === 'subject' ? 'subject' as const : 'topic' as const, rank: 0, card: CARD[n.type] }] : []
+    }), t.k, 'mid')
+    return <>{sugg}{copies.map(p => (p ? <MapCard key={`copy-${p.n.id}`} {...p} /> : null))}{rings}
+      {named.map(l => (
+        <text key={`focus-name-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={600} data-focus-name
+          className="pointer-events-none fill-foreground" style={{ paintOrder: 'stroke', stroke: 'var(--card)', strokeWidth: 2.5 * ks, strokeLinejoin: 'round' }}>{l.text}</text>
+      ))}</>
+  }, [focusOn, focusId, selected, neighbourIds, allLines, drawRing, drawSuggestion, suggestions, overviewOn, drawn, byId, cardPropsOf, tier, t.k, placed])
   // The lines it lights, for the focus canvas over the scrim.
   const focusScene = useMemo<Scene>(() => {
     const out = { strokes: [] as StrokePrim[], dots: [] as DotPrim[], movers: [] as MoverPrim[] }
@@ -2242,7 +2263,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // Far out, which subjects' regions are wide enough for a plate (name and
   // facts), and where each plate sits on screen (at the map's origin).
   const plated = useMemo(() => {
-    const out = new Map<string, Blocker>()
+    const out = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>()
     if (detail !== 0) return out
     for (const r of regions) {
       const wPx = r.w * t.k - 20, hPx = r.h * t.k
@@ -2267,7 +2288,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const wPx = r.w * t.k - 20, hPx = r.h * t.k
           if (wPx < 70 || hPx < 34) return null
           const title = short(s.label, Math.max(6, Math.floor((wPx - 30) / 8.8)))
-          const line = hPx >= 76 ? short(facts, Math.max(8, Math.floor((wPx - 20) / 6.4))) : null
+          // Far out, a header only: what the area is. Its stats come back at mid.
+          const line = tier !== 'far' && hPx >= 76 ? short(facts, Math.max(8, Math.floor((wPx - 20) / 6.4))) : null
           const plateW = Math.min(wPx, Math.max(title.length * 8.8 + 34, (line?.length ?? 0) * 6.4 + 22))
           const plateH = line ? 48 : 30
           return (
@@ -2283,7 +2305,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         })()}
       </g>
     )
-  })), [regions, byId, detail, t.k, zoomToRegion, tree, explore, overviewOn])
+  })), [regions, byId, detail, tier, t.k, zoomToRegion, tree, explore, overviewOn])
 
   // Between subjects, in the overview: the [[links]] written from one subject's
   // items to another's, one line per pair with how many. Only links on record.
@@ -2363,28 +2385,31 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     )
   }), [markers, byId, focusId, detail, goOutside])
 
-  // Far out, names over the cards at a fixed size on screen (far-labels.ts,
-  // founder review #02): every subject without a plate and every topic drawn,
-  // most important first, each only where it overlaps no other name or plate.
-  // Planned once per resting zoom; a pan changes nothing here.
+  // Names over the cards (lod.ts, far-labels.ts): always inside their card.
+  // Far: only subject headers; mid: every card, one line; close: the faces.
+  // The selected card, its connections and search hits are named at every tier.
+  const alwaysNamed = useMemo(() => new Set<string>([...(selected ? [selected] : []), ...(neighbourIds ?? []), ...found.map(f => f.id)]), [selected, neighbourIds, found])
   const farLabels = useMemo(() => {
-    if (detail !== 0) return null
+    if (tier === 'close') return null
     const candidates: LabelCandidate[] = []
     for (const n of drawn) {
       const p = placed.at.get(n.id)
       if (!p) continue
       const subject = n.type === 'subject'
-      // A subject with a plate is named there; its own card still carries its name when wide enough.
       candidates.push({ id: n.id, x: p.x, y: p.y, text: n.label, kind: subject ? 'subject' : 'topic', rank: (subject ? 0 : n.type === 'topic' ? 100 : 200) + depthOf(n.id) * 10, card: CARD[n.type], insideOnly: plated.has(n.id) || (!subject && n.type !== 'topic') })
     }
     const ks = 1 / Math.max(t.k, 0.0001)
-    return planFarLabels(candidates, t.k, [...plated.values()]).map(l => (
-      <text key={`far-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={l.kind === 'subject' ? 650 : 500} data-far-label={l.inside ? 'inside' : l.kind}
-        className="map-far-label pointer-events-none fill-foreground" style={{ fontFamily: l.kind === 'subject' ? 'var(--font-display)' : undefined, paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: 4 * ks, strokeLinejoin: 'round' }}>
-        {l.text}
-      </text>
-    ))
-  }, [detail, drawn, plated, placed, t.k, depthOf])
+    return (
+      <g key={`names-${tier}`} className="map-tier-fade" style={{ ['--tier-fade' as string]: `${LOD.fadeMs}ms` }} data-map-tier={tier}>
+        {planCardLabels(candidates, t.k, tier, alwaysNamed).map(l => (
+          <text key={`far-${l.id}`} x={l.x} y={l.y} dy="0.35em" textAnchor="middle" fontSize={l.px * ks} fontWeight={l.kind === 'subject' ? 650 : 500} data-far-label={l.inside ? 'inside' : 'header'}
+            className="map-far-label pointer-events-none fill-foreground" style={{ fontFamily: l.kind === 'subject' ? 'var(--font-display)' : undefined, paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: (l.inside ? 2.5 : 4) * ks, strokeLinejoin: 'round' }}>
+            {l.text}
+          </text>
+        ))}
+      </g>
+    )
+  }, [tier, drawn, plated, placed, t.k, depthOf, alwaysNamed])
 
   // ── Around the canvas ──────────────────────────────────────────────────────
   const saver = layout.saver
@@ -2777,7 +2802,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {(view.unconnected > 0 || view.notShown.notes > 0 || view.notShown.resources > 0) && (
             <p className="hidden rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] text-foreground/70 backdrop-blur-sm md:block">
               {view.unconnected > 0 && <>{view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
-              {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
+              {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Some older notes and pages are not drawn.</>}
             </p>
           )}
         </div>

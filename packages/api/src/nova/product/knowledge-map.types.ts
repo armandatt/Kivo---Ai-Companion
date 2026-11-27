@@ -11,7 +11,9 @@
 export type MapNodeType = "subject" | "topic" | "task" | "note" | "resource";
 export type MapLevel    = "weak" | "developing" | "solid";
 
-export const MAP_NOTES_MAX     = 150;
+// Every note is drawn (28 Nov 2026): far out a note is a cheap pill, and the
+// map culls what is off screen. A guard against a pathological account only.
+export const MAP_NOTES_MAX     = 5000;
 export const MAP_RESOURCES_MAX = 150;
 
 interface NodeBase {

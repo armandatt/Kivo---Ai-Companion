@@ -4,6 +4,8 @@
 // eye can read whatever the zoom. The minimap shows the whole map and where
 // the view is in it. Pure arithmetic: no DOM, no React.
 
+import { tierAtZoom } from './lod'
+
 export interface Box { minX: number; minY: number; maxX: number; maxY: number }
 export interface View { x: number; y: number; k: number }
 
@@ -12,7 +14,8 @@ export interface View { x: number; y: number; k: number }
 // 0.56 it would be under 7px on screen (unreadable, founder review #02), so
 // below that names are drawn at screen size instead (far-labels.ts).
 export type Detail = 0 | 1 | 2
-export const detailAt = (k: number): Detail => (k >= 0.62 ? 2 : k >= 0.56 ? 1 : 0)
+// Since 28 Nov the tiers of lod.ts decide it (one set of thresholds): the full face only when close.
+export const detailAt = (k: number): Detail => (tierAtZoom(k) === 'close' ? 2 : 0)
 
 // A region's label in screen pixels, so it reads the same at any zoom; the
 // map units it takes are those over the zoom.
