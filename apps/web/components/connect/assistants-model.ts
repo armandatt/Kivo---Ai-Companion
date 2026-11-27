@@ -81,13 +81,3 @@ export function since(iso: string | null, now = Date.now()): string | null {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-// The AI Assistants page walkthrough (bug batch 28 Nov, item 11): Kivo's own
-// screens, recorded from the seeded local test account (no real data). The
-// middle slot is a marked placeholder for the owner's 10–15 s clip of adding
-// the connector in Claude; see docs/AI_ASSISTANTS_VIDEO.md. Lazy: nothing
-// loads until it is opened, and it carries captions.
-export const ASSISTANTS_WALKTHROUGH = {
-  src: '/assistants/walkthrough.webm', type: 'video/webm',
-  poster: '/assistants/walkthrough-poster.png', captions: '/assistants/walkthrough.vtt',
-  seconds: 29, title: 'How connecting works', summary: 'Copy, add, allow, and see what it saves',
-} as const

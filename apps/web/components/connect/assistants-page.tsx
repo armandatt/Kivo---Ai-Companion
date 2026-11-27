@@ -10,9 +10,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, Check, Copy, FilePlus2, Loader2, Plug, ShieldCheck, Sparkles, Unplug, X } from 'lucide-react'
-import { ASSISTANTS, ASSISTANTS_WALKTHROUGH, assistantOf, canWrite, newConnection, since, type Assistant, type AssistantId, type Connection } from './assistants-model'
+import { ASSISTANTS, assistantOf, canWrite, newConnection, since, type Assistant, type AssistantId, type Connection } from './assistants-model'
 import { MCP_URL, mcpAddressFor } from './mcp-clients'
-import { DemoVideo } from '@/components/media/demo-video'
 import { cn } from '@/lib/utils'
 
 const POLL_MS = 3_000
@@ -90,13 +89,6 @@ export function AssistantsPage() {
       )}
 
       <OtherAssistant />
-
-      {/* A 30-second look (item 11, 28 Nov): poster only until opened; captions in the player. */}
-      <section className="mt-8" aria-labelledby="walkthrough-title" data-assistants-walkthrough>
-        <h2 id="walkthrough-title" className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground/50">See it in 30 seconds</h2>
-        <div className="mt-3 max-w-md"><DemoVideo video={{ ...ASSISTANTS_WALKTHROUGH }} /></div>
-        <p className="mt-2 text-xs text-foreground/50">Copy the address, add Kivo in your assistant, press Allow on Kivo, and what it saves appears in your notes and on your map.</p>
-      </section>
 
       <section className="mt-10" aria-labelledby="connected-title">
         <h2 id="connected-title" className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground/50">Your connections</h2>

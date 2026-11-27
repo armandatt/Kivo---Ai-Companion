@@ -93,16 +93,3 @@ test('one copied state for the page: the setup does not ask to copy again', asyn
   assert.match(page, /copied\s*\?\s*<p[^>]*data-setup-copied/)
   assert.doesNotMatch(page, /Where exactly\?/, 'the clicks are shown, not hidden in a dropdown')
 })
-
-// Bug batch 28 Nov, item 11: the walkthrough is lazy, captioned, small, and its files exist.
-test('REGRESSION item 11: the AI Assistants walkthrough is lazy, captioned and under 5 MB', async () => {
-  const { ASSISTANTS_WALKTHROUGH } = await import('./assistants-model')
-  const { statSync, readFileSync } = await import('node:fs')
-  const pub = (p: string) => new URL(`../../public${p}`, import.meta.url)
-  for (const f of [ASSISTANTS_WALKTHROUGH.src, ASSISTANTS_WALKTHROUGH.poster, ASSISTANTS_WALKTHROUGH.captions]) assert.ok(statSync(pub(f)).size > 0, f)
-  assert.ok(statSync(pub(ASSISTANTS_WALKTHROUGH.src)).size < 5 * 1024 * 1024)
-  assert.match(readFileSync(pub(ASSISTANTS_WALKTHROUGH.captions), 'utf8'), /^WEBVTT/)
-  const player = readFileSync(new URL('../media/demo-video.tsx', import.meta.url), 'utf8')
-  assert.match(player, /preload="none"/)
-  assert.match(player, /<track kind="captions"/)
-})
