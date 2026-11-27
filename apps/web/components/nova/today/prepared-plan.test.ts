@@ -20,7 +20,7 @@ test('REGRESSION item 12: taken only through the ordinary approve, then closed f
 
 test('REGRESSION item 12: the plan deals in, sweeps and fills; and none of it moves with reduced motion', () => {
   for (const k of ['plan-deal', 'plan-sweep', 'plan-fill', 'plan-compose']) assert.match(css, new RegExp(`@keyframes ${k}`))
-  assert.match(css, /\.kivo-app \.plan-deal, \.kivo-app \.plan-fill \{ animation: none !important; \}/)
+  assert.match(css, /\.kivo-app \.plan-deal, \.kivo-app \.plan-fill, \.kivo-app \.map-tier-fade \{ animation: none !important; \}/)
   assert.match(studio, /dealt \? 'plan-deal' : 'nova-reveal'/)
 })
 
