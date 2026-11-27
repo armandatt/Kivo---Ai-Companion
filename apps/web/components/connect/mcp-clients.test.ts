@@ -83,3 +83,13 @@ test('the AI Assistants page explains itself: what it can do, other assistants, 
   assert.match(page, /function OtherAssistant/)
   assert.match(page, /Nothing connects until you press Allow/)
 })
+
+// Owner request (28 Nov): copying the address once is enough; the setup's first step is then done, with no second copy.
+test('one copied state for the page: the setup does not ask to copy again', async () => {
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync(new URL('./assistants-page.tsx', import.meta.url), 'utf8')
+  assert.match(page, /const \[addressCopied, setAddressCopied\]/)
+  assert.match(page, /<Setup key=\{open\}.*copied=\{addressCopied\}/)
+  assert.match(page, /copied\s*\?\s*<p[^>]*data-setup-copied/)
+  assert.doesNotMatch(page, /Where exactly\?/, 'the clicks are shown, not hidden in a dropdown')
+})
