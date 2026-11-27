@@ -1,6 +1,6 @@
 import { Header } from "@/components/header"
 import { LandingHero } from "@/components/landing/hero"
-import { BuildSection, Capabilities, CreatureSection, ExtensionSection, FocusSection, Journey, MapSection, MentorSection, NotesSection, UseCases, ValueSection, WorkspaceSection } from "@/components/landing/sections"
+import { BuildSection, Capabilities, CreatureSection, ExtensionSection, FocusSection, Journey, MapSection, MentorSection, NotesSection, UseCases, WorkspaceSection } from "@/components/landing/sections"
 import { Pricing } from "@/components/pricing"
 import { FAQ } from "@/components/faq"
 import { FinalCTA } from "@/components/final-cta"
@@ -34,7 +34,6 @@ export default function Home() {
         <Capabilities />
         <UseCases />
         <Journey />
-        <ValueSection />
         <Pricing />
         <FAQ />
         <FinalCTA />

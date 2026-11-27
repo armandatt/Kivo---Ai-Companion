@@ -169,12 +169,13 @@ test('the extension preview uses the popup’s own words, keeps only what it rea
   assert.match(web('components/extension/store-button.tsx'), /href=\{url\} target="_blank" rel="noopener noreferrer"/)
 })
 
-// Founder review #06: the value section claims no saving and names no competitor price.
-test('the value section takes its price from plans.ts and claims no saving', async () => {
+// Bug batch 28 Nov, item 9: the "One place for a whole semester / Everything
+// you study with, for ₹299 a month" block is gone; pricing and Plus are not.
+test('REGRESSION item 9: the value block is removed, and pricing still follows the journey', async () => {
   const { readFileSync } = await import('node:fs')
-  const src = readFileSync(new URL('./sections.tsx', import.meta.url), 'utf8')
-  const part = src.slice(src.indexOf('export const VALUE_ITEMS'))
-  assert.match(part, /formatPrice\(plus\)/)
-  assert.doesNotMatch(part, /₹\s*\d|\$\s*\d/, 'no hard-coded prices')
-  assert.doesNotMatch(part, /save ₹|you save|saving of|unlimited access|Notion|Readwise|Xmind|Obsidian/i)
+  const sections = readFileSync(new URL('./sections.tsx', import.meta.url), 'utf8')
+  const page = readFileSync(new URL('../../app/page.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(sections, /ValueSection|VALUE_ITEMS|One place for a whole semester|Everything you study with/)
+  assert.doesNotMatch(page, /ValueSection/)
+  assert.ok(page.indexOf('<Journey />') < page.indexOf('<Pricing />'), 'Pricing is still on the page, after the journey')
 })
