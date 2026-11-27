@@ -17,6 +17,8 @@ import {
   setSessionDetails,
   setSessionTopic,
   fileEndedSession,
+  closeUnconfirmed,
+  confirmSessionTime,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
@@ -25,7 +27,7 @@ import { setTopicStatus } from "./topic-status";
 import type { ReflectionResponse } from "./focus-context.types";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
-import { ABANDONED_STATUS, AUTO_SAVED_PAUSED } from "../engines/session-clock";
+import { ABANDONED_STATUS, AUTO_SAVED_PAUSED, AUTO_SAVED_RUNNING, UNCONFIRMED_STATUS, abandonmentPlanMinutes, needsTimeConfirm } from "../engines/session-clock";
 import type { NovaAutoSavedSession, NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
@@ -88,15 +90,25 @@ export async function lastClosure(profileId: string): Promise<{ kind: "abandoned
   });
   if (!last) return null;
   if (last.status === ABANDONED_STATUS) return { kind: "abandoned" };
-  const report = last.executionReport as { autoClosed?: unknown; pausedAt?: unknown; backfilled?: unknown } | null;
+  const report = last.executionReport as { autoClosed?: unknown; pausedAt?: unknown; backfilled?: unknown; endedBy?: unknown } | null;
+  // Its time waits for the learner's word (B.1): said on their return.
+  if (last.status === UNCONFIRMED_STATUS) {
+    return { kind: "saved", saved: {
+      sessionId: last.id, label: last.topicName ?? last.currentFocus ?? null, topicName: last.topicName, minutes: last.durationMinutes, counted: false,
+      pausedAt: null, needsConfirm: true,
+      message: `This session ran ${last.durationMinutes} minutes, well past its plan, so it isn't counted yet. Confirm how long you studied, or trim it.`,
+    } };
+  }
   // Saved later by the backfill (persistence/session-backfill.ts): old news, not announced.
-  if (last.status !== "completed" || report?.autoClosed !== AUTO_SAVED_PAUSED || report.backfilled) return null;
+  if (last.status !== "completed" || (report?.autoClosed !== AUTO_SAVED_PAUSED && report?.autoClosed !== AUTO_SAVED_RUNNING) || report?.endedBy || report.backfilled) return null;
   const counted = last.durationMinutes >= COUNTED_SESSION_MINUTES;
   return { kind: "saved", saved: {
     sessionId: last.id, label: last.topicName ?? last.currentFocus ?? null, topicName: last.topicName,
     minutes: last.durationMinutes, counted,
     pausedAt: typeof report.pausedAt === "string" ? report.pausedAt : null,
-    message: autoSavedMessage(last.durationMinutes, counted),
+    message: report?.autoClosed === AUTO_SAVED_RUNNING
+      ? `Your session was left running past its plan, so it was saved with the ${last.durationMinutes} minutes on its clock.${counted ? "" : " Under ten minutes isn't counted in Progress."}`
+      : autoSavedMessage(last.durationMinutes, counted),
   } };
 }
 
@@ -112,6 +124,13 @@ export async function runNovaSessionCommand(
   const profileId = snapshot.profileId;
   if (!profileId) {
     return { ok: false, error: "onboarding_incomplete", message: "Finish setting up with Nova first." };
+  }
+
+  // Confirming or trimming an unconfirmed session's time (B.1).
+  if (command.action === "confirm_time") {
+    const done = await confirmSessionTime(profileId, command.sessionId, command.minutes);
+    if (!done) return { ok: false, error: "invalid", message: "That session has nothing to confirm." };
+    return { ok: true, session: await loadNovaSession(platformChatId, now), ended: null };
   }
 
   // Filing a finished session touches no open session and no clock.
@@ -181,14 +200,21 @@ export async function runNovaSessionCommand(
       select: { id: true },
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
-    const closed = await persistSessionEnd({
+    // More than two hours past its plan (B.1): closed, its time waiting for the learner's word.
+    const studied = Math.floor(sessionElapsedSeconds(active, now) / 60);
+    if (needsTimeConfirm(studied, abandonmentPlanMinutes(active.plannedDurationMinutes))) {
+      if (await closeUnconfirmed(active.id, studied, command.outcome)) {
+        ended = { sessionId: active.id, topicName: active.topicName, minutes: Math.max(1, studied), outcome: command.outcome, topicRecorded: false, counted: false, needsConfirm: true };
+      } else { const why = await closedForThem(); if (why) return why; }
+    }
+    const closed = ended ? false : await persistSessionEnd({
       userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface,
       outcome: command.outcome, now,
     });
     // Not closed by this call. Either it was ended elsewhere a moment ago
     // (nothing was written twice, and there is nothing new to report), or
     // the sweep abandoned it first, which the learner is told.
-    if (!closed) { const why = await closedForThem(); if (why) return why; }
+    if (!closed && !ended) { const why = await closedForThem(); if (why) return why; }
     if (closed) {
       ended = {
         sessionId: active.id,

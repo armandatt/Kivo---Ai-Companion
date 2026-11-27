@@ -68,6 +68,11 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
     if (b.topicStatus !== undefined && b.topicStatus !== null && !topicStatus) return null;
     return sessionId && sessionId.length <= 40 && subjectId && subjectId.length <= 40 && topicName ? { action: "file", sessionId, subjectId, topicName, ...(topicStatus ? { topicStatus } : {}) } : null;
   }
+  if (b.action === "confirm_time") {
+    const sessionId = typeof b.sessionId === "string" ? b.sessionId.trim() : "";
+    const m = b.minutes;
+    return sessionId && sessionId.length <= 40 && typeof m === "number" && Number.isFinite(m) && m >= 0 && m <= 24 * 60 ? { action: "confirm_time", sessionId, minutes: Math.round(m) } : null;
+  }
   if (b.action === "end") {
     // Anything that is not one of the four answers is "no answer".
     const outcome = SESSION_OUTCOMES.find(o => o === b.outcome) ?? null;

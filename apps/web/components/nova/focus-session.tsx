@@ -11,6 +11,7 @@ import { clock, minutesLabel } from './format'
 import { StudyRequest } from './saved/study-request'
 import { useNovaSession } from './use-nova-session'
 import { AutoSavedNotice } from './auto-saved-notice'
+import { ConfirmTime } from './confirm-time'
 import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
 import { SessionNote } from './session-note'
 import { RecordLine, useTopicRecord } from './topic-record'
@@ -203,6 +204,8 @@ export function FocusSession() {
             ? 'Nova has updated this topic and when to revisit it.'
             : `Nova logged the session, but couldn't tie ${ended.topicName} to one of your subjects, so it isn't in Knowledge yet.`}
         </p>
+        {/* B.1 (28 Nov): far past its plan, its time waits for the learner's word. */}
+        {ended.needsConfirm && <div className="mx-auto mt-6 w-full max-w-md"><ConfirmTime sessionId={ended.sessionId} recorded={ended.minutes} dark /></div>}
         {/* Items 3/4 (28 Nov): ended on no topic, it can still be filed now. */}
         {!ended.topicName && <div className="mx-auto mt-6 w-full max-w-md"><SessionTopicAsk topicName={null} after dark busy={pending !== null} onChoose={(subjectId, topicName) => fileSession(ended.sessionId, subjectId, topicName)} /></div>}
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">

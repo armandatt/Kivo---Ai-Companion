@@ -108,7 +108,10 @@ after(async () => {
 
 // ── The limits ────────────────────────────────────────────────────────────────
 
-test("a 25-minute session is still a session at 54 minutes and is abandoned at 55, kept as 25 minutes and no more", async () => {
+// PR #113 B.1 (owner, 28 Nov): a timer left running past its plan is saved
+// with the time on its clock, never abandoned; more than two hours past its
+// plan, it is kept "unconfirmed" until the learner confirms or trims it.
+test("a 25-minute session is still a session at 54 minutes and is saved at 55, with the 55 minutes on its clock", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   await start(l, t0, 25);
@@ -119,7 +122,7 @@ test("a 25-minute session is still a session at 54 minutes and is abandoned at 5
 
   assert.equal(await sweep(l, plus(t0, 55)), 1);
   const [row] = await rows(l);
-  assert.deepEqual([row!.status, row!.durationMinutes, row!.executionReport], ["abandoned", 25, null]);
+  assert.deepEqual([row!.status, row!.durationMinutes, (row!.executionReport as { autoClosed?: string }).autoClosed], ["completed", 55, "ran_past_plan"]);
   assert.deepEqual(await learned(l), before, "no mastery moved, no review scheduled, no mastery history");
   assert.equal(await loadNovaSession(l.chat, plus(t0, 56)), null, "nothing is running any more");
 });
@@ -136,19 +139,19 @@ test("paused time does not bring the limit closer", async () => {
   // 115 on the wall, 55 of study.
   assert.equal(await sweep(l, plus(t0, 115)), 1);
   const [row] = await rows(l);
-  assert.deepEqual([row!.status, row!.durationMinutes, row!.totalPausedSeconds], ["abandoned", 25, 3600], "the pause that was taken is still on the row");
+  assert.deepEqual([row!.status, row!.durationMinutes, row!.totalPausedSeconds], ["completed", 55, 3600], "55 of study, the hour's pause still on the row");
 });
 
-test("a session started with no length is held to sixty minutes: open at 89, abandoned at 90", async () => {
+test("a session started with no length is held to sixty minutes: open at 89, saved at 90 with its 90 minutes", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   await start(l, t0, null);
   assert.equal((await rows(l))[0]!.plannedDurationMinutes, null);
   assert.equal(await sweep(l, plus(t0, 89)), 0);
   assert.equal(await sweep(l, plus(t0, 90)), 1);
-  assert.deepEqual(await statuses(l), [["abandoned", 60]]);
+  assert.deepEqual(await statuses(l), [["completed", 90]]);
   const progress = await loadNovaProgress(l.chat, { now: plus(t0, 91) });
-  assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 0, "the sixty minutes are a limit, not study");
+  assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 90, "saved, so counted");
 });
 
 test("a session paused for two hours is saved (not abandoned) with the time studied before the pause", async () => {
@@ -243,7 +246,7 @@ test("a session ended in the ordinary way is completed as before: counted, with 
   assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes, progress.overview.notCounted], [1, 25, { selfReported: 0, underTenMinutes: 0 }]);
 });
 
-test("an abandoned session is in none of Progress's numbers, is named as not counted, and is not a session on Today or the Planner", async () => {
+test("REGRESSION B.1: a timer left running for days is kept unconfirmed: in none of Progress's numbers until the learner confirms or trims it", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   // One real session, then one left running for three days.
@@ -253,27 +256,38 @@ test("an abandoned session is in none of Progress's numbers, is named as not cou
   const before = await learned(l);
   const later = plus(t0, 60 * 24 * 3);
   assert.equal(await sweep(l, later), 1);
-  assert.deepEqual(await statuses(l), [["completed", 25], ["abandoned", 25]]);
+  const [, open] = await rows(l);
+  assert.equal(open!.status, "unconfirmed");
   assert.deepEqual(await learned(l), before);
 
   const progress = await loadNovaProgress(l.chat, { now: later });
   assert.ok(progress.status === "ready");
-  assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes], [1, 25], "three days of open timer added nothing");
-  assert.deepEqual(progress.overview.notCounted, { selfReported: 0, underTenMinutes: 0, abandoned: 1 });
+  assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes], [1, 25], "three days of open timer added nothing yet");
+  // On return the learner is asked.
+  const state = await loadNovaSessionState(l.chat, later);
+  assert.equal(state.autoSaved?.needsConfirm, true);
+  // Trimmed to what they say: then it counts, never more than recorded.
+  const trimmed = await runNovaSessionCommand(l.chat, { action: "confirm_time", sessionId: open!.id, minutes: 40 }, later);
+  assert.ok(trimmed.ok, JSON.stringify(trimmed));
+  assert.deepEqual((await rows(l)).map(r => [r.status, r.durationMinutes]), [["completed", 25], ["completed", 40]]);
+  const after = await loadNovaProgress(l.chat, { now: later });
+  assert.ok(after.status === "ready" && after.overview.learningMinutes === 65);
+  assert.equal((await runNovaSessionCommand(l.chat, { action: "confirm_time", sessionId: open!.id, minutes: 10 }, later)).ok, false, "once");
 
   const today = await loadNovaToday(l.chat, { now: later });
   assert.ok(today.status === "ready");
   assert.equal(today.activeSession, null);
-  assert.equal(today.progress.lastSession?.minutes, 25);
-  assert.equal(new Date(today.progress.lastSession!.date).getTime(), t0.getTime(), "the last session is the one that was studied");
+  assert.equal(today.progress.lastSession?.minutes, 40, "the confirmed session is the last one studied");
+  assert.equal(new Date(today.progress.lastSession!.date).getTime(), plus(t0, 60).getTime());
 
   const planner = await loadNovaPlanner(l.chat, { now: later });
   assert.ok(planner.status === "ready");
-  const listed = planner.week.flatMap(d => d.sessions).filter(s => s.status === "abandoned" || s.status === "completed");
-  assert.ok(listed.every(s => s.status !== "completed" || s.minutes === 25), "no abandoned session is shown as a completed one");
 });
 
-test("a session left running no longer holds back the check-in", async () => {
+// B.1: the session left running is saved (65 minutes of the day), so the
+// check-in sees a day already studied and stays quiet; it no longer holds
+// anything back either way.
+test("a session left running no longer holds back the check-in: it is saved, and the day counts as studied", async () => {
   const l = await learner();
   // Started at 10:00 for 25 minutes and forgotten.
   await start(l, ist("10:00"), 25);
@@ -282,11 +296,11 @@ test("a session left running no longer holds back the check-in", async () => {
   await tick(ist("10:50"));
   assert.deepEqual(await statuses(l), [["in_progress", 0]]);
 
-  // 11:05: past its limit. The tick closes it and the check-in goes out.
+  // 11:05: past its limit. The tick closes it (saved, 65 minutes) and the check-in goes out.
   await tick(ist("11:05"));
-  assert.deepEqual(await statuses(l), [["abandoned", 25]]);
-  assert.deepEqual(sent.filter(s => s.chatId === l.chat).map(s => s.text), ["SAID:daily_checkin"]);
-  assert.equal(await prisma.novaProactiveMessage.count({ where: { profileId: l.profileId, status: "sent" } }), 1);
+  assert.deepEqual(await statuses(l), [["completed", 65]]);
+  assert.deepEqual(sent.filter(s => s.chatId === l.chat).map(s => s.text), [], "studied today: no check-in");
+  assert.equal(await loadNovaSession(l.chat, ist("11:06")), null, "nothing running holds anything back");
 });
 
 test("a session that is really running still holds the check-in back", async () => {
@@ -315,7 +329,7 @@ test("sweeping again changes nothing", async () => {
 // End and the sweep race on one row. The database lets one through; that one
 // owns the outcome, whole: a session with its report and its mastery record,
 // or an abandoned one with neither. Never a mixture, never both.
-test("an End and two sweeps arriving together leave one outcome, whole: a counted session or an abandoned one", async () => {
+test("an End and two sweeps arriving together leave one outcome, whole: the learner's End or the sweep's save", async () => {
   for (let round = 0; round < 6; round++) {
     const l = await learner();
     const t0 = ist("14:00");
@@ -328,16 +342,17 @@ test("an End and two sweeps arriving together leave one outcome, whole: a counte
     assert.equal(rest.length, 0);
     assert.ok(a + b <= 1, "at most one sweep closed it");
 
-    if (row!.status === "completed") {
+    const bySweep = (row!.executionReport as { autoClosed?: string } | null)?.autoClosed === "ran_past_plan";
+    if (row!.status === "completed" && bySweep) {
+      assert.equal(a + b, 1, "a sweep won");
+      assert.ok(ended.ok && ended.ended === null && ended.autoSaved?.minutes === 70, "and the End is told it was saved");
+      assert.deepEqual(after, before, "no mastery from a sweep");
+    } else if (row!.status === "completed") {
       assert.equal(a + b, 0, "the End won: no sweep closed it");
       assert.ok(ended.ok && ended.ended, "and the End reports the session");
       assert.deepEqual([row!.durationMinutes, row!.executionReport !== null, after.history], [70, true, before.history + 1]);
     } else {
-      assert.equal(row!.status, "abandoned");
-      assert.equal(a + b, 1, "a sweep won");
-      assert.deepEqual([ended.ok, !ended.ok && ended.error], [false, "session_abandoned"], "and the End is told so");
-      assert.deepEqual([row!.durationMinutes, row!.executionReport], [25, null]);
-      assert.deepEqual(after, before, "nothing counted");
+      assert.fail(`unexpected status ${row!.status}`);
     }
     assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { profileId: l.profileId } }) <= before.history + 1, true, "never counted twice");
   }
@@ -408,7 +423,7 @@ test("End while paused past the two hours, before any sweep, ends it with the st
   assert.deepEqual(await statuses(l), [["completed", 30]]);
 });
 
-test("an End that arrives after the sweep cannot bring an abandoned session back, and is told why", async () => {
+test("an End that arrives after the sweep finds the session already kept, and is told how", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   await start(l, t0, 25);
@@ -418,24 +433,23 @@ test("an End that arrives after the sweep cannot bring an abandoned session back
 
   for (const later of [301, 302, 60 * 24]) {
     const late = await end(l, plus(t0, later));
-    assert.deepEqual([late.ok, !late.ok && late.error], [false, "session_abandoned"]);
-    assert.ok(!late.ok && late.message.includes("not counted"));
+    assert.ok(late.ok && late.ended === null && late.autoSaved?.needsConfirm === true, JSON.stringify(late));
   }
-  assert.equal(JSON.stringify(await rows(l)), row0, "the abandoned row is untouched");
+  assert.equal(JSON.stringify(await rows(l)), row0, "the kept row is untouched");
   assert.deepEqual(await learned(l), before, "no mastery, no review, no history");
   const progress = await loadNovaProgress(l.chat, { now: plus(t0, 60 * 24) });
   assert.ok(progress.status === "ready");
-  assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes, progress.overview.notCounted], [0, 0, { selfReported: 0, underTenMinutes: 0, abandoned: 1 }]);
+  assert.deepEqual([progress.overview.sessions, progress.overview.learningMinutes], [0, 0], "300 minutes on a 25-minute plan waits for the learner");
 });
 
-test("Pause past the limit abandons a running session, Resume past the pause limit saves a paused one; once the learner starts again, nothing more is said about it", async () => {
+test("Pause past the limit keeps a running session (unconfirmed), Resume past the pause limit saves a paused one; once the learner starts again, nothing more is said about it", async () => {
   const l = await learner();
   const t0 = ist("14:00");
   // Running past its limit: a Pause does not rescue it.
   await start(l, t0, 25);
   const paused = await command(l, "pause", plus(t0, 500));
-  assert.deepEqual([paused.ok, !paused.ok && paused.error], [false, "session_abandoned"]);
-  assert.deepEqual(await statuses(l), [["abandoned", 25]]);
+  assert.ok(paused.ok && paused.session === null && paused.autoSaved?.needsConfirm === true);
+  assert.deepEqual(await statuses(l), [["unconfirmed", 500]]);
 
   // Paused for more than two hours: a Resume finds it saved with its study time.
   await start(l, plus(t0, 1000), 25);
@@ -457,7 +471,7 @@ test("a new session can be started over one that was left running", async () => 
   await start(l, t0, 25);
   // The next day, with no tick in between.
   await start(l, plus(t0, 60 * 24), 45);
-  assert.deepEqual(await statuses(l), [["abandoned", 25], ["in_progress", 0]]);
+  assert.deepEqual(await statuses(l), [["unconfirmed", 1440], ["in_progress", 0]]);
   const running = await loadNovaSession(l.chat, plus(t0, 60 * 24 + 10));
   assert.equal(running?.plannedDurationMinutes, 45);
 });
@@ -479,9 +493,9 @@ test("timing that makes no sense never becomes study time", async () => {
   assert.equal(await sweep(l, plus(t0, 60 * 24 * 3)), 0, "no study time at all: nothing to hold against the limit");
   await prisma.novaStudySession.update({ where: { id: row!.id }, data: { totalPausedSeconds: 0 } });
   assert.equal(await sweep(l, plus(t0, 60 * 24 * 3)), 1);
-  assert.deepEqual(await statuses(l), [["abandoned", 60]], "sixty at most, not 4,320");
+  assert.deepEqual(await statuses(l), [["unconfirmed", 4320]], "kept, but not believed: the learner confirms or trims it");
   const progress = await loadNovaProgress(l.chat, { now: plus(t0, 60 * 24 * 3 + 1) });
-  assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 0);
+  assert.equal(progress.status === "ready" && progress.overview.learningMinutes, 0, "never study time until confirmed");
 });
 
 // Bug batch 28 Nov, item 1: the backfill for sessions abandoned while paused

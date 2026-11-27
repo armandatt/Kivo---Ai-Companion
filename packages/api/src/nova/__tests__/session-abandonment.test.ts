@@ -68,8 +68,11 @@ describe("a paused session", () => {
     expect(sessionClosure(sessionAbandonment(paused(25, 40), at(40 + 121))!)).toMatchObject({ status: "completed", durationMinutes: 40 });
   });
 
-  it("a timer left running is still abandoned, held to its plan", () => {
-    expect(sessionClosure(sessionAbandonment(running(25), at(55))!)).toEqual({ status: "abandoned", durationMinutes: 25, autoClosed: null });
+  // PR #113 B.1: a timer left running is saved too; far past its plan it waits for the learner.
+  it("REGRESSION B.1: a timer left running is saved with its clock time; over two hours past its plan it is unconfirmed", () => {
+    expect(sessionClosure(sessionAbandonment(running(25), at(55))!)).toEqual({ status: "completed", durationMinutes: 55, autoClosed: "ran_past_plan" });
+    expect(sessionClosure(sessionAbandonment(running(25), at(146))!)).toEqual({ status: "unconfirmed", durationMinutes: 146, autoClosed: "ran_past_plan" });
+    expect(sessionClosure(sessionAbandonment(running(25), at(145))!).status).toBe("completed");
   });
 
   it("is closed after two hours of one pause, however little was studied", () => {

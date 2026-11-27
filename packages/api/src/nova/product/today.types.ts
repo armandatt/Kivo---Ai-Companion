@@ -246,7 +246,10 @@ export type NovaSessionCommand =
   // A FINISHED session with no topic, filed afterwards (bug batch 28 Nov,
   // items 3/4): from the end screen, the saved notice or Progress. Only the
   // learner's own completed session with no topic yet; never re-files one.
-  | { action: "file"; sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" };
+  | { action: "file"; sessionId: string; subjectId: string; topicName: string; topicStatus?: "not_started" | "in_progress" | "completed" }
+  // An unconfirmed session's time (ran more than two hours past its plan):
+  // confirmed whole or trimmed. Then it counts (PR #113 B.1).
+  | { action: "confirm_time"; sessionId: string; minutes: number };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
@@ -276,6 +279,9 @@ export type NovaSessionResponse =
         // session is kept with the answer the learner gave, but it changed
         // nothing in Knowledge and is not counted by Progress.
         counted: boolean;
+        // True when it ran more than two hours past its plan: its time waits
+        // for the learner to confirm or trim it (confirm_time) before it counts.
+        needsConfirm?: boolean;
       } | null;
       // The learner's latest session, when it was paused and left past the
       // limit and so was saved for them (bug batch 28 Nov, item 1). Set until
@@ -297,4 +303,6 @@ export interface NovaAutoSavedSession {
   // When it was paused (ISO), the moment its clock stopped.
   pausedAt:  string | null;
   message:   string;
+  // Its time waits for the learner to confirm or trim it (confirm_time).
+  needsConfirm?: boolean;
 }

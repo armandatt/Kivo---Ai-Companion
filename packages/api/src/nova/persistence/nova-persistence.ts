@@ -44,6 +44,7 @@ import { consolidateTurn } from "../consolidation/run-consolidation";
 import { likeLiteral, normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
 import { markTopicStarted } from "../product/topic-status";
+import { AUTO_SAVED_RUNNING, UNCONFIRMED_STATUS } from "../engines/session-clock";
 import { pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionClosure, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
@@ -472,6 +473,31 @@ export async function fileEndedSession(profileId: string, sessionId: string, sub
   });
   if (done.count === 1) await markTopicStarted(subjectId, topic.name).catch(() => false);
   return done.count === 1 ? topic.name : null;
+}
+
+// An End more than two hours past the plan (owner decision 28 Nov, PR #113
+// B.1): the session is closed, but its time waits for the learner to confirm
+// or trim it, and it is in none of Progress's numbers until then.
+export async function closeUnconfirmed(sessionId: string, minutes: number, outcome: string | null): Promise<boolean> {
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: { in: OPEN_STATUSES } },
+    data:  { status: UNCONFIRMED_STATUS, durationMinutes: minutes, executionReport: { autoClosed: AUTO_SAVED_RUNNING, endedBy: "learner", outcome } },
+  });
+  return done.count === 1;
+}
+
+// The learner's word on an unconfirmed session's time: all of it, or less.
+// Then it counts like any session. Only theirs, only once, never more than recorded.
+export async function confirmSessionTime(profileId: string, sessionId: string, minutes: number): Promise<{ minutes: number } | null> {
+  const row = await prisma.novaStudySession.findFirst({ where: { id: sessionId, profileId, status: UNCONFIRMED_STATUS }, select: { durationMinutes: true, executionReport: true } });
+  if (!row) return null;
+  const kept = Math.max(0, Math.min(row.durationMinutes, Math.round(minutes)));
+  const report = (row.executionReport && typeof row.executionReport === "object" ? row.executionReport : {}) as Record<string, unknown>;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: UNCONFIRMED_STATUS },
+    data:  { status: "completed", durationMinutes: kept, executionReport: { ...report, confirmed: true, recordedMinutes: row.durationMinutes } as object },
+  });
+  return done.count === 1 ? { minutes: kept } : null;
 }
 
 // ── Sessions nobody came back to ──────────────────────────────────────────────

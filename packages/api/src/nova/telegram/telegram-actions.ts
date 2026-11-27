@@ -27,7 +27,7 @@ import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
   progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
-  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor, sessionSavedText,
+  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor, closedSessionText,
 } from "./telegram-replies";
 import type { OptionAction, PlanChangeKind, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
@@ -265,7 +265,7 @@ export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resum
   }
   if (!result.session) {
     const saved = result.autoSaved;
-    return done(`session_${action}`, { text: saved ? sessionSavedText(ctx.language, saved.minutes, saved.counted) : textFor(ctx.language).nothingRunning }, false);
+    return done(`session_${action}`, { text: saved ? closedSessionText(ctx.language, saved) : textFor(ctx.language).nothingRunning }, false);
   }
   return done(`session_${action}`, sessionReply(result.session));
 }
@@ -296,7 +296,7 @@ export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome
   if (!session) {
     const how = await lastClosure(ctx.profileId);
     const text = how?.kind === "abandoned" ? textFor(ctx.language).sessionAbandoned
-      : how?.kind === "saved" ? sessionSavedText(ctx.language, how.saved.minutes, how.saved.counted)
+      : how?.kind === "saved" ? closedSessionText(ctx.language, how.saved)
       : textFor(ctx.language).nothingRunning;
     return done("ask_outcome", { text }, false);
   }
@@ -311,7 +311,13 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   }
   // Closed by someone else a moment ago (the web app, a second tap): the
   // evidence is theirs and nothing was written twice.
-  if (!result.ended && result.autoSaved) return done("session_end", { text: sessionSavedText(ctx.language, result.autoSaved.minutes, result.autoSaved.counted) }, false);
+  if (result.ended?.needsConfirm) {
+    const m = result.ended.minutes;
+    return done("session_end", { text: ctx.language !== "english"
+      ? `Ye session ${m} min chala, plan se do ghante se zyada. Abhi count nahi kiya: Today pe confirm karo kitna padha, ya kam kar do.`
+      : `That ran ${m} min, more than two hours past its plan, so it isn't counted yet. Confirm how long you studied (or trim it) on Today.` });
+  }
+  if (!result.ended && result.autoSaved) return done("session_end", { text: closedSessionText(ctx.language, result.autoSaved) }, false);
   if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
   return done("session_end", endedReply(result.ended));
 }

@@ -1365,7 +1365,9 @@ test("Telegram accepts the message and recording it fails: it is not sent again,
   assert.deepEqual((await outbox(l)).map(r => r.status), ["unknown"]);
 });
 
-test("a session left open and closed as abandoned is explained in the chat, not answered with 'nothing is running'", async () => {
+// PR #113 B.1: a session left running for hours is kept, not abandoned: six
+// hours on a 25-minute plan waits for the learner to confirm or trim it.
+test("a session left running for hours is kept unconfirmed and explained in the chat, not answered with 'nothing is running'", async () => {
   const l = await eveningLearner("Ned");
   const h = harness();
   await h.send(l, "/focus deadlocks");
@@ -1375,14 +1377,14 @@ test("a session left open and closed as abandoned is explained in the chat, not 
   // Six hours later the tick's sweep has closed it.
   tick(6 * 60);
   assert.equal(await abandonStaleSessions(clock, l.profileId), 1);
-  assert.deepEqual((await sessions(l)).map(s => [s.status, s.durationMinutes]), [["abandoned", 25]]);
+  assert.deepEqual((await sessions(l)).map(s => [s.status, s.durationMinutes]), [["unconfirmed", 360]]);
 
-  const EXPLAINED = "That session was left open past its time, so I closed it and didn't count it. Start a new one when you're ready.";
+  const EXPLAINED = "That session ran 360 min, well past its plan, so it isn't counted yet. Confirm how long you studied (or trim it) on Today.";
   await h.send(l, "/done");
   assert.equal(h.tg.last().text, EXPLAINED);
   await h.send(l, "/done");
   assert.equal(h.tg.last().text, EXPLAINED, "the same answer as long as it is the last thing that happened");
-  assert.deepEqual((await sessions(l)).map(s => s.status), ["abandoned"], "and nothing reopened or counted it");
+  assert.deepEqual((await sessions(l)).map(s => s.status), ["unconfirmed"], "and nothing reopened or counted it");
   assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { profileId: l.profileId } }), 0);
 
   // A new session, ended in the ordinary way: the explanation is not repeated.

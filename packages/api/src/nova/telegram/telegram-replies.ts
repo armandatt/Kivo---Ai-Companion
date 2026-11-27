@@ -639,3 +639,16 @@ export function sessionSavedText(language: ReplyLanguage, minutes: number, count
     ? `Session do ghante se zyada paused tha, isliye maine pause se pehle ke ${minutes} min save kar diye.${counted ? "" : " 10 min se kam Progress mein count nahi hota."} Jab ready ho, naya start kar lo.`
     : `Your session was paused for over two hours, so I saved it with the ${minutes} min you studied before the pause.${counted ? "" : " Under 10 minutes isn't counted in Progress."} Start a new one when you're ready.`;
 }
+
+// How a session closed for the learner is said (B.1): waiting for their word,
+// saved after a pause, or saved after it ran past its plan.
+export function closedSessionText(language: ReplyLanguage, saved: { minutes: number; counted: boolean; pausedAt: string | null; needsConfirm?: boolean }): string {
+  const hi = language !== "english";
+  if (saved.needsConfirm) return hi
+    ? `Wo session ${saved.minutes} min chala, plan se bahut zyada, isliye abhi count nahi kiya. Today pe confirm karo kitna padha, ya kam kar do.`
+    : `That session ran ${saved.minutes} min, well past its plan, so it isn't counted yet. Confirm how long you studied (or trim it) on Today.`;
+  if (saved.pausedAt) return sessionSavedText(language, saved.minutes, saved.counted);
+  return hi
+    ? `Session plan se aage chalta reh gaya tha, isliye maine uske ${saved.minutes} min save kar diye.${saved.counted ? "" : " 10 min se kam Progress mein count nahi hota."} Jab ready ho, naya start kar lo.`
+    : `Your session was left running past its plan, so I saved it with the ${saved.minutes} min on its clock.${saved.counted ? "" : " Under 10 minutes isn't counted in Progress."} Start a new one when you're ready.`;
+}
