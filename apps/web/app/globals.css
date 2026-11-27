@@ -866,6 +866,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --note-link: var(--nova-ink);
   color: var(--note-text);
 }
+/* The reading sans (bug batch 28 Nov, item 10): the system UI face, Inter where installed. */
+.note-prose.note-read-sans { font-family: system-ui, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif; }
 .note-prose h2.note-h1 { color: var(--note-strong); }
 .note-prose h2.note-h1::after { content: ""; display: block; width: 2.5rem; height: 2px; margin-top: 0.55rem; border-radius: 2px; background: color-mix(in oklch, var(--nova) 70%, transparent); }
 .note-prose .note-h2 { color: var(--note-strong); }

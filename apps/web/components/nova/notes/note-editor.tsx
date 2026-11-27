@@ -1,5 +1,7 @@
 'use client'
 
+import { hasStructure, htmlToMarkdown, type PasteNode } from './paste-markdown'
+import { DEFAULT_READING, FONT_LABEL, SIZE_LABEL, loadReading, rememberReading, rememberedReading, saveReading, type Reading } from './note-reading'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -148,6 +150,18 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   // The note as it now stands, when a save was refused because it changed elsewhere.
   const [conflict, setConflict] = useState<NoteDetail | null>(null)
   const [justSaved, setJustSaved] = useState(false)
+
+  // How notes read (item 10, 28 Nov): the learner's setting, from their profile;
+
+  // this browser's copy paints first.
+
+  const [reading, setReading] = useState<Reading>(DEFAULT_READING)
+
+  const [readingOpen, setReadingOpen] = useState(false)
+
+  useEffect(() => { const r = rememberedReading(); if (r) setReading(r); void loadReading().then(x => { if (x) { setReading(x); rememberReading(x) } }) }, [])
+
+  const changeReading = (r: Reading) => { setReading(r); rememberReading(r); void saveReading(r) }
 
   const [prefs, setPrefsState]  = useState<Prefs>(DEFAULT_PREFS)
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -709,6 +723,20 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     if (failed.length) setImageFail({ files: failed, message, retry })
   }
   function onBodyPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    // Rich text (a ChatGPT answer, a web page): its structure as Markdown,
+    // without its fonts and colours (item 10, 28 Nov).
+    const html = e.clipboardData.getData('text/html')
+    if (html && hasStructure(html)) {
+      const md = htmlToMarkdown(new DOMParser().parseFromString(html, 'text/html').body as unknown as PasteNode)
+      if (md) {
+        e.preventDefault()
+        const el = e.currentTarget, from = el.selectionStart, to = el.selectionEnd
+        setDraft(d => ({ ...d, body: d.body.slice(0, from) + md + d.body.slice(to) }))
+        caret.current = from + md.length
+        requestAnimationFrame(() => { try { el.setSelectionRange(from + md.length, from + md.length) } catch { /* gone */ } })
+        return
+      }
+    }
     const images = imagesOnClipboard(e.clipboardData.items)
     if (!images.length) return
     // A screenshot is an image; text copied with an image (a web page) stays text.
@@ -858,11 +886,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <Columns2 className="size-3.5" /> <span className="max-sm:sr-only">{shown.pdf ? 'Paper' : 'Source'}</span>
         </button>
       )}
-      {!editing && (
-        <button type="button" onClick={() => setPrefs({ serif: !prefs.serif })} className={iconButton(prefs.serif)} title={prefs.serif ? 'Read in sans-serif' : 'Read in serif'} aria-pressed={prefs.serif}>
-          <Type className="size-4" />
-        </button>
-      )}
+      {!editing && <ReadingMenu reading={reading} onChange={changeReading} buttonClass={iconButton(readingOpen)} onOpen={setReadingOpen} />}
       <button type="button" onClick={() => setPrefs({ outline: !prefs.outline })} className={`${iconButton(prefs.outline)} max-xl:hidden`} title={prefs.outline ? 'Hide the outline' : 'Show the outline'} aria-pressed={prefs.outline}>
         <ListTree className="size-4" />
       </button>
@@ -1146,7 +1170,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
     const preview = (
       <div ref={previewRef} className="min-h-[24rem] px-1 py-2" data-note-preview>
-        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} onReadPdf={readPdf} onToggleCheck={tickInDraft} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
+        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} reading={reading} title={draft.title} onReadPdf={readPdf} onToggleCheck={tickInDraft} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
       </div>
     )
 
@@ -1288,7 +1312,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
 
         <div className="mt-8">
-          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} onReadPdf={readPdf} onToggleCheck={tickInReader} /> : (
+          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} reading={reading} title={note.title} onReadPdf={readPdf} onToggleCheck={tickInReader} /> : (
             <button type="button" onClick={() => setEditing(true)} className="w-full rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-foreground/45 transition-colors hover:border-keppel-400/40 hover:text-foreground/70">
               This note is empty. Press E or click here to write it.
             </button>
@@ -1399,5 +1423,33 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         </div>
       </article>
     </div>,
+  )
+}
+
+// Sans / Serif / Mono and S / M / L for reading notes (bug batch 28 Nov, item 10).
+function ReadingMenu({ reading, onChange, buttonClass, onOpen }: { reading: Reading; onChange: (r: Reading) => void; buttonClass: string; onOpen: (open: boolean) => void }) {
+  const [open, setOpen] = useState(false)
+  const toggle = (v: boolean) => { setOpen(v); onOpen(v) }
+  const seg = (on: boolean) => `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${on ? 'bg-nova/15 text-foreground' : 'text-foreground/60 hover:bg-white/6 hover:text-foreground'}`
+  return (
+    <span className="relative">
+      <button type="button" onClick={() => toggle(!open)} className={buttonClass} title="Reading: font and size" aria-haspopup="dialog" aria-expanded={open} data-note-reading-open>
+        <Type className="size-4" />
+      </button>
+      {open && (
+        <div role="dialog" aria-label="Reading" className="absolute right-0 top-9 z-30 w-56 rounded-xl border border-white/10 bg-card p-2.5 shadow-float" data-note-reading
+          onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); toggle(false) } }}>
+          <p className="px-1 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">Font</p>
+          <div className="mt-1 flex gap-1" role="radiogroup" aria-label="Font">
+            {(['sans', 'serif', 'mono'] as const).map(f => <button key={f} type="button" role="radio" aria-checked={reading.font === f} onClick={() => onChange({ ...reading, font: f })} className={seg(reading.font === f)} data-reading-font={f}>{FONT_LABEL[f]}</button>)}
+          </div>
+          <p className="mt-2.5 px-1 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">Size</p>
+          <div className="mt-1 flex gap-1" role="radiogroup" aria-label="Size">
+            {(['s', 'm', 'l'] as const).map(z => <button key={z} type="button" role="radio" aria-checked={reading.size === z} onClick={() => onChange({ ...reading, size: z })} className={seg(reading.size === z)} data-reading-size={z}>{SIZE_LABEL[z]}</button>)}
+          </div>
+          <p className="mt-2 px-1 text-[11px] text-subtle">Saved to your account.</p>
+        </div>
+      )}
+    </span>
   )
 }

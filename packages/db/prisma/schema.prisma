@@ -790,6 +790,10 @@ model NovaAcademicProfile {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+
+  // How the learner reads notes (bug batch 28 Nov, item 10): "<font>:<size>",
+  // font sans | serif | mono, size s | m | l. Null: the default (sans, m).
+  noteReading String?
 }
 
 model NovaSubject {
