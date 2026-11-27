@@ -65,3 +65,15 @@ export async function markTopicStarted(subjectId: string, topicName: string, now
   });
   return moved.count > 0;
 }
+
+// The learner's live topics (not milestones) whose name is these words,
+// ignoring case and spacing: how a topic named in chat is found (exactly; no guessing).
+export async function topicsNamed(profileId: string, words: string): Promise<Array<{ id: string; name: string; subjectName: string }>> {
+  const key = words.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!key) return [];
+  const all = await prisma.novaTopicMastery.findMany({
+    where: { subject: { profileId }, archivedAt: null, kind: null, name: { equals: likeLiteral(words.trim()), mode: "insensitive" } },
+    select: { id: true, name: true, subject: { select: { name: true } } },
+  });
+  return all.filter(t => t.name.trim().replace(/\s+/g, " ").toLowerCase() === key).map(t => ({ id: t.id, name: t.name, subjectName: t.subject.name }));
+}

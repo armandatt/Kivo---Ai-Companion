@@ -11,6 +11,7 @@
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
 import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
+import { setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -267,6 +268,27 @@ export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resum
     return done(`session_${action}`, { text: saved ? sessionSavedText(ctx.language, saved.minutes, saved.counted) : textFor(ctx.language).nothingRunning }, false);
   }
   return done(`session_${action}`, sessionReply(result.session));
+}
+
+// "I've finished WACC" (item 7, 28 Nov): the topic named is matched, by code,
+// to exactly one of the learner's live topics (name, any case). Two of that
+// name, or none: said so, nothing changed. Worded here, never by the model.
+export async function setTopicStatusFromWords(ctx: ActionContext, topic: string, status: TopicStatus): Promise<ActionResult> {
+  const hi = ctx.language !== "english";
+  const same = await topicsNamed(ctx.profileId, topic);
+  if (same.length === 0) {
+    return done("set_topic_status", { text: hi ? `"${topic}" naam ka koi topic nahi mila. Map pe topic khol ke wahan status set kar sakte ho.` : `I couldn't find a topic called "${topic}". You can set it on the Knowledge Map: open the topic and choose its status.` }, false);
+  }
+  if (same.length > 1) {
+    const where = same.map(t => t.subjectName).join(", ");
+    return done("set_topic_status", { text: hi ? `"${topic}" ek se zyada subjects mein hai (${where}). Map pe sahi wala khol ke status set karo.` : `You have "${topic}" in more than one subject (${where}). Open the right one on the Knowledge Map and set it there.` }, false);
+  }
+  const r = await setTopicStatus(ctx.profileId, { topicId: same[0]!.id }, status, ctx.now);
+  if (!r.ok) return done("set_topic_status", { text: hi ? "Ye save nahi hua. Map pe try karo." : "That didn't save. Try it on the Knowledge Map." }, false);
+  const word = TOPIC_STATUS_LABEL[status].toLowerCase();
+  return done("set_topic_status", { text: r.changed
+    ? (hi ? `Done: ${r.topicName} ab "${word}" hai.` : `Done: ${r.topicName} is now marked ${word}.`)
+    : (hi ? `${r.topicName} pehle se "${word}" hai.` : `${r.topicName} was already marked ${word}.`) });
 }
 
 export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome | null): Promise<ActionResult> {

@@ -27,7 +27,7 @@ import { loadNovaSession } from "../product/session";
 import { loadNovaToday } from "../product/today";
 import { loadOpenPrompt, openPrompt, resolvePrompt, type OpenPrompt } from "../telegram/prompt-store";
 import {
-  advise, alternativeFor, askMinutes, offerSetup, runOptionAction, showProgress, showStatus, showToday, showWeek,
+  advise, alternativeFor, askMinutes, offerSetup, runOptionAction, showProgress, setTopicStatusFromWords, showStatus, showToday, showWeek,
   type ActionContext, type ActionResult,
 } from "../telegram/telegram-actions";
 import { alternativeReply, TEXT, withExamOffer } from "../telegram/telegram-replies";
@@ -237,6 +237,7 @@ async function act(
     case "show_status": return showStatus(ctx);
     case "show_week":     return showWeek(ctx);
     case "show_progress": return showProgress(ctx);
+    case "set_topic_status": return setTopicStatusFromWords(ctx, action.topic, action.status);
     case "advise":      return advise(ctx, action.topic);
     case "ask_minutes": return askMinutes(action.choices);
     case "offer_setup": return offerSetup(ctx, action.setup);

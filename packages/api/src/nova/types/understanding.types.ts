@@ -99,7 +99,7 @@ export interface AcademicUnderstanding {
 // (if anything) runs, against the session and prompt that actually exist.
 // Closed vocabulary; anything else the model returns is dropped by the parser.
 
-export const UNDERSTANDING_ENVELOPE_VERSION = 6;
+export const UNDERSTANDING_ENVELOPE_VERSION = 7;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
@@ -123,6 +123,10 @@ export const REQUESTED_ACTIONS = [
   // Asks how they are doing over time: progress, consistency, improvement.
   // Not where they stand right now, which is status.
   "progress",
+  // Says where one of their topics stands: finished, started, not yet
+  // started ("I've finished WACC", "mark DCF as in progress"). With topic
+  // and topicStatus. Bug batch 28 Nov, item 7.
+  "set_topic_status",
   "none",
 ] as const;
 export type RequestedAction = typeof REQUESTED_ACTIONS[number];
@@ -181,6 +185,9 @@ export interface LearnerRequest {
   // ("reply in English", "Hinglish mein bolo"). Writing in a language is not
   // a request. null: no such request. Absent on older readings.
   languageRequest?: ReplyLanguage | null;
+  // With action set_topic_status: where they say the topic (in `topic`)
+  // stands. null otherwise. Absent on older readings.
+  topicStatus?:     "not_started" | "in_progress" | "completed" | null;
 }
 
 export const ASK_SCOPES = ["knowledge", "about_me", "none"] as const;

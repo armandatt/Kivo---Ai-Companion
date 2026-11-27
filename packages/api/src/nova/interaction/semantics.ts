@@ -58,6 +58,7 @@ export function kindOf(u: AcademicUnderstanding): InteractionKind {
   if (!req || u.malformed) return "unclear";
   if (req.clarity === "unsupported" || req.action === "set_reminder") return "unsupported";
   if (req.action === "create_workspace" && req.clarity === "clear") return "action_request";
+  if (req.action === "set_topic_status" && req.clarity === "clear" && !req.changeOfMind) return "action_request";
   const circumstance = (u.realityObservations ?? []).some(o => o.status === "active");
   // An unclear message keeps its feeling and its circumstance, and nothing else.
   if (req.clarity !== "clear") {

@@ -94,3 +94,23 @@ test("REGRESSION item 7: the map carries each topic's status", () => {
   assert.deepEqual([st("b").status, st("b").statusSet], ["not_started", false]);
   assert.deepEqual([st("c").status, st("c").statusSet], ["in_progress", false]);
 });
+
+test("REGRESSION item 7: Nova's words set it only for exactly one matching topic, in fixed words", async () => {
+  const { setTopicStatusFromWords } = await import("../telegram/telegram-actions.js");
+  const ctx = { chatId: CHAT, profileId, timezone: null, name: null, now: new Date(), language: "english" as const };
+  const ok = await setTopicStatusFromWords(ctx, "  dcf ", "completed");
+  assert.equal(ok.operation.ok, true);
+  assert.match(ok.reply.text, /DCF is now marked completed/);
+  assert.equal(await statusOf("DCF"), "completed");
+  const none = await setTopicStatusFromWords(ctx, "Options pricing", "completed");
+  assert.equal(none.operation.ok, false);
+  assert.match(none.reply.text, /couldn't find a topic called "Options pricing"/);
+  // The same name in two subjects: nothing changed, the learner is asked to use the map.
+  const other = await prisma.novaSubject.create({ data: { profileId, name: "Corporate Finance" } });
+  await prisma.novaTopicMastery.create({ data: { subjectId: other.id, name: "Gamma" } });
+  await prisma.novaTopicMastery.create({ data: { subjectId, name: "Gamma" } });
+  const two = await setTopicStatusFromWords(ctx, "gamma", "completed");
+  assert.equal(two.operation.ok, false);
+  assert.match(two.reply.text, /more than one subject/);
+  assert.equal(await statusOf("Gamma"), null);
+});

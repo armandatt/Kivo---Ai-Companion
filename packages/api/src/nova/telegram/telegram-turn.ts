@@ -42,7 +42,7 @@ import {
 } from "./channel-store";
 import { closeOpenPrompt, loadOpenPrompt, openPrompt, recordPromptMessage, resolvePrompt, type OpenPrompt } from "./prompt-store";
 import {
-  advise, alternativeFor, askMinutes, askOutcome, changePlan, firstUse, offerSetup, offerStart, pauseOrResume, runOptionAction, showProgress,
+  advise, alternativeFor, askMinutes, askOutcome, changePlan, firstUse, offerSetup, offerStart, pauseOrResume, runOptionAction, setTopicStatusFromWords, showProgress,
   showSettings, showStatus, showToday, showWeek, startFromRequest,
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
@@ -695,6 +695,7 @@ async function act(
     case "show_status":    return showStatus(ctx);
     case "show_week":      return showWeek(ctx);
     case "show_progress":  return showProgress(ctx);
+    case "set_topic_status": return setTopicStatusFromWords(ctx, action.topic, action.status);
     case "change_plan":    return changePlan(ctx, action.topic, action.minutes);
     case "defer":          return runOptionAction({ type: action.until === "tomorrow" ? "not_today" : "later" }, ctx);
     case "something_else": {
