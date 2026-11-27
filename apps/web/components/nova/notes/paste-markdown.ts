@@ -21,7 +21,7 @@ export const hasStructure = (html: string) => STRUCTURE.test(html)
 
 const kids = (n: PasteNode) => Array.from(n.childNodes)
 const tag = (n: PasteNode) => n.nodeName.toLowerCase()
-const squash = (s: string) => s.replace(/[ \t\r\n ]+/g, ' ')
+const squash = (s: string) => s.replace(/[ \t\r\n\u00a0]+/g, ' ')
 
 function inline(n: PasteNode): string {
   if (n.nodeType === 3) return squash(n.textContent ?? '')

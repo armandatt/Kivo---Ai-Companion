@@ -368,7 +368,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     ticking.current = false
     if (res.ok) { setNote(res.note); setDraft(draftOf(res.note)); setSaved(draftOf(res.note)) }
     else { setNote(n); setError(res.error === 'conflict' ? 'This note changed somewhere else, so the tick wasn’t saved. Reload to see the latest.' : res.message) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
   // In the preview while writing: the draft changes, and autosave saves it.
   const tickInDraft = useCallback((at: number, to: number, index: number) => {
     setDraft(d => { const body = toggleChecklistItem(d.body, at, to, index); return body === null ? d : { ...d, body } })

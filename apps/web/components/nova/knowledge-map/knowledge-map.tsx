@@ -2303,7 +2303,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         })()}
       </g>
     )
-  })), [regions, byId, detail, tier, t.k, zoomToRegion, tree, explore, overviewOn])
+  })), [regions, byId, detail, tier, t.k, zoomToRegion, tree, explore])
 
   // Between subjects, in the overview: the [[links]] written from one subject's
   // items to another's, one line per pair with how many. Only links on record.
