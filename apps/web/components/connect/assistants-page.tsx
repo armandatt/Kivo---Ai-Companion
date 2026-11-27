@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowUpRight, Check, Copy, Loader2, Plug, ShieldCheck, Sparkles, Unplug, X } from 'lucide-react'
 import { ASSISTANTS, assistantOf, canWrite, newConnection, since, type Assistant, type AssistantId, type Connection } from './assistants-model'
+import { MCP_URL, mcpAddressFor } from './mcp-clients'
 import { cn } from '@/lib/utils'
 
 const POLL_MS = 3_000
@@ -29,7 +30,7 @@ export function AssistantsPage() {
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState<AssistantId | null>(null)
   const [address, setAddress] = useState('')
-  useEffect(() => { setAddress(`${window.location.origin}/api/mcp`) }, [])
+  useEffect(() => { setAddress(mcpAddressFor(window.location.origin)) }, [])
 
   const load = useCallback(async () => {
     const got = await readConnections()
@@ -49,6 +50,9 @@ export function AssistantsPage() {
           <p className="text-sm text-foreground/60">Chat with Claude or ChatGPT about your notes and map.</p>
         </div>
       </header>
+
+      {/* One address for every assistant (item 8, 28 Nov), first on the page. */}
+      <McpAddressCard address={address || MCP_URL} />
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2" role="list">
         {ASSISTANTS.map(a => {
@@ -207,6 +211,26 @@ function Step({ n, title, done, active, children }: { n: number; title: string; 
       </p>
       {children}
     </li>
+  )
+}
+
+// The Kivo MCP address with a copy button: what any MCP client asks for.
+function McpAddressCard({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(false), 2000); return () => clearTimeout(t) }, [copied])
+  const copy = () => { void navigator.clipboard?.writeText(address).then(() => setCopied(true), () => setCopied(false)) }
+  return (
+    <section className="mt-6 rounded-2xl border border-nova/30 bg-nova/[0.05] p-4" aria-labelledby="mcp-address-title" data-mcp-address>
+      <p id="mcp-address-title" className="text-sm font-semibold text-foreground">Your Kivo MCP address</p>
+      <div className="mt-2 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground/85" data-mcp-url>{address}</code>
+        <button type="button" onClick={copy} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-action px-3 text-sm font-semibold text-action-foreground hover:bg-action-hover" data-mcp-copy>
+          {copied ? <Check aria-hidden className="size-4" /> : <Copy aria-hidden className="size-4" />}{copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-foreground/60">Works with any AI assistant that can add a remote MCP server (often called a custom connector) and sign in to it. Claude and ChatGPT have step-by-step setup below.</p>
+      <span className="sr-only" role="status" aria-live="polite">{copied ? 'Address copied' : ''}</span>
+    </section>
   )
 }
 

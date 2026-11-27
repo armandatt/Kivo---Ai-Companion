@@ -9,6 +9,17 @@
 
 export const MCP_URL = 'https://www.thekivo.in/api/mcp'
 
+// The one address every assistant connects to (bug batch 28 Nov, item 8): the
+// production URL on Kivo itself (thekivo.in, with or without www), and this
+// server's own address anywhere else (local development, staging), so a copy
+// made there connects to that server.
+export function mcpAddressFor(origin: string): string {
+  try {
+    const host = new URL(origin).hostname
+    return host === 'thekivo.in' || host === 'www.thekivo.in' ? MCP_URL : `${new URL(origin).origin}/api/mcp`
+  } catch { return MCP_URL }
+}
+
 // The setup-and-use demonstration on the guide (founder review #04): a real
 // recording of adding Kivo in Claude or ChatGPT, signing in, allowing, a read
 // and a write that reaches Kivo. None exists yet (it needs the owner's own

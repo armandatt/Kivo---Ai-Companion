@@ -61,3 +61,16 @@ test('every capability on the guide names a real tool, and examples exist', asyn
     for (const t of c.tools) assert.ok(toolInfo(t), `${c.id}: ${t} is not a tool`)
   }
 })
+
+// Bug batch 28 Nov, item 8: one universal MCP address, copied from the top of the AI Assistants page.
+test('REGRESSION item 8: the MCP address is the production URL on Kivo, and the server\'s own elsewhere', async () => {
+  const { mcpAddressFor } = await import('./mcp-clients')
+  assert.equal(mcpAddressFor('https://www.thekivo.in'), 'https://www.thekivo.in/api/mcp')
+  assert.equal(mcpAddressFor('https://thekivo.in'), 'https://www.thekivo.in/api/mcp')
+  assert.equal(mcpAddressFor('http://localhost:3100'), 'http://localhost:3100/api/mcp')
+  assert.equal(mcpAddressFor('not a url'), 'https://www.thekivo.in/api/mcp')
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync(new URL('./assistants-page.tsx', import.meta.url), 'utf8')
+  assert.ok(page.indexOf('<McpAddressCard') < page.indexOf('ASSISTANTS.map'), 'the address comes first on the page')
+  assert.doesNotMatch(page.slice(page.indexOf('function McpAddressCard')), /Gemini|Grok|Copilot|Perplexity/, 'no assistant is named that has not been verified')
+})
