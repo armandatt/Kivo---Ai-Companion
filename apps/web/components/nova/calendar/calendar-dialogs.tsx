@@ -122,7 +122,7 @@ export function repeatSummary(rule: RepeatRule, startDay: string): string {
 
 // Create or edit one event. Nothing is saved until Save; the server checks
 // the whole event and works out the moments and the reminder time.
-export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOccurrence, onClose, error }: {
+export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOccurrence, onUnschedule, onClose, error }: {
   event:     CalendarEventItem | null
   initial?:  Partial<CalendarEventInput>
   view:      NovaCalendarReady
@@ -131,6 +131,8 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOc
   onDelete?: () => Promise<boolean>
   // Removes only the occurrence that was opened.
   onDeleteOccurrence?: () => Promise<boolean>
+  // A block Kivo placed (Plan your time): remove it and put its task back in Needs time.
+  onUnschedule?: () => Promise<boolean>
   onClose:   () => void
   error:     string | null
 }) {
@@ -322,7 +324,10 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOc
             </span>
           )
         ) : (
-          <button type="button" onClick={() => setConfirming(true)} className="text-sm text-foreground/55 transition-colors hover:text-red-500">Delete</button>
+          <span className="flex items-center gap-3">
+            {onUnschedule && <button type="button" onClick={async () => { if (await onUnschedule()) onClose() }} className="text-sm font-medium text-action-ink hover:underline" data-unschedule title="Remove this block; its task goes back to Needs time">Unschedule</button>}
+            <button type="button" onClick={() => setConfirming(true)} className="text-sm text-foreground/55 transition-colors hover:text-red-500">Delete</button>
+          </span>
         )
       ) : undefined} />
     </Modal>

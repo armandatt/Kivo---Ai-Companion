@@ -8,17 +8,20 @@
 // the event only schedules it (docs/CALENDAR_2.md).
 //
 // The rules (adapted from the planners the research looked at, kept simple
-// and explainable):
-//   - order: earliest due day first, then priority (high → low), then the
-//     shorter task (a short one fits gaps a long one cannot);
+// and explainable; Plan your time, 28 Nov):
+//   - order: tasks tied to an exam or deadline coming up first, then
+//     priority (high → low), then the earliest due day, then the shorter task
+//     (a short one fits gaps a long one cannot);
+//   - never on a day the learner avoids, nor on an exam's day;
 //   - only inside working hours, never before now (rounded up to 15 minutes),
 //     never over anything already on the calendar, with a buffer after
 //     every block;
 //   - never more than a day's planned focus (existing study blocks count),
 //     so a plan never fills every minute;
-//   - on or before the due day when possible. When it cannot fit by then,
-//     the earliest time after is offered and marked late, with the reason;
-//     when it cannot fit within the horizon at all, it is "could not fit".
+//   - a task due today or later goes on or before its due day, or not at all
+//     ("no free time before its deadline"); an overdue one gets the earliest
+//     time; one that never fits says why: over the daily limit, or no free
+//     time in the horizon.
 // Proposals are made one after another, so two never overlap.
 
 import { dayKey, dayKeyOfNumber, dayNumber, zonedInstant } from "../engines/learner-calendar";
@@ -28,6 +31,8 @@ export interface PlanTask {
   minutes: number;                         // the estimate; a task without one uses DEFAULT_TASK_MINUTES
   dueDay: string | null;                   // YYYY-MM-DD, the learner's calendar
   priority: "low" | "medium" | "high" | null;
+  // Its subject has an exam or deadline inside the horizon.
+  examLinked?: boolean;
 }
 export interface Busy { start: Date; end: Date; studyMinutes?: number }   // studyMinutes: counts toward the day's focus
 export interface PlanSettings {
@@ -36,8 +41,9 @@ export interface PlanSettings {
   focusPerDay: number;                     // minutes of planned task time a day, at most
   bufferMinutes: number;                   // after each block
   horizonDays: number;                     // how far ahead to look
+  avoidDays?: number[];                    // weekdays never planned on, 0 = Sunday
 }
-export const DEFAULT_PLAN: PlanSettings = { dayStart: 9 * 60, dayEnd: 21 * 60, focusPerDay: 4 * 60, bufferMinutes: 10, horizonDays: 14 };
+export const DEFAULT_PLAN: PlanSettings = { dayStart: 9 * 60, dayEnd: 21 * 60, focusPerDay: 4 * 60, bufferMinutes: 10, horizonDays: 14, avoidDays: [] };
 export const DEFAULT_TASK_MINUTES = 45;
 export const BLOCK_MAX_MINUTES = 180;       // a longer task is proposed as its first block of this size
 
@@ -51,8 +57,9 @@ const PRIORITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 /** Tasks in the order they are given time. Pure. */
 export function planOrder(tasks: PlanTask[]): PlanTask[] {
   return [...tasks].sort((a, b) =>
-    (a.dueDay ?? "9999-99-99").localeCompare(b.dueDay ?? "9999-99-99")
+    Number(!a.examLinked) - Number(!b.examLinked)
     || (a.priority ? PRIORITY_RANK[a.priority] : 3) - (b.priority ? PRIORITY_RANK[b.priority] : 3)
+    || (a.dueDay ?? "9999-99-99").localeCompare(b.dueDay ?? "9999-99-99")
     || a.minutes - b.minutes
     || a.title.localeCompare(b.title));
 }
@@ -90,32 +97,38 @@ export function plannedMinutes(busy: Busy[], timezone: string): Map<string, numb
  * the moment. Proposals are one block per task (a task longer than
  * BLOCK_MAX_MINUTES gets its first block, marked split).
  */
-export function proposeTimes(input: { tasks: PlanTask[]; busy: Busy[]; settings?: Partial<PlanSettings>; timezone: string; today: string; now: Date }): Proposal[] {
+export function proposeTimes(input: { tasks: PlanTask[]; busy: Busy[]; settings?: Partial<PlanSettings>; timezone: string; today: string; now: Date; examDays?: string[] }): Proposal[] {
   const s: PlanSettings = { ...DEFAULT_PLAN, ...(input.settings ?? {}) };
   const busy = [...input.busy];
   const load = plannedMinutes(busy, input.timezone);
   const first = dayNumber(input.today);
+  const avoid = new Set(s.avoidDays ?? []);
+  const examDays = new Set(input.examDays ?? []);
+  const weekday = (day: string) => new Date(`${day}T12:00:00Z`).getUTCDay();
   const out: Proposal[] = [];
   for (const t of planOrder(input.tasks)) {
     const want = Math.max(STEP, Math.min(BLOCK_MAX_MINUTES, Math.ceil((t.minutes || DEFAULT_TASK_MINUTES) / STEP) * STEP));
     const split = (t.minutes || DEFAULT_TASK_MINUTES) > BLOCK_MAX_MINUTES;
     const dueN = t.dueDay ? dayNumber(t.dueDay) : null;
+    // Due today or later: on or before it. Overdue: the earliest time.
+    const lastN = dueN !== null && dueN >= first ? Math.min(dueN, first + s.horizonDays - 1) : first + s.horizonDays - 1;
     let placed: Proposal | null = null;
-    for (let n = first; n < first + s.horizonDays && !placed; n++) {
+    let capped = false;
+    for (let n = first; n <= lastN && !placed; n++) {
       const day = dayKeyOfNumber(n);
-      if ((load.get(day) ?? 0) + want > s.focusPerDay) continue;
-      for (const f of freeStretches(day, busy, s, input.timezone, input.now)) {
-        if (f.end.getTime() - f.start.getTime() < want * 60_000) continue;
-        const start = f.start, end = new Date(f.start.getTime() + want * 60_000);
-        const late = dueN !== null && n > dueN;
-        placed = { taskId: t.id, title: t.title, day, start, end, minutes: want, late, split,
-          reason: late ? `No free time is left on or before ${t.dueDay}; this is the earliest after.` : null };
-        break;
-      }
+      if (avoid.has(weekday(day)) || examDays.has(day)) continue;
+      const stretches = freeStretches(day, busy, s, input.timezone, input.now).filter(f => f.end.getTime() - f.start.getTime() >= want * 60_000);
+      if (stretches.length === 0) continue;
+      if ((load.get(day) ?? 0) + want > s.focusPerDay) { capped = true; continue; }
+      const f = stretches[0]!;
+      placed = { taskId: t.id, title: t.title, day, start: f.start, end: new Date(f.start.getTime() + want * 60_000), minutes: want, late: false, split, reason: null };
     }
     if (!placed) {
-      out.push({ taskId: t.id, title: t.title, day: null, start: null, end: null, minutes: want, late: true, split: false,
-        reason: `No ${want}-minute gap in your working hours in the next ${s.horizonDays} days.` });
+      const reason = dueN !== null && dueN >= first && dueN < first + s.horizonDays
+        ? (capped ? `Over your daily limit every day up to its deadline (${t.dueDay}).` : `No free time before its deadline (${t.dueDay}).`)
+        : capped ? "Over your daily limit on every free day in the next " + s.horizonDays + " days."
+        : `No ${want}-minute gap in your working hours in the next ${s.horizonDays} days.`;
+      out.push({ taskId: t.id, title: t.title, day: null, start: null, end: null, minutes: want, late: true, split: false, reason });
       continue;
     }
     out.push(placed);

@@ -18,7 +18,7 @@ import {
 } from './calendar-grid'
 import { DeadlineDetail, DeadlineEditor, EventEditor, Modal, ReminderBadge, channelNote, repeatSummary } from './calendar-dialogs'
 import { addDeadline, useCalendar } from './use-calendar'
-import { useCalendarPlan, type DayLoad } from './use-calendar-plan'
+import { useCalendarPlan, type DayLoad, type ProposalView } from './use-calendar-plan'
 import { PlanPanel } from './plan-panel'
 import { useStartSession } from '@/components/nova/use-start-session'
 
@@ -155,7 +155,8 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
       <Legend />
 
       <PlanPanel plan={plan}
-        onAccept={async x => x.day ? cal.create({ title: x.title, category: 'study', taskId: x.taskId, allDay: false, startDay: x.day, startTime: x.startTime, endTime: x.endTime, timezone: plan.plan?.timezone, clientKey: `plan:${x.taskId}:${x.startAt}` }) : false}
+        onChanged={() => refreshBoth()}
+        onEstimate={async (id, minutes) => { await tasks.update(id, { estimatedMinutes: minutes }); await plan.load() }}
         onDone={async id => { await tasks.update(id, { status: 'done' }); await refreshBoth() }}
         onOpenTask={openTask}
         onFocus={(t, minutes) => void focus.start({ topicName: t.topicName!, subjectName: t.subjectName!, durationMinutes: minutes }, t.id)} />
@@ -180,7 +181,7 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
                   onEvent={e => setDialog({ kind: 'event', event: e })} onTask={openTask} onDeadline={d => setDialog({ kind: 'deadline', deadline: d })} />
               )}
               {(mode === 'week' || mode === 'day') && (
-                <WeekView view={view} days={daysOf(range.from, range.to)} byDay={byDay} workload={plan.workload}
+                <WeekView view={view} days={daysOf(range.from, range.to)} byDay={byDay} workload={plan.workload} ghosts={plan.draft?.placed ?? []} onDropGhost={plan.dropFromDraft}
                   onAdd={(day, startTime) => setDialog(startTime ? { kind: 'event', event: null, initial: { startDay: day, startTime, endTime: endOf(startTime) } } : { kind: 'choose', day })}
                   onEvent={e => setDialog({ kind: 'event', event: e })} onTask={openTask} onDeadline={d => setDialog({ kind: 'deadline', deadline: d })} />
               )}
@@ -204,7 +205,8 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
           onClose={() => { cal.clearError(); setDialog(null) }}
           onSave={input => dialog.event ? cal.update(dialog.event.id, input) : cal.create(input)}
           onDelete={dialog.event ? () => cal.remove(dialog.event!.id) : undefined}
-          onDeleteOccurrence={dialog.event?.repeat ? () => cal.removeOccurrence(dialog.event!.id, dialog.event!.startDay) : undefined} />
+          onDeleteOccurrence={dialog.event?.repeat ? () => cal.removeOccurrence(dialog.event!.id, dialog.event!.startDay) : undefined}
+          onUnschedule={dialog.event?.auto ? async () => { const r = await plan.unschedule(dialog.event!.id); await refreshBoth(); return r.ok } : undefined} />
       )}
       {dialog?.kind === 'task' && (
         <TaskEditor task={dialog.task} subjects={tasks.view?.status === 'ready' ? tasks.view.subjects : []} initialDueDay={dialog.day} error={tasks.error}
@@ -430,8 +432,10 @@ function DayDetail({ items, timezone, handlers }: { items: DayItems; timezone: s
 
 const HOUR_PX = 44
 
-function WeekView({ view, days, byDay, workload, onAdd, ...handlers }: ItemHandlers & {
+function WeekView({ view, days, byDay, workload, onAdd, ghosts, onDropGhost, ...handlers }: ItemHandlers & {
   view: NovaCalendarReady; days: string[]; byDay: Map<string, DayItems>; workload: DayLoad[]; onAdd: (day: string, startTime?: string) => void
+  // A proposal not applied yet (Plan your time): drawn dashed, removable.
+  ghosts: ProposalView[]; onDropGhost: (taskId: string) => void
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   // Opens on the working day, not at midnight (or near now, today).
@@ -490,6 +494,16 @@ function WeekView({ view, days, byDay, workload, onAdd, ...handlers }: ItemHandl
                     className="absolute inset-x-0 border-t border-white/6 hover:bg-white/3 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-ring"
                     style={{ top: h * HOUR_PX, height: HOUR_PX }} />
                 ))}
+                {ghosts.filter(g => g.day === day && g.startAt && g.endAt).map(g => {
+                  const top = minuteIn(g.startAt!, view.timezone), end = minuteIn(g.endAt!, view.timezone)
+                  return (
+                    <div key={`ghost:${g.taskId}`} className="absolute inset-x-0.5 z-[15] overflow-hidden rounded-lg border-2 border-dashed border-action/70 bg-action/10 px-1.5 py-1 text-xs" style={{ top: (top / 60) * HOUR_PX, height: Math.max(22, ((end - top) / 60) * HOUR_PX - 2) }} data-plan-ghost>
+                      <span className="block truncate pr-4 font-medium text-foreground">{g.title}</span>
+                      <span className="block truncate tabular-nums text-foreground/60">{g.startTime}–{g.endTime} · proposed</span>
+                      <button type="button" onClick={() => onDropGhost(g.taskId)} aria-label={`Leave ${g.title} out of the proposal`} className="absolute right-0.5 top-0.5 rounded p-0.5 text-foreground/50 hover:bg-foreground/10 hover:text-foreground">×</button>
+                    </div>
+                  )
+                })}
                 {placeTimed((byDay.get(day) ?? emptyDay()).timed, day, view.timezone).map(p => (
                   <button key={p.event.key ?? p.event.id} type="button" onClick={() => handlers.onEvent(p.event)}
                     className="absolute z-10 overflow-hidden rounded-lg border border-white/10 bg-card px-1.5 py-1 text-left text-xs shadow-soft transition-colors hover:border-white/25 focus-visible:outline-2 focus-visible:outline-ring"
