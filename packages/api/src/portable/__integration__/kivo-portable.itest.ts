@@ -364,3 +364,80 @@ test("the whole map exports every top-level subject and imports as independent c
   assert.equal((await listNotes(A.profileId)).notes.length, notesBefore);
   assert.equal((await savedPlaces(A.profileId)).every(c => c.source === "web"), true);
 });
+
+// ── P0 (28 Nov): an import that runs after its request ────────────────────────
+// The upload answers "running" at once; the work finishes after the response;
+// the page reads how it ended from importStatus, never from the upload.
+
+const { importStatus } = await import("../import.js");
+
+async function background(profileId: string, bytes: Uint8Array, opts: Record<string, unknown> = {}) {
+  const queued: Array<() => Promise<unknown>> = [];
+  const r = await startImport(profileId, bytes, { ...opts, background: (w: () => Promise<unknown>) => { queued.push(w); } });
+  return { r, run: async () => { for (const w of queued.splice(0)) await w(); }, queued };
+}
+
+test("P0: the upload answers running with the job; the status read says running, then complete with the map's own ids", async () => {
+  const { A, os } = await linkedMap();
+  const file = await exportMap(A.profileId, { rootSubjectId: os.id });
+  assert.ok(file.ok);
+  const B = await learner();
+  const { r, run } = await background(B.profileId, file.bytes);
+  assert.ok(r.ok && r.status === "running", JSON.stringify(r));
+  if (!r.ok || r.status !== "running") return;
+  const before = await importStatus(B.profileId, r.jobId);
+  assert.ok(before.ok && before.status === "running" && !before.stalled);
+  await run();
+  const s = await importStatus(B.profileId, r.jobId);
+  assert.ok(s.ok && s.status === "complete", JSON.stringify(s));
+  if (!s.ok || s.status !== "complete") return;
+  const bOs = await subjectNamed(B.profileId, "Operating Systems");
+  assert.equal(s.rootSubjectId, bOs.id, "the canonical id of the imported map");
+  assert.deepEqual(s.rootSubjectIds, [bOs.id]);
+  // Another learner can't read it.
+  const C = await learner();
+  assert.deepEqual((await importStatus(C.profileId, r.jobId)).ok, false);
+});
+
+test("P0: everything in the map arrives: subjects, nested subjects, topics, notes, saved pages, and their filing", async () => {
+  const { A, os } = await linkedMap();
+  await createNote(A.profileId, { title: "Deadlock cheatsheet", body: "Coffman conditions", subjectId: os.id, topicName: "Deadlocks" });
+  const lab = await subjectNamed(A.profileId, "OS Lab");
+  await createNote(A.profileId, { title: "fork notes", body: "returns twice", subjectId: lab.id, topicName: "Fork" });
+  const preview = await previewExport(A.profileId, os.id);
+  assert.ok(preview.ok);
+  const file = await exportMap(A.profileId, { rootSubjectId: os.id });
+  assert.ok(file.ok);
+  const B = await learner();
+  const { r, run } = await background(B.profileId, file.bytes);
+  assert.ok(r.ok);
+  await run();
+  const src = await loadStudyStructure(A.profileId), dst = await loadStudyStructure(B.profileId);
+  const tree = (st: typeof src, root: string) => {
+    const ids = new Set([root]);
+    for (let grew = true; grew;) { grew = false; for (const x of st.subjects) if (x.parentId && ids.has(x.parentId) && !ids.has(x.id)) { ids.add(x.id); grew = true; } }
+    return st.subjects.filter(x => ids.has(x.id)).map(x => [x.name, x.parentId ? st.subjects.find(p => p.id === x.parentId)!.name : null, x.topics.map(t => t.name).sort()]).sort();
+  };
+  assert.deepEqual(tree(dst, (await subjectNamed(B.profileId, "Operating Systems")).id), tree(src, os.id), "the same subjects, nesting and topics");
+  const notesOf = async (p: string) => (await listNotes(p)).notes.filter(n => !n.title.startsWith("About this map")).map(n => [n.title, n.topicName]).sort();
+  assert.deepEqual(await notesOf(B.profileId), (await notesOf(A.profileId)).filter(([t]) => t === "Deadlock cheatsheet" || t === "fork notes"));
+  assert.equal((await savedPlaces(B.profileId)).length, 4, "every saved page under the map");
+});
+
+test("P0: a retried upload (the same file, while or after it runs) never duplicates the map", async () => {
+  const { A, os } = await linkedMap();
+  const file = await exportMap(A.profileId, { rootSubjectId: os.id });
+  assert.ok(file.ok);
+  const B = await learner();
+  const first = await background(B.profileId, file.bytes);
+  // A second upload while the first runs: told it is running, nothing queued twice.
+  const second = await background(B.profileId, file.bytes);
+  assert.ok(second.r.ok && second.r.status === "running");
+  assert.equal(second.queued.length, 0, "the running job is not started twice");
+  await first.run();
+  const third = await startImport(B.profileId, file.bytes);
+  assert.ok(third.ok && third.status === "complete" && third.already);
+  const st = await loadStudyStructure(B.profileId);
+  assert.equal(st.subjects.filter(x => x.name === "Operating Systems").length, 1);
+  assert.equal((await savedPlaces(B.profileId)).length, 4);
+});

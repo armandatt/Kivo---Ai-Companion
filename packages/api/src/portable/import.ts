@@ -362,7 +362,12 @@ export type ImportResult =
   | { ok: true; status: "running"; jobId: string }
   | { ok: false; status: "failed" | "refused"; jobId?: string; reason: string; message: string; found?: "map" | "note" };
 
-export interface ImportOptions { now?: Date; admit?: StorageAdmit; copy?: boolean }
+// background (P0, 28 Nov): run the import's work after the response. The
+// request then answers at once with { status: "running", jobId } once the job
+// exists, every refusal has been decided and storage is reserved; the page
+// follows the job with importStatus. Without it, the request does the work
+// and answers with the result, as before (tests, scripts).
+export interface ImportOptions { now?: Date; admit?: StorageAdmit; copy?: boolean; background?: (work: () => Promise<unknown>) => void }
 
 export async function startImport(profileId: string, bytes: Uint8Array, options: ImportOptions | Date = {}): Promise<ImportResult> {
   const opts: ImportOptions = options instanceof Date ? { now: options } : options;
@@ -395,18 +400,59 @@ export async function startImport(profileId: string, bytes: Uint8Array, options:
       if (!job) throw err;
       return resumeImport(profileId, job.id, { ...opts, assetData });
     }
-    return withStorage(pkg, opts, async () => runImport(job!.id, profileId, now, assetData));
+    return withStorage(pkg, opts, job.id, async () => runImport(job!.id, profileId, now, assetData));
   }
   return resumeImport(profileId, job.id, { ...opts, assetData });
 }
 
 // Storage for every image and file, reserved before the import writes any.
-async function withStorage(pkg: MapPackage, opts: ImportOptions, run: () => Promise<ImportResult>): Promise<ImportResult> {
+async function withStorage(pkg: MapPackage, opts: ImportOptions, jobId: string, run: () => Promise<ImportResult>): Promise<ImportResult> {
   const bytes = assetBytesOf(pkg);
-  if (bytes === 0 || !opts.admit) return run();
-  const admission = await opts.admit(bytes);
-  if (admission.refused) return { ok: false, status: "refused", reason: "storage", message: admission.refused };
-  try { return await run(); } finally { await admission.release(); }
+  const admission = bytes === 0 || !opts.admit ? null : await opts.admit(bytes);
+  if (admission?.refused) {
+    // Nothing was written for it: the claimed job goes back to failed, so the
+    // page says why and a retry can take it once there is room.
+    await save(jobId, { status: "failed", error: "storage" });
+    return { ok: false, status: "refused", jobId, reason: "storage", message: admission.refused };
+  }
+  if (opts.background) {
+    opts.background(async () => {
+      try { await run(); }
+      catch (err) {
+        console.error(`[portable] import ${jobId} stopped:`, (err as Error)?.name ?? "error");
+        await save(jobId, { status: "failed", error: `stopped: ${(err as Error)?.name ?? "error"}` }).catch(() => {});
+      } finally { await admission?.release(); }
+    });
+    return { ok: true, status: "running", jobId };
+  }
+  try { return await run(); } finally { await admission?.release(); }
+}
+
+// ── Where an import stands (P0, 28 Nov) ──────────────────────────────────────
+// Read-only; the learner's own map imports only. `stalled`: running but its
+// lease has lapsed (the process that ran it stopped), so a resume may take it.
+export type ImportStatus =
+  | { ok: true; status: "complete"; jobId: string; rootSubjectId: string; rootSubjectIds: string[]; counts: ImportCounts; title: string }
+  | { ok: true; status: "running"; jobId: string; stage: string | null; stalled: boolean; title: string }
+  | { ok: true; status: "failed"; jobId: string; stage: string | null; message: string; title: string }
+  | { ok: false; reason: "not_found"; message: string };
+
+export async function importStatus(profileId: string, jobId: string, now = new Date()): Promise<ImportStatus> {
+  const job = await prisma.novaImportJob.findFirst({
+    where: { id: jobId, profileId, packageType: "map" },
+    select: { id: true, status: true, stage: true, rootSubjectId: true, progress: true, error: true, title: true, updatedAt: true },
+  });
+  if (!job) return { ok: false, reason: "not_found", message: "That import isn't yours, or no longer exists." };
+  const title = job.title ?? "Your map";
+  if (job.status === "complete" && job.rootSubjectId) {
+    const progress = (job.progress ?? {}) as Partial<ImportProgress>;
+    return { ok: true, status: "complete", jobId: job.id, rootSubjectId: job.rootSubjectId, rootSubjectIds: progress.rootSubjectIds ?? [job.rootSubjectId], counts: progress.counts ?? { subjects: 0, topics: 0, notes: 0 }, title };
+  }
+  if (job.status === "failed") {
+    return { ok: true, status: "failed", jobId: job.id, stage: job.stage, title,
+      message: job.error === "storage" ? "There isn't room in your storage for this map's images and files." : "The import stopped before it finished. Nothing is lost: Try again continues where it stopped." };
+  }
+  return { ok: true, status: "running", jobId: job.id, stage: job.stage, stalled: now.getTime() - job.updatedAt.getTime() > LEASE_MS, title };
 }
 
 export async function resumeImport(profileId: string, jobId: string, options: (ImportOptions & { assetData?: Map<string, Uint8Array> }) | Date = {}): Promise<ImportResult> {
@@ -430,7 +476,7 @@ export async function resumeImport(profileId: string, jobId: string, options: (I
   });
   if (claimed.count === 0) return { ok: true, status: "running", jobId };
   if (!checked.ok) return runImport(jobId, profileId, now, opts.assetData);
-  return withStorage(checked.pkg, opts, () => runImport(jobId, profileId, now, opts.assetData));
+  return withStorage(checked.pkg, opts, jobId, () => runImport(jobId, profileId, now, opts.assetData));
 }
 
 function completed(job: { id: string; rootSubjectId: string | null; progress: unknown }, already: boolean): ImportResult {
