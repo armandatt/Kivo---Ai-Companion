@@ -82,11 +82,16 @@ export function recommendationReply(
           action: { type: "start" as const, topicName: action.topicName, subjectName: action.subjectName, minutes },
         })),
         ...(extra.kind === "nudge"
-          ? [{ label: "Later", action: { type: "later" as const } }, { label: "Not today", action: { type: "not_today" as const } }]
-          : [{ label: "Something else", action: { type: "something_else" as const, skip } }, { label: "Later", action: { type: "later" as const } }]),
+          ? [{ label: "Later", action: laterOf(action) }, { label: "Not today", action: { type: "not_today" as const } }]
+          : [{ label: "Something else", action: { type: "something_else" as const, skip } }, { label: "Later", action: laterOf(action) }]),
       ]),
     },
   };
+}
+
+// Later on a planner offer: the topic, to bring back when they choose (M3).
+function laterOf(action: TodayAction): OptionAction {
+  return { type: "later", items: [{ id: "offer:0", title: action.topicName, minutes: action.durationMinutes, taskId: null, topicId: null, subjectName: action.subjectName }] };
 }
 
 export function sessionReply(session: NovaSessionView, lead?: string): TelegramReply {
@@ -194,28 +199,57 @@ export function endedReply(ended: { topicName: string | null; minutes: number; o
   return { text: `Logged: ${ended.minutes} min${what}.${how}${note}`, link: { label: "Open Nova", path: "/knowledge" } };
 }
 
-export function settingsReply(state: { proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null; checkinTime?: string | null }, now: Date): TelegramReply {
+export interface SettingsState {
+  proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null; checkinTime?: string | null;
+  planNotifications?: boolean; planPausedUntil?: Date | null; allPausedUntil?: Date | null;
+  // TELEGRAM_PLAN_NOTIFICATIONS is on: the setting exists to show.
+  planFeature?: boolean;
+}
+
+export function settingsReply(state: SettingsState, now: Date): TelegramReply {
   const paused = state.pausedUntil !== null && state.pausedUntil > now;
+  const allPaused = !!state.allPausedUntil && state.allPausedUntil > now;
+  const planPaused = !!state.planPausedUntil && state.planPausedUntil > now;
   const lines = [
+    ...(allPaused ? ["Paused: everything until midnight. Your plan and buttons still work when you ask."] : planPaused ? ["Paused: plan prompts and nudges until midnight. Your own reminders still come."] : []),
+    ...(state.planFeature ? [state.planNotifications
+      ? "Plan notifications: on. When you've applied a plan on Kivo, I message at each block's time, and at your check-in for blocks without one."
+      : "Plan notifications: off. Turn them on and I'll message when a block of your applied plan is due."] : []),
     `Nudges: ${state.proactiveEnabled ? (paused ? "paused for today" : "on") : "off"}. At most two a day, never between 11pm and 7am unless that is the time you chose.`,
     // What the time they picked actually does, and where it is changed.
     state.checkinTime
-      ? `Daily check-in: around ${state.checkinTime}, your time, on days you haven't studied yet. Change it in Settings on the web.`
-      : "Daily check-in: no time chosen, so I nudge around your usual study time. Pick a time in Settings on the web.",
+      ? `Daily check-in: around ${state.checkinTime}, your time, on days you haven't studied yet. Change it in Settings on the web. Or tap Check-in time below.`
+      : "Daily check-in: no time chosen, so I nudge around your usual study time. Pick a time in Settings on the web. Or tap Check-in time below.",
     state.timezone
       ? `Timezone: ${state.timezone}.`
       : "Timezone: not set, so I won't message first. Open Nova on the web once and your device tells me.",
   ];
+  const items: Array<{ label: string; action: OptionAction }> = [];
+  if (state.planFeature) items.push(state.planNotifications
+    ? { label: "Plan notifications off", action: { type: "set_plan_notifications", enabled: false } }
+    : { label: "Plan notifications on", action: { type: "set_plan_notifications", enabled: true } });
+  items.push({ label: "Check-in time", action: { type: "pick_checkin" } });
+  if (allPaused || planPaused || paused) items.push({ label: "Resume", action: { type: "resume_sends" } });
+  else {
+    items.push({ label: "Pause plan nudges today", action: { type: "pause_plan_today" } });
+    items.push({ label: "Pause all today", action: { type: "pause_all_today" } });
+  }
+  items.push(state.proactiveEnabled
+    ? { label: "Turn nudges off", action: { type: "set_proactive", enabled: false } }
+    : { label: "Turn nudges on", action: { type: "set_proactive", enabled: true } });
+  return { text: lines.join("\n"), prompt: { kind: "settings", options: options(items) } };
+}
+
+export const CHECKIN_CHOICES = ["07:00", "09:00", "13:00", "18:00", "20:00", "22:00"];
+
+// "What time should I check in?", as a choice.
+export function checkinChoiceReply(lead = "What time should I check in each day? Blocks of your plan without a set time are offered then."): TelegramReply {
   return {
-    text: lines.join("\n"),
-    prompt: {
-      kind: "settings",
-      options: options([
-        state.proactiveEnabled
-          ? { label: "Turn nudges off", action: { type: "set_proactive", enabled: false } }
-          : { label: "Turn nudges on", action: { type: "set_proactive", enabled: true } },
-      ]),
-    },
+    text: lead,
+    prompt: { kind: "settings", options: options([
+      ...CHECKIN_CHOICES.map(t => ({ label: clock12(t), action: { type: "set_checkin" as const, time: t } })),
+      { label: "No check-in", action: { type: "set_checkin" as const, time: null } },
+    ]) },
   };
 }
 
@@ -710,7 +744,7 @@ export function flowReply(flow: NovaDayView, skip: string[] = []): TelegramReply
       options: options([
         { label: `Start ${minutes} min`, action: { type: "start_item", itemId: next.id, minutes } },
         ...(more.length > 0 ? [{ label: "Something else", action: { type: "other_items" as const, skip: [next.id] } }] : []),
-        { label: "Later", action: { type: "later" as const } },
+        { label: "Later", action: { type: "later" as const, items: [{ id: next.id, title: next.title, minutes: next.minutes, taskId: next.taskId, topicId: next.topicId }] } },
       ]),
     },
   };

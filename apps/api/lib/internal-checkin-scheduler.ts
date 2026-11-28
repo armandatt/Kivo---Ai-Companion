@@ -9,6 +9,13 @@ import { IdleScheduler, idleModeOf, type IdleStats } from "@repo/api/services/sc
 import { loadDueSources } from "@repo/api/services/schedulerDueSources";
 //@ts-ignore
 import { runWithoutWriteSignal } from "@repo/db/write-signal";
+// The precise timer for reminders (Telegram launch, 28 Nov).
+//@ts-ignore
+import { nextDueAt } from "@repo/api/nova/product/reminder-occurrences";
+//@ts-ignore
+import { runPlanReminders } from "@repo/api/nova/proactive/plan-reminders";
+//@ts-ignore
+import { upcomingEventReminderWindows, runEventReminders } from "@repo/api/nova/proactive/event-reminders";
 
 const CHECKIN_INTERVAL_MS = 5 * 60 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000;
@@ -22,7 +29,52 @@ type SchedulerGlobal = typeof globalThis & {
   __kevoCheckinLastNova?: CheckinCronResult["nova"];
   __kevoCheckinDisabledLogged?: boolean;
   __kevoCheckinIdle?: IdleScheduler;
+  __kevoReminderTimer?: ReturnType<typeof setTimeout> | null;
+  __kevoReminderTimerAt?: number | null;
 };
+
+// ── The precise timer (Telegram launch, 28 Nov) ─────────────────────────────
+// A five-minute tick sends a 6:00 PM plan block up to five minutes late. After
+// every tick the next reminder moment due before the following tick (a plan
+// occurrence or a calendar reminder) gets one timer of its own, which runs
+// just the two reminder jobs at that moment. Every send is claimed in the
+// outbox, so the timer and a tick can never send one twice. One timer at a
+// time; a tick re-arms it.
+const PRECISE_LEAD_MS = 1_000;
+
+async function nextReminderMoment(now: Date): Promise<number | null> {
+  const [plan, calendar] = await Promise.all([
+    nextDueAt(now).catch(() => null) as Promise<Date | null>,
+    (upcomingEventReminderWindows(now) as Promise<Array<{ from: Date }>>).catch(() => [] as Array<{ from: Date }>),
+  ]);
+  const moments = [plan?.getTime() ?? null, ...calendar.map(w => w.from.getTime())].filter((t): t is number => t !== null && t > now.getTime());
+  return moments.length > 0 ? Math.min(...moments) : null;
+}
+
+function armReminderTimer(globalState: SchedulerGlobal): void {
+  void runWithoutWriteSignal("scheduler", () => nextReminderMoment(new Date())).then((at: number | null) => {
+    if (at === null || at - Date.now() > CHECKIN_INTERVAL_MS) return;
+    if (globalState.__kevoReminderTimer && globalState.__kevoReminderTimerAt === at) return;
+    if (globalState.__kevoReminderTimer) clearTimeout(globalState.__kevoReminderTimer);
+    globalState.__kevoReminderTimerAt = at;
+    globalState.__kevoReminderTimer = setTimeout(async () => {
+      globalState.__kevoReminderTimer = null;
+      globalState.__kevoReminderTimerAt = null;
+      // A full tick is running: it sends what is due; try again shortly.
+      if (globalState.__kevoCheckinSchedulerRunning) { setTimeout(() => armReminderTimer(globalState), 15_000); return; }
+      const now = new Date();
+      try {
+        await runWithoutWriteSignal("scheduler", async () => {
+          await runPlanReminders(now);
+          await runEventReminders(now);
+        });
+      } catch (error) {
+        console.error("[CHECKIN] precise reminder run failed:", error);
+      }
+      armReminderTimer(globalState);
+    }, Math.max(0, at - Date.now()) + PRECISE_LEAD_MS);
+  }).catch((error: unknown) => console.error("[CHECKIN] reminder timer not armed:", (error as Error)?.message ?? error));
+}
 
 // One per process, shared by the timer and the health check (globalThis:
 // Next bundles the instrumentation hook and the routes separately).
@@ -123,6 +175,7 @@ export function startInternalCheckinScheduler() {
     } finally {
       globalState.__kevoCheckinLastTickAt = new Date().toISOString();
       globalState.__kevoCheckinSchedulerRunning = false;
+      armReminderTimer(globalState);
     }
   };
 

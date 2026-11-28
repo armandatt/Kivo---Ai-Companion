@@ -243,3 +243,11 @@ export async function ensureLearnerTimezone(
   const stored = await prisma.novaAcademicProfile.findUnique({ where: { id: profile.id }, select: { timezone: true } });
   return stored?.timezone && isValidTimezone(stored.timezone) ? stored.timezone : zone;
 }
+
+// The learner's daily check-in time, chosen on Telegram (launch, 28 Nov): the
+// same column the web's Settings writes. "HH:MM", or null for none.
+export async function saveCheckinTime(platformChatId: string, time: string | null): Promise<boolean> {
+  if (time !== null && parseCheckinTime(time) === null) return false;
+  const r = await prisma.userProfile.updateMany({ where: accountOf(platformChatId), data: { preferredCheckInTime: time } });
+  return r.count > 0;
+}

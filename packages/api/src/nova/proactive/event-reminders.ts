@@ -62,7 +62,7 @@ const EVENT_SELECT = {
   profile: {
     select: {
       user:            { select: { platform: true, platformChatId: true, persona: true } },
-      telegramChannel: { select: { undeliverableSince: true } },
+      telegramChannel: { select: { undeliverableSince: true, allPausedUntil: true } },
     },
   },
 } as const;
@@ -73,7 +73,7 @@ type DueEvent = {
   reminderMinutes: number | null; repeat: string | null; repeatDays: number[]; repeatUntil: string | null; skipDays: string[];
   profile: {
     user: { platform: string; platformChatId: string; persona: string | null };
-    telegramChannel: { undeliverableSince: Date | null } | null;
+    telegramChannel: { undeliverableSince: Date | null; allPausedUntil?: Date | null } | null;
   };
 };
 
@@ -193,6 +193,10 @@ async function deliverDue(event: DueEvent, now: Date, client: TelegramClient): P
   try {
     const block = reminderBlock(event.profile.user, event.profile.telegramChannel);
     if (block) return block;
+    // "Pause all" (Telegram launch, M3) holds the learner's own reminders too,
+    // until local midnight; one due meanwhile is missed, never sent late.
+    const paused = event.profile.telegramChannel?.allPausedUntil;
+    if (paused && paused > now) return "paused_all";
     const occurrence = occurrenceOfReminder(seriesOf(event), at);
     if (!occurrence) return "stale";
     const row = await claimOccurrence(event.profileId, { type: EVENT_REMINDER, occurrenceKey: reminderKey(event.id, at) }, dayKey(now, event.timezone), PRIORITY, now);

@@ -48,6 +48,8 @@ import {
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
 import { NOVA_CHAT_COMMANDS } from "./telegram-client";
+import { decodeReminderCallback } from "../proactive/plan-reminder-rules";
+import { runReminderTap } from "./reminder-actions";
 import { alternativeReply, clarifyReply, creditsUsedText, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
 import { interpret } from "../interaction/semantics";
@@ -125,6 +127,7 @@ function buttonRows(reply: TelegramReply, prompt: OpenPrompt | null, webUrl: str
     const buttons = prompt.options.map(o => ({ text: o.label, callback_data: encodeCallback(prompt.id, o.id) }));
     for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
   }
+  if (reply.rows) rows.push(...reply.rows);
   if (reply.link && webUrl && webUrl.startsWith("https://")) {
     rows.push([{ text: reply.link.label, url: `${webUrl}${reply.link.path}` }]);
   }
@@ -329,6 +332,19 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     };
 
     // ── A button ─────────────────────────────────────────────────────────────
+    // A reminder's own buttons (M3): not a prompt, re-checked on every tap.
+    const reminderTap = event.kind === "callback" ? decodeReminderCallback(event.data) : null;
+    if (event.kind === "callback" && reminderTap) {
+      trace.decision = `reminder:${reminderTap.code.kind}`;
+      await telegram(client.answerCallback(event.callbackId)).catch(() => {});
+      const acting = Date.now();
+      const result = await runReminderTap(ctx, reminderTap.occurrenceId, reminderTap.code);
+      spent("actionMs", acting);
+      if (result.clear && event.messageId !== null) await telegram(client.clearButtons(event.chatId, event.messageId)).catch(() => {});
+      await deliver(report(result));
+      return finish();
+    }
+
     if (event.kind === "callback") {
       const ref = decodeCallback(event.data);
       const resolved = ref ? await resolvePrompt(profile.id, ref.promptId, ref.optionId, "callback", now) : null;

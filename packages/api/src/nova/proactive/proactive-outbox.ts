@@ -36,7 +36,12 @@ export const RETRY_WINDOW_HOURS = 3;
 const COUNTS_AS_DELIVERED = ["sent", "unknown", "sending"];
 
 export const EVENT_REMINDER = "event_reminder";
-const NOT_A_REMINDER = { not: EVENT_REMINDER };
+// Plan notifications and "remind me later" (product/reminder-occurrences.ts,
+// proactive/plan-reminders.ts): the learner's own plan at the learner's own
+// time, so like calendar reminders they are not Nova speaking first and
+// neither count toward nor wait behind the cap of two a day.
+export const PLAN_REMINDER = "plan_reminder";
+const NOT_A_REMINDER = { notIn: [EVENT_REMINDER, PLAN_REMINDER] };
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === "P2002";
 
 export interface OutboxRow {
@@ -77,7 +82,7 @@ export async function loadDelivered(profileId: string, localDay: string): Promis
 // this tick has nothing to do with it.
 export async function claimOccurrence(
   profileId: string,
-  candidate: Pick<ProactiveCandidate, "occurrenceKey"> & { type: ProactiveCandidate["type"] | typeof EVENT_REMINDER },
+  candidate: Pick<ProactiveCandidate, "occurrenceKey"> & { type: ProactiveCandidate["type"] | typeof EVENT_REMINDER | typeof PLAN_REMINDER },
   localDay:  string,
   priority:  number,
   now:       Date,
@@ -95,6 +100,30 @@ export async function claimOccurrence(
     if (isUniqueViolation(err)) return null;
     throw err;
   }
+}
+
+// The outbox row for one due moment of a reminder: claimed now, or one an
+// earlier tick claimed that may still be sent (failed with attempts left, or
+// worded and not yet taken, or a claim left stale by a restart). null: it
+// was sent, its outcome is unknown, or another sender has it.
+export async function claimOrRetry(profileId: string, type: typeof PLAN_REMINDER, occurrenceKey: string, localDay: string, now: Date): Promise<OutboxRow | null> {
+  const fresh = await claimOccurrence(profileId, { type, occurrenceKey }, localDay, 10, now);
+  if (fresh) return fresh;
+  const row = await prisma.novaProactiveMessage.findFirst({ where: { profileId, occurrenceKey, eventType: type }, select: SELECT });
+  if (!row) return null;
+  if (row.status === "ready") return toRow(row);
+  if (row.status === "failed" && row.attempts < MAX_SEND_ATTEMPTS) return toRow(row);
+  if (row.status === "claimed" && now.getTime() - row.firedAt.getTime() > SENDING_STALE_MS) return toRow(row);
+  return null;
+}
+
+// What became of a reminder's sends, for the Telegram page.
+export async function outboxStatuses(profileId: string, keys: string[]): Promise<Map<string, { status: string; attempts: number; error: string | null }>> {
+  if (keys.length === 0) return new Map();
+  const rows = await prisma.novaProactiveMessage.findMany({
+    where: { profileId, occurrenceKey: { in: keys } }, select: { occurrenceKey: true, status: true, attempts: true, lastError: true },
+  });
+  return new Map(rows.map(r => [r.occurrenceKey ?? "", { status: r.status ?? "", attempts: r.attempts, error: r.lastError }]));
 }
 
 export async function markReady(id: string, text: string): Promise<void> {

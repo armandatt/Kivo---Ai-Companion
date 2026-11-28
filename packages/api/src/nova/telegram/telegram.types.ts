@@ -59,11 +59,20 @@ export type OptionAction =
   | { type: "today"; minutes: number | null }
   | { type: "something_else"; skip: string[] }
   | { type: "status" }
-  | { type: "later" }
+  // Later on an offer: what was offered, so "Remind me later" can bring it
+  // back (M3). A plan block by its flow id; a planner topic as "offer:<n>".
+  | { type: "later"; items?: Array<{ id: string; title: string; minutes: number | null; taskId: string | null; topicId: string | null; subjectName?: string | null }> }
   | { type: "not_today" }
   | { type: "add_exam"; title: string; subjectName: string | null; date: string }   // date: YYYY-MM-DD
   | { type: "dismiss" }
   | { type: "set_proactive"; enabled: boolean }
+  // Plan notifications, the check-in time and the pauses (M2, M3, M9).
+  | { type: "set_plan_notifications"; enabled: boolean }
+  | { type: "set_checkin"; time: string | null }
+  | { type: "pick_checkin" }
+  | { type: "pause_plan_today" }
+  | { type: "pause_all_today" }
+  | { type: "resume_sends" }
   // A change to today's plan, applied through product/plan-overrides.ts when
   // tapped: leave a topic out, add one, put one first, or undo the first two.
   // The topic is named by its id; the server checks it is the learner's own.
@@ -121,6 +130,9 @@ export interface TelegramReply {
   prompt?: PromptSpec;
   // A plain link button ("Open Nova"). No callback, no state.
   link?:   { label: string; path: string };
+  // Buttons that are not a prompt: a reminder's own (r:<occurrence>:<code>),
+  // each re-checked against the occurrence and the plan when tapped.
+  rows?:   InlineButton[][];
 }
 
 export interface InlineButton {

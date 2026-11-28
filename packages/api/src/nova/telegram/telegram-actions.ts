@@ -8,7 +8,7 @@
 // database. "Started" is never said on the strength of having asked.
 // No LLM call.
 
-import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
+import { loadAccountPreferences, saveCheckinTime } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
 import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
 import { filingCandidates, setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
@@ -23,7 +23,9 @@ import { loadNovaProgress } from "../product/progress";
 import { listTasks } from "../product/tasks";
 import { changeTodayPlan } from "../product/plan-overrides";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
-import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
+import { loadChannel, pauseAllUntil, pausePlanUntil, pauseProactiveUntil, resumeSends, setPlanNotifications, setProactiveEnabled } from "./channel-store";
+import { planNotificationsOn } from "./telegram-flags";
+import { holdPending } from "../product/reminder-occurrences";
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
   progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
@@ -36,7 +38,8 @@ import { nextSetupQuestion } from "../interaction/initialization";
 import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
 import { loadDayFlow, startFocus } from "../product/day-flow";
 import type { NovaDayView } from "../product/day-flow.types";
-import { afterEndReply, flowHasWork, flowReply, otherItemsReply } from "./telegram-replies";
+import { afterEndReply, checkinChoiceReply, clock12, flowHasWork, flowReply, otherItemsReply } from "./telegram-replies";
+import { offerLater } from "./reminder-actions";
 import type { ReplyLanguage, SetupStatement } from "../types/understanding.types";
 
 export interface ActionContext {
@@ -497,12 +500,28 @@ export async function alternativeFor(ctx: ActionContext, topic: string): Promise
   return done("show_alternative:related", relatedTopicsReply(topic, named));
 }
 
-export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
+export async function showSettings(ctx: ActionContext, lead?: string): Promise<ActionResult> {
   const [state, account] = await Promise.all([loadChannel(ctx.profileId), loadAccountPreferences(ctx.chatId)]);
-  return done("show_settings", settingsReply({
+  const reply = settingsReply({
     proactiveEnabled: state.proactiveEnabled, pausedUntil: state.proactivePausedUntil, timezone: ctx.timezone,
-    checkinTime: account.checkinTime,
-  }, ctx.now));
+    checkinTime: account.checkinTime, planNotifications: state.planNotifications ?? false,
+    planPausedUntil: state.planPausedUntil ?? null, allPausedUntil: state.allPausedUntil ?? null, planFeature: planNotificationsOn(),
+  }, ctx.now);
+  return done("show_settings", lead ? { ...reply, text: `${lead}\n\n${reply.text}` } : reply);
+}
+
+// Plan notifications on (M2): only an applied plan is ever sent, and blocks
+// without a time need a check-in time, so one is asked for when missing.
+async function setPlanNotificationsFrom(ctx: ActionContext, enabled: boolean): Promise<ActionResult> {
+  await setPlanNotifications(ctx.profileId, enabled);
+  if (!enabled) {
+    await holdPending(ctx.profileId, "notifications_off");
+    return done("set_plan_notifications", { text: "Plan notifications are off. Your plan is still on /today whenever you ask." });
+  }
+  const account = await loadAccountPreferences(ctx.chatId);
+  const on = "Plan notifications are on. Once you apply a plan on Kivo's Today page, I'll message when each timed block is due. A draft you haven't applied sends nothing.";
+  if (!account.checkinTime) return done("set_plan_notifications", checkinChoiceReply(`${on}\n\nFor blocks without a set time, what time should I check in?`));
+  return done("set_plan_notifications", { text: `${on} Blocks without a time are offered at your check-in, ${clock12(account.checkinTime)}.` });
 }
 
 // ── A button, by its stored action ────────────────────────────────────────────
@@ -534,13 +553,32 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
       return view ? done("show_alternative", alternativeReply(view, action.skip))
                   : done("show_alternative", { text: textFor(ctx.language).finishSetup }, false);
     }
-    case "later":   return done("later", { text: textFor(ctx.language).later });
+    case "later":   return offerLater(ctx, action.items ?? []);
     case "dismiss": return done("dismiss", { text: textFor(ctx.language).dismissed });
     case "not_today":
       await pauseProactiveUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
       return done("pause_nudges", { text: textFor(ctx.language).notToday });
     case "plan_change": return applyPlanChange(ctx, action);
     case "pick_time":   return done("pick_time", timeChoiceReply());
+    case "set_plan_notifications": return setPlanNotificationsFrom(ctx, action.enabled);
+    case "pick_checkin": return done("pick_checkin", checkinChoiceReply());
+    case "set_checkin": {
+      const ok = await saveCheckinTime(ctx.chatId, action.time);
+      if (!ok) return done("set_checkin", { text: "I couldn't save that. Set your check-in time in Settings on Kivo." }, false);
+      return done("set_checkin", { text: action.time ? `Check-in set for ${clock12(action.time)}, your time.` : "No daily check-in. Blocks without a time won't be offered by themselves." });
+    }
+    case "pause_plan_today":
+      await pausePlanUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
+      return done("pause_plan", { text: "Plan prompts and nudges are paused until midnight. Reminders you set still come. /settings to resume." });
+    case "pause_all_today":
+      await pauseAllUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
+      return done("pause_all", { text: "Everything is paused until midnight: no plan prompts, nudges or reminders. Chat and buttons still work. /settings to resume." });
+    case "resume_sends": {
+      await resumeSends(ctx.profileId);
+      // What's next, never a backlog: anything due while paused has passed.
+      const today = await showToday(ctx, null);
+      return done("resume_sends", { ...today.reply, text: `Resumed. Here's what's next.\n\n${today.reply.text}` });
+    }
     case "set_proactive":
       await setProactiveEnabled(ctx.profileId, action.enabled);
       return done("set_proactive", { text: action.enabled ? textFor(ctx.language).nudgesOn : textFor(ctx.language).nudgesOff });

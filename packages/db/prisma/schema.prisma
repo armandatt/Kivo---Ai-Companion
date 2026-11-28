@@ -771,6 +771,7 @@ model NovaAcademicProfile {
   masterySnapshots  NovaTopicMasterySnapshot[]
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
+  reminderOccurrences NovaReminderOccurrence[]
   learningEvents    NovaLearningEvent[]
   resourceCollections NovaResourceCollection[]
   captureDrafts     NovaCaptureDraft[]
@@ -1307,6 +1308,14 @@ model NovaTelegramChannel {
   undeliverableSince   DateTime? // Telegram refused delivery (bot blocked); cleared by any inbound update
   lastDeliveredAt      DateTime?
 
+  // Plan notifications (Telegram launch, 28 Nov): off until the learner turns
+  // them on. "Pause plan nudges today" holds plan prompts and nudges (not the
+  // learner's own reminders) until planPausedUntil; "Pause all" holds every
+  // automatic message until allPausedUntil. Both end at local midnight.
+  planNotifications    Boolean   @default(false)
+  planPausedUntil      DateTime?
+  allPausedUntil       DateTime?
+
   // One free-text turn at a time per chat, across instances and restarts.
   // A lease, not a lock: it expires by itself if the process dies.
   turnLockedUntil      DateTime?
@@ -1349,6 +1358,53 @@ model NovaTelegramPrompt {
 
   @@index([profileId, createdAt])
   @@index([resolvedAt])
+}
+
+// One time Nova will send a plan prompt on Telegram (Telegram launch, 28 Nov).
+// A block of the plan the learner applied today at its time (source
+// day_plan), the check-in offer of the first untimed block (slot "checkin"),
+// or the learner's own "remind me later" of an offer (source later). Only
+// product/reminder-occurrences.ts reads or writes it.
+//
+// The occurrence is the reminder's state; delivery itself goes through the
+// outbox (NovaProactiveMessage, type plan_reminder, key occ:<id>:<dueAt ms>),
+// so each due moment is claimed once. A snooze moves dueAt on this row and
+// never touches the plan. `blockAt` is the time the block had when this was
+// scheduled: a later schedule change on the web supersedes the row (and its
+// snooze); a title edit does not.
+//
+// state: scheduled → sent | deferred (snoozed) | started | dismissed (skipped)
+//        | expired (local day over, or due while paused) | superseded
+//        | failed | unknown | undeliverable
+model NovaReminderOccurrence {
+  id         String    @id @default(cuid())
+  profileId  String
+  source     String // day_plan | later
+  day        String // the learner-local day it belongs to (YYYY-MM-DD)
+  slotKey    String // at:HH:MM | checkin | later:<ms> | carry:<id>
+  items      Json // [{ id, title, minutes, taskId, topicId }] as scheduled
+  blockAt    String?
+  timezone   String
+  originalAt DateTime
+  dueAt      DateTime
+  // A time the learner chose (a block's time, their check-in, a snooze):
+  // sent inside quiet hours.
+  explicit   Boolean   @default(true)
+  state      String    @default("scheduled")
+  snoozes    Int       @default(0)
+  sentCount  Int       @default(0)
+  messageId  Int?
+  sentAt     DateTime?
+  lastError  String?
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, day, slotKey])
+  @@index([state, dueAt])
+  @@index([profileId, day])
 }
 
 // ─── Nova browser extension ───────────────────────────────────────────────────

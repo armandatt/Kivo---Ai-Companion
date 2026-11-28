@@ -17,6 +17,10 @@ export interface ChannelState {
   proactiveEnabled:     boolean;
   proactivePausedUntil: Date | null;
   undeliverableSince:   Date | null;
+  // Telegram launch (28 Nov): plan notifications, and the two pauses.
+  planNotifications?:   boolean;
+  planPausedUntil?:     Date | null;
+  allPausedUntil?:      Date | null;
 }
 
 export async function ensureChannel(profileId: string): Promise<void> {
@@ -25,13 +29,13 @@ export async function ensureChannel(profileId: string): Promise<void> {
     .catch(err => { if ((err as { code?: string } | null)?.code !== "P2002") throw err; });
 }
 
-export const CHANNEL_DEFAULTS: Readonly<ChannelState> = { proactiveEnabled: true, proactivePausedUntil: null, undeliverableSince: null };
+export const CHANNEL_DEFAULTS: Readonly<ChannelState> = { proactiveEnabled: true, proactivePausedUntil: null, undeliverableSince: null, planNotifications: false, planPausedUntil: null, allPausedUntil: null };
 
 // The stored row, or null when this learner has none yet.
 export async function loadChannelRow(profileId: string): Promise<ChannelState | null> {
   return prisma.novaTelegramChannel.findUnique({
     where:  { profileId },
-    select: { proactiveEnabled: true, proactivePausedUntil: true, undeliverableSince: true },
+    select: { proactiveEnabled: true, proactivePausedUntil: true, undeliverableSince: true, planNotifications: true, planPausedUntil: true, allPausedUntil: true },
   });
 }
 
@@ -84,6 +88,53 @@ export async function setProactiveEnabled(profileId: string, enabled: boolean): 
 export async function pauseProactiveUntil(profileId: string, until: Date): Promise<void> {
   await ensureChannel(profileId);
   await prisma.novaTelegramChannel.update({ where: { profileId }, data: { proactivePausedUntil: until } });
+}
+
+// ── Plan notifications and pauses (Telegram launch, 28 Nov) ──────────────────
+
+export async function setPlanNotifications(profileId: string, enabled: boolean): Promise<void> {
+  await ensureChannel(profileId);
+  await prisma.novaTelegramChannel.update({ where: { profileId }, data: { planNotifications: enabled } });
+}
+
+// "Pause plan nudges today": plan prompts and Nova's own nudges hold until
+// `until` (local midnight); reminders the learner set still go.
+export async function pausePlanUntil(profileId: string, until: Date): Promise<void> {
+  await ensureChannel(profileId);
+  await prisma.novaTelegramChannel.update({ where: { profileId }, data: { planPausedUntil: until, proactivePausedUntil: until } });
+}
+
+// "Pause all": every automatic message holds until `until`.
+export async function pauseAllUntil(profileId: string, until: Date): Promise<void> {
+  await ensureChannel(profileId);
+  await prisma.novaTelegramChannel.update({ where: { profileId }, data: { allPausedUntil: until, planPausedUntil: until, proactivePausedUntil: until } });
+}
+
+// Resume: both pauses and "Not today" end now.
+export async function resumeSends(profileId: string): Promise<void> {
+  await ensureChannel(profileId);
+  await prisma.novaTelegramChannel.update({ where: { profileId }, data: { allPausedUntil: null, planPausedUntil: null, proactivePausedUntil: null } });
+}
+
+// Learners with plan notifications on whose chat can be reached, with what
+// the plan job needs. Read-only.
+export async function planNotificationLearners(take = 2000): Promise<Array<{ profileId: string; chatId: string; timezone: string | null; planPausedUntil: Date | null; allPausedUntil: Date | null }>> {
+  const rows = await prisma.novaTelegramChannel.findMany({
+    where: { planNotifications: true, undeliverableSince: null, profile: { user: { platform: "telegram", persona: "nova" } } },
+    take, select: { profileId: true, planPausedUntil: true, allPausedUntil: true, profile: { select: { timezone: true, user: { select: { platformChatId: true } } } } },
+  });
+  return rows.map(r => ({ profileId: r.profileId, chatId: r.profile.user.platformChatId, timezone: r.profile.timezone, planPausedUntil: r.planPausedUntil, allPausedUntil: r.allPausedUntil }));
+}
+
+// One learner's chat and channel, for a reminder about to be sent.
+export async function reminderTarget(profileId: string): Promise<{ chatId: string; persona: string | null; platform: string; timezone: string | null; channel: ChannelState | null } | null> {
+  const p = await prisma.novaAcademicProfile.findUnique({
+    where: { id: profileId },
+    select: { timezone: true, user: { select: { platform: true, platformChatId: true, persona: true } },
+      telegramChannel: { select: { proactiveEnabled: true, proactivePausedUntil: true, undeliverableSince: true, planNotifications: true, planPausedUntil: true, allPausedUntil: true } } },
+  });
+  if (!p) return null;
+  return { chatId: p.user.platformChatId, persona: p.user.persona, platform: p.user.platform, timezone: p.timezone, channel: p.telegramChannel };
 }
 
 // ── Commands and taps per minute ──────────────────────────────────────────────

@@ -379,6 +379,15 @@ export async function finishItemTask(input: Changing & { itemId: unknown }): Pro
   return { ok: true, flow, changed: [`${item.title} is done on your board.`], message: "The task is marked done; today's flow changed meanwhile, so tick it there too." };
 }
 
+// ── For reminders (Telegram launch, 28 Nov) ──────────────────────────────────
+
+// The items a learner saved for a day, as stored, and whether they saved a
+// flow at all. Read-only: what plan notifications are scheduled from.
+export async function savedItemsOn(profileId: string, day: string): Promise<{ saved: boolean; items: FlowItem[] }> {
+  const row = await prisma.novaDayFlow.findUnique({ where: { profileId_day: { profileId, day } }, select: SELECT });
+  return { saved: !!row && (row as { saved?: boolean }).saved !== false, items: readItems(row?.items) };
+}
+
 // ── Focus on an item ─────────────────────────────────────────────────────────
 
 // The item, now focused in this session; a session started on it before
