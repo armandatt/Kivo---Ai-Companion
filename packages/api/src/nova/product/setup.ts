@@ -553,3 +553,16 @@ export async function placeSubjectIn(tx: Pick<typeof prisma, "novaSubject">, sub
 export async function removeSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string): Promise<void> {
   await tx.novaSubject.delete({ where: { id: subjectId } });
 }
+
+// Kivo Connect (28 Nov): the learning space an assistant works in. An
+// account that connects ChatGPT or Claude before it has set Nova up on the
+// web (no map, no notes, maybe not even the signup quiz) gets its space here,
+// marked set up: an empty space is a valid one, so every reader answers empty
+// instead of "set up first", every writer can create, and what the assistant
+// builds opens on the web. Idempotent (an upsert, then one conditional write).
+export async function ensureConnectSpace(platformChatId: string): Promise<{ profileId: string } | null> {
+  const space = await ensureSetupProfile(platformChatId);
+  if (!space) return null;
+  await prisma.novaAcademicProfile.updateMany({ where: { id: space.profileId, onboardingComplete: false }, data: { onboardingComplete: true, onboardingStep: "complete" } });
+  return { profileId: space.profileId };
+}
