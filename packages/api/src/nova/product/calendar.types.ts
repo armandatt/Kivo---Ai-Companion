@@ -119,6 +119,9 @@ export interface CalendarEventItem {
   seriesStartDay?: string;
   task:            { id: string; title: string; status: string } | null;
   subject:         { id: string; name: string } | null;
+  // Plan your time (28 Nov): a block Kivo placed from a plan run, not changed
+  // by the learner since (they can Unschedule it). Optional: the web ships first.
+  auto?:           { runId: string | null } | null;
 }
 
 export interface CalendarTaskItem {

@@ -16,6 +16,7 @@
 //                planned task time, and what is left of the working day
 
 import { loadCalendar } from "./calendar";
+import { loadPlanSettings } from "./plan-runs";
 import { listTasks } from "./tasks";
 import { dayKeyOfNumber, dayNumber } from "../engines/learner-calendar";
 import { DEFAULT_PLAN, DEFAULT_TASK_MINUTES, isMissed, proposeTimes, type Busy, type PlanSettings } from "./calendar-plan";
@@ -45,7 +46,9 @@ export async function planCalendar(profileId: string, input: { taskIds?: unknown
   if (input.taskIds !== undefined && !(Array.isArray(input.taskIds) && input.taskIds.length <= 50 && input.taskIds.every(t => typeof t === "string" && t.length <= 40))) {
     return { ok: false, error: "invalid", message: "That task list can't be read." };
   }
-  const settings = readPlanSettings(input.settings);
+  // The learner's saved settings (Plan your time, 28 Nov); a request may still
+  // send its own (the page before this change kept them in the browser).
+  const settings = input.settings === undefined ? await loadPlanSettings(profileId) : { ...readPlanSettings(input.settings), avoidDays: (await loadPlanSettings(profileId)).avoidDays };
   const tasks = await listTasks(profileId, { now });
   const today = tasks.today;
   const t0 = dayNumber(today);
@@ -76,9 +79,13 @@ export async function planCalendar(profileId: string, input: { taskIds?: unknown
 
   const wanted = input.taskIds ? new Set(input.taskIds as string[]) : null;
   const toPlan = unscheduled.filter(t => !wanted || wanted.has(t.id)).slice(0, 50);
+  // Exams and certifications inside the horizon: their days stay free, and
+  // tasks of their subjects go first.
+  const exams = view.deadlines.filter(d => d.kind === "exam" || d.kind === "certification");
+  const examSubjects = new Set(exams.map(d => d.subjectName).filter((n): n is string => !!n));
   const proposals: ProposalView[] = proposeTimes({
-    tasks: toPlan.map(t => ({ id: t.id, title: t.title, minutes: t.minutes, dueDay: t.dueDay, priority: t.priority })),
-    busy, settings, timezone: tz, today, now,
+    tasks: toPlan.map(t => ({ id: t.id, title: t.title, minutes: t.minutes, dueDay: t.dueDay, priority: t.priority, examLinked: !!t.subjectName && examSubjects.has(t.subjectName) })),
+    busy, settings, timezone: tz, today, now, examDays: exams.map(d => d.day),
   }).map(p => ({
     taskId: p.taskId, title: p.title, day: p.day, minutes: p.minutes, late: p.late, split: p.split, reason: p.reason,
     startAt: p.start ? p.start.toISOString() : null, endAt: p.end ? p.end.toISOString() : null,

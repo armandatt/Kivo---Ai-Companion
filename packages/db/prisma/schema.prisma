@@ -772,6 +772,10 @@ model NovaAcademicProfile {
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
   reminderOccurrences NovaReminderOccurrence[]
+  planRuns          NovaPlanRun[]
+  // Plan your time settings (28 Nov): working hours, daily focus cap, gap,
+  // days to avoid, exam buffer. null: the defaults. product/plan-runs.ts.
+  planSettings      Json?
   learningEvents    NovaLearningEvent[]
   resourceCollections NovaResourceCollection[]
   captureDrafts     NovaCaptureDraft[]
@@ -1726,6 +1730,14 @@ model NovaCalendarEvent {
   // Occurrences the learner removed, by the day each starts on.
   skipDays        String[]  @default([])
 
+  // Plan your time (28 Nov): "auto" for a block Kivo placed when the learner
+  // applied a plan run (planRunId); null for the learner's own events. Once
+  // the learner moves, resizes or renames an auto block (editedAt), it is
+  // theirs: undoing or clearing the run leaves it.
+  source          String?
+  planRunId       String?
+  editedAt        DateTime?
+
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   task    NovaTask?           @relation(fields: [taskId], references: [id], onDelete: SetNull)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
@@ -1737,6 +1749,30 @@ model NovaCalendarEvent {
   @@index([profileId, startDay])
   @@index([profileId, endDay])
   @@index([remindAt])
+  @@index([planRunId])
+}
+
+// One applied plan (Plan your time, 28 Nov): the blocks Kivo created in one
+// Apply, so the whole run can be undone or removed later. Only
+// product/plan-runs.ts reads or writes it.
+model NovaPlanRun {
+  id         String    @id @default(cuid())
+  profileId  String
+  // "all" (Find times for all) or "one" (a single task's Find a time).
+  scope      String
+  // The calendar events this run created, in order.
+  eventIds   String[]
+  placed     Int
+  // What didn't fit when it was applied: [{ taskId, title, reason }].
+  unplaced   Json?
+  createdAt  DateTime  @default(now())
+  // Undone or removed: when, and what happened ({ removed, kept, started }).
+  undoneAt   DateTime?
+  undo       Json?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
 }
 
 // The learner's changes to one day's computed plan: leave a topic out of

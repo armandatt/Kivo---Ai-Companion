@@ -44,7 +44,7 @@ export const EVENTS_MAX = 5000;
 const ROW = {
   id: true, title: true, description: true, category: true, allDay: true, startDay: true, endDay: true,
   startAt: true, endAt: true, timezone: true, reminderMinutes: true, remindAt: true, taskId: true, subjectId: true,
-  repeat: true, repeatDays: true, repeatUntil: true, skipDays: true,
+  repeat: true, repeatDays: true, repeatUntil: true, skipDays: true, source: true, planRunId: true, editedAt: true,
   task: { select: { id: true, title: true, status: true } },
   subject: { select: { id: true, name: true } },
 } as const;
@@ -54,6 +54,7 @@ type Row = {
   startAt: Date | null; endAt: Date | null; timezone: string; reminderMinutes: number | null; remindAt: Date | null;
   taskId: string | null; subjectId: string | null;
   repeat: string | null; repeatDays: number[]; repeatUntil: string | null; skipDays: string[];
+  source?: string | null; planRunId?: string | null; editedAt?: Date | null;
   task: { id: string; title: string; status: string } | null;
   subject: { id: string; name: string } | null;
 };
@@ -114,6 +115,8 @@ function toItem(row: Row, occurrence: Occurrence, statuses: Map<string, string>,
     reminderMinutes: row.reminderMinutes,
     reminder: occurrenceReminder(row, fields, occurrence, statuses, channelOk, now),
     repeat: fields.repeat, seriesStartDay: row.startDay,
+    // Placed by a plan run and not changed by the learner since.
+    auto: row.source === "auto" && !row.editedAt ? { runId: row.planRunId ?? null } : null,
     task: row.task ? { id: row.task.id, title: row.task.title, status: row.task.status } : null,
     subject: row.subject ? { id: row.subject.id, name: row.subject.name } : null,
   };
@@ -282,7 +285,11 @@ export async function updateEvent(profileId: string, eventId: string, raw: unkno
   if (!checked.ok) return checked;
   const linkProblem = await checkLinks(profileId, checked.fields);
   if (linkProblem) return linkProblem;
-  const written = await prisma.novaCalendarEvent.updateMany({ where: { id: eventId, profileId }, data: dataOf(checked.fields, now) });
+  // An auto-placed block the learner moves, resizes or renames is theirs from
+  // now on: undoing or clearing its plan run leaves it (Plan your time).
+  const auto = await prisma.novaCalendarEvent.findFirst({ where: { id: eventId, profileId }, select: { source: true } });
+  const edited = auto?.source === "auto" ? { editedAt: now } : {};
+  const written = await prisma.novaCalendarEvent.updateMany({ where: { id: eventId, profileId }, data: { ...dataOf(checked.fields, now), ...edited } });
   if (written.count === 0) return { ok: false, error: "not_found", message: "That event doesn't exist." };
   return respond(profileId, eventId, now);
 }
@@ -323,4 +330,54 @@ export async function upcomingEventReminders(profileId: string, now: Date, take 
     select: { id: true, title: true, remindAt: true, repeat: true },
   });
   return rows.map(r => ({ eventId: r.id, title: r.title, remindAt: r.remindAt!, repeat: r.repeat }));
+}
+
+// ── Plan your time (28 Nov): blocks Kivo places, and taking them back ────────
+// Only product/plan-runs.ts calls these. A block is an ordinary study event
+// for its task, marked source "auto" with its run; reminded at its start when
+// the learner has plan notifications on (the existing reminder delivery).
+
+export interface AutoBlock { taskId: string; title: string; subjectId: string | null; start: Date; end: Date }
+
+export async function createAutoBlocks(profileId: string, runId: string, blocks: AutoBlock[], timezone: string, remind: boolean, now = new Date()): Promise<string[]> {
+  const ids: string[] = [];
+  await prisma.$transaction(async tx => {
+    for (const b of blocks) {
+      const fields = {
+        title: b.title, description: null, category: "study", allDay: false,
+        startDay: dayKey(b.start, timezone), endDay: dayKey(b.end, timezone), startAt: b.start, endAt: b.end, timezone,
+        reminderMinutes: remind ? 0 : null, taskId: b.taskId, subjectId: b.subjectId, repeat: null, skipDays: [] as string[],
+      };
+      const row = await tx.novaCalendarEvent.create({
+        data: { profileId, ...dataOf(fields as unknown as EventFields, now), clientKey: `run:${runId}:${b.taskId}`, source: "auto", planRunId: runId },
+        select: { id: true },
+      });
+      ids.push(row.id);
+    }
+  });
+  return ids;
+}
+
+export interface AutoRemoval { removed: string[]; kept: number; started: number }
+
+// Removes auto blocks matching `where`, except those the learner changed
+// (editedAt) and those already under way or over (a focus session may sit in
+// them): those stay, and are counted so the page can say so.
+export async function removeAutoBlocks(profileId: string, where: { planRunId?: string; ids?: string[]; from?: Date; to?: Date }, now = new Date(), preview = false): Promise<AutoRemoval> {
+  const rows = await prisma.novaCalendarEvent.findMany({
+    where: {
+      profileId, source: "auto",
+      ...(where.planRunId ? { planRunId: where.planRunId } : {}),
+      ...(where.ids ? { id: { in: where.ids } } : {}),
+      ...(where.from || where.to ? { startAt: { ...(where.from ? { gte: where.from } : {}), ...(where.to ? { lt: where.to } : {}) } } : {}),
+    },
+    select: { id: true, editedAt: true, startAt: true },
+  });
+  const started = rows.filter(r => !r.editedAt && r.startAt && r.startAt <= now).length;
+  const kept = rows.filter(r => r.editedAt).length;
+  const removable = rows.filter(r => !r.editedAt && r.startAt && r.startAt > now).map(r => r.id);
+  if (!preview && removable.length > 0) {
+    await prisma.novaCalendarEvent.deleteMany({ where: { profileId, id: { in: removable }, source: "auto", editedAt: null, startAt: { gt: now } } });
+  }
+  return { removed: removable, kept, started };
 }
