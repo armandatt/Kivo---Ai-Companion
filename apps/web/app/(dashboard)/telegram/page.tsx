@@ -3,7 +3,7 @@ import { TelegramPage } from '@/components/nova/telegram/telegram-page'
 
 export default function TelegramRoute() {
   return (
-    <PageFrame>
+    <PageFrame width="wide">
       <TelegramPage />
     </PageFrame>
   )
