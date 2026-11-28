@@ -5,7 +5,7 @@ import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "@repo/api/auth/proxy
 const PROTECTED_ROUTES = [
   "/home", "/coach", "/journey", "/progress", "/goals", "/creature", "/settings", "/profile",
   "/planner", "/calendar", "/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna", "/guide",
-  "/build", "/templates", "/connect", "/assistants",
+  "/build", "/templates", "/connect", "/assistants", "/telegram",
   "/onboarding",
 ]
 
@@ -91,5 +91,6 @@ export const config = {
     "/build/:path*",
     "/templates/:path*",
     "/assistants/:path*",
+    "/telegram/:path*",
   ],
 }
