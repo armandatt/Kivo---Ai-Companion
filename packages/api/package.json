@@ -29,6 +29,7 @@
     "./nova/product/planner.types": "./src/nova/product/planner.types.ts",
     "./nova/product/setup.types": "./src/nova/product/setup.types.ts",
     "./nova/product/telegram-connection": "./src/nova/product/telegram-connection.ts",
+    "./nova/product/telegram-page.types": "./src/nova/product/telegram-page.types.ts",
     "./nova/product/companion": "./src/nova/product/companion.ts",
     "./nova/product/zone-names": "./src/nova/product/zone-names.ts",
     "./nova/product/knowledge.types": "./src/nova/product/knowledge.types.ts",

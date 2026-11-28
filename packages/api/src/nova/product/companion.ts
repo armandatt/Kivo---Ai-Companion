@@ -43,6 +43,8 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   // Kivo inside Claude and ChatGPT (Kivo Connect): connect and disconnect.
   { path: "/assistants", label: "AI Assistants" },
   { path: "/calendar", label: "Calendar" },
+  // What Nova sends on Telegram, and the same controls the chat has (28 Nov).
+  { path: "/telegram", label: "Telegram" },
   { path: "/focus",   label: "Focus" },
   { path: "/progress", label: "Progress" },
   { path: "/learning-dna", label: "Learning DNA" },

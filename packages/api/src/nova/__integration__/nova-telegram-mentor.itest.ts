@@ -483,3 +483,35 @@ test("M9: /settings turns plan notifications on and asks for a check-in time whe
   assert.ok(!tg.lastTo(l.chat)!.text.toLowerCase().includes("unlimited"));
   assert.equal(models(), 0);
 });
+
+// ═══ M8: the Telegram page ════════════════════════════════════════════════════
+
+test("M8: the page shows what is coming by source, what happened, and its changes are the chat's", async () => {
+  await morning();
+  const { loadTelegramPage, changeTelegramPage } = await import("../product/telegram-page.js");
+  const l = await seedLearner("Cal");
+  await withNotifications(l);
+  await timedPlan(l, [{ title: "Operating Systems", at: "18:00", minutes: 25 }, { title: "DBMS", at: "20:00", minutes: 30 }]);
+  const { tg, tap } = harness();
+  await planTick(tg);
+  const me = { profileId: l.profileId, platformChatId: l.chat, timezone: "Asia/Kolkata", credits: { used: 3, limit: 150, resetsAt: null, enforced: false } };
+  let page = await loadTelegramPage(me, clock);
+  assert.deepEqual([page.connected, page.planNotifications, page.nextDelivery?.title], [true, true, "Operating Systems"]);
+  assert.deepEqual(page.upcoming.filter(u => u.source === "day_plan").map(u => u.title), ["Operating Systems", "DBMS"]);
+  // Snoozed on the page → the chat's occurrence moved; skipped on the page → its button says so.
+  const first = page.upcoming[0]!;
+  assert.deepEqual(await changeTelegramPage(me, { action: "snooze", id: first.id, minutes: 60 }, clock), { ok: true });
+  assert.equal((await occurrences(l)).find(o => o.id === first.id)!.dueAt.toISOString(), new Date(clock.getTime() + 3_600_000).toISOString());
+  setClock(at("20:00")); await planTick(tg);
+  await tap(l, "Skip this block");
+  page = await loadTelegramPage(me, clock);
+  assert.ok(page.recent.some(r => r.title === "DBMS" && r.label === "Skipped"));
+  // Pause from the page holds the chat's plan prompts; resume clears it.
+  assert.deepEqual(await changeTelegramPage(me, { action: "pause", scope: "all" }, clock), { ok: true });
+  page = await loadTelegramPage(me, clock);
+  assert.equal(page.pause?.scope, "all");
+  await changeTelegramPage(me, { action: "resume" }, clock);
+  assert.equal((await loadTelegramPage(me, clock)).pause, null);
+  assert.equal((await changeTelegramPage(me, { action: "snooze", id: "nope", minutes: 15 }, clock)).ok, false);
+  assert.equal((await changeTelegramPage(me, { action: "delete_everything" }, clock)).ok, false);
+});

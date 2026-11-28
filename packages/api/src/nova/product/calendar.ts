@@ -314,3 +314,13 @@ export async function skipOccurrence(profileId: string, eventId: string, day: un
   }
   return respond(profileId, eventId, now);
 }
+
+// The learner's next reminders on calendar events, for the Telegram page
+// (launch, 28 Nov): read-only, soonest first.
+export async function upcomingEventReminders(profileId: string, now: Date, take = 10): Promise<Array<{ eventId: string; title: string; remindAt: Date; repeat: string | null }>> {
+  const rows = await prisma.novaCalendarEvent.findMany({
+    where: { profileId, remindAt: { gt: now } }, orderBy: { remindAt: "asc" }, take,
+    select: { id: true, title: true, remindAt: true, repeat: true },
+  });
+  return rows.map(r => ({ eventId: r.id, title: r.title, remindAt: r.remindAt!, repeat: r.repeat }));
+}
