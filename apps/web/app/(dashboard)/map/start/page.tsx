@@ -1,8 +1,7 @@
-import type { Metadata } from 'next'
-import { FirstMap } from '@/components/nova/portable/first-map'
+import { redirect } from 'next/navigation'
 
-export const metadata: Metadata = { title: 'Your Knowledge Map starts here' }
-
+// The first-map choice lives on the map page itself now (its empty state);
+// this address stays for links already sent.
 export default function FirstMapPage() {
-  return <FirstMap />
+  redirect('/map')
 }

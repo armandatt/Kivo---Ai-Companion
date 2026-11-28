@@ -33,4 +33,4 @@ export function takeAfterSignup(): string | null {
 
 // A first-time account with no destination of its own starts here: import a
 // map, or build one with Nova.
-export const FIRST_MAP_PATH = '/map/start'
+export const FIRST_MAP_PATH = '/map'

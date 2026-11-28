@@ -11,6 +11,8 @@ import { PageAction, PageFrame, PageHeader, PageLoading, PageNotice, RetryButton
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { scopeState } from '@/components/nova/knowledge-map/scope-switch'
+import { mapPageState } from '@/components/nova/knowledge-map/map-page-state'
+import { FirstMapChoice } from '@/components/nova/portable/first-map'
 
 const TITLE = 'Knowledge Map'
 const DESCRIPTION = 'A workspace as you arranged it: its subjects, topics inside topics, tasks and their steps, notes and saved pages, joined the way they are filed and linked. Nothing here is guessed.'
@@ -81,14 +83,18 @@ export default function KnowledgeMapPage() {
     window.history.replaceState(null, '', url.toString())
   }
 
-  if (loading) {
+  // Loading, error, empty or a map: decided from this load's answer only
+  // (map-page-state.ts), so the first-map choice is here on every visit until
+  // a map exists, whatever was clicked or visited before.
+  const state = mapPageState(view, loading)
+  if (state === 'loading') {
     return (
       <PageLoading label="Loading your map" width="wide">
         <div aria-hidden className="h-[28rem] animate-pulse rounded-[1.5rem] bg-white/3" />
       </PageLoading>
     )
   }
-  if (!view) {
+  if (state === 'error' || !view) {
     return (
       <Frame>
         <PageNotice tone="error" title="Couldn't load your map" action={<RetryButton onRetry={() => void refresh()} busy={refreshing} />}>
@@ -97,31 +103,25 @@ export default function KnowledgeMapPage() {
       </Frame>
     )
   }
-  if (view.status !== 'ready') {
+  if (state === 'empty') {
     return (
-      <Frame>
-        <PageNotice title="There is nothing to map yet" action={<PageAction href="/home">Set up on Today</PageAction>}>
-          The map is drawn from your subjects and topics. Tell Nova what you are studying and it appears here.
-        </PageNotice>
+      <Frame actions>
+        <FirstMapChoice />
       </Frame>
     )
   }
-  if (view.nodes.length === 0) {
-    // An empty map never strands anyone: other maps stay one click away, and
-    // what was deleted is in Recently deleted (in the header).
+  if (view.status !== 'ready') return null
+  if (state === 'scope-empty') {
+    // One map chosen and empty, others exist: the way back to them.
     const others = (view.workspaces ?? []).filter(w => w.id !== view.workspaceId)
     return (
       <Frame actions>
-        <PageNotice title={view.workspaceId ? 'This map is empty' : 'Your map is empty'}
-          // Nothing at all yet: the first-map choice (import one, or build with Nova).
-          action={view.workspaceId || others.length > 0 ? <PageAction href="/settings/study">Add subjects and topics</PageAction> : <PageAction href="/map/start">Start your Knowledge Map</PageAction>}>
-          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under. Got a <code>.kivo</code> file from your batch? <Link href="/map/import" className="text-keppel-300 underline" data-empty-import>Import it</Link>. Deleted something by mistake? Open Recently deleted above.
-          {(view.workspaceId || others.length > 0) && (
-            <span className="mt-4 flex flex-wrap gap-2" data-empty-switch>
-              {view.workspaceId && <button type="button" onClick={() => choose('all')} className={cn(BUTTON_QUIET, 'h-9')}>Show everything you have</button>}
-              {others.slice(0, 4).map(w => <button key={w.id} type="button" onClick={() => choose(w.id)} className={cn(BUTTON_QUIET, 'h-9')}>{w.title}</button>)}
-            </span>
-          )}
+        <PageNotice title="This map is empty" action={<PageAction href="/settings/study">Add subjects and topics</PageAction>}>
+          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here. Deleted something by mistake? Open Recently deleted above.
+          <span className="mt-4 flex flex-wrap gap-2" data-empty-switch>
+            <button type="button" onClick={() => choose('all')} className={cn(BUTTON_QUIET, 'h-9')}>Show everything you have</button>
+            {others.slice(0, 4).map(w => <button key={w.id} type="button" onClick={() => choose(w.id)} className={cn(BUTTON_QUIET, 'h-9')}>{w.title}</button>)}
+          </span>
         </PageNotice>
       </Frame>
     )
