@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { after, NextResponse } from "next/server"
 //@ts-ignore
 import { listImports, startImport } from "@repo/api/portable/import"
 import { noteFail, requireNoteLearner } from "../../../../../lib/nova/note-access"
@@ -41,7 +41,15 @@ export async function POST(req: Request) {
     const slot = await portableSlot("import", access.platformChatId)
     if (slot.refused) return slot.refused
     const copy = new URL(req.url).searchParams.get("copy") === "1"
-    const r = await startImport(access.profileId, upload.bytes, { admit: importStorage(access), copy }).finally(slot.release)
+    // The work runs after the response (P0, 28 Nov): a large map took ~50 s,
+    // and its result was only ever carried back by this one request. The page
+    // follows the job with GET /api/nova/portable/import/:id instead. The slot
+    // is held until the work ends.
+    let background = false
+    const r = await startImport(access.profileId, upload.bytes, {
+      admit: importStorage(access), copy,
+      background: (work: () => Promise<unknown>) => { background = true; after(async () => { try { await work() } finally { await slot.release() } }) },
+    }).finally(() => { if (!background) void slot.release() })
     const status = r.ok ? (r.status === "running" ? 202 : 200) : r.reason === "storage" ? 413 : r.status === "refused" ? 422 : 500
     return NextResponse.json(r, { status, headers: { "cache-control": "no-store" } })
   } catch (err) {

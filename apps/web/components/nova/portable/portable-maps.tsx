@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { ACTIVE_IMPORT_KEY, followImport, STAGE_WORDS, type Followed } from './import-follow'
 import { ChevronDown, Download, FileUp, Loader2, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
@@ -132,22 +134,57 @@ function ImportSection() {
     } catch { setState('error'); setMessage('Could not reach Kivo. Check your connection and try again.') }
   }
 
+  const router = useRouter()
+  const [stage, setStage] = useState<string | null>(null)
+  const following = useRef<{ aborted: boolean } | null>(null)
+  const navigated = useRef(false)
+  useEffect(() => () => { if (following.current) following.current.aborted = true }, [])
+
+  // The import's end, however it came: its result shown, then the map opened,
+  // once. Ids are the server's, from this job only.
+  const land = useCallback((f: Followed) => {
+    try { window.sessionStorage.removeItem(ACTIVE_IMPORT_KEY) } catch { /* storage unavailable */ }
+    if (f.status === 'cancelled') return
+    if (f.status === 'failed') {
+      setResult({ ok: false, status: 'failed', jobId: f.jobId, reason: f.fileNeeded ? 'file_needed' : 'failed', message: f.message })
+      setState('error'); setMessage(f.message); return
+    }
+    setResult({ ok: true, status: 'complete', jobId: f.jobId, rootSubjectId: f.rootSubjectId, rootSubjectIds: f.rootSubjectIds, already: false, counts: f.counts as Counts })
+    setState('done')
+    if (!navigated.current) { navigated.current = true; router.push(importedMapHref(f.rootSubjectId, f.rootSubjectIds)) }
+  }, [router])
+
+  const follow = useCallback(async (jobId: string) => {
+    if (following.current) following.current.aborted = true
+    const signal = { aborted: false }
+    following.current = signal
+    setState('importing'); setMessage(null)
+    try { window.sessionStorage.setItem(ACTIVE_IMPORT_KEY, jobId) } catch { /* storage unavailable */ }
+    land(await followImport(jobId, { fetch: (u, i) => fetch(u, i), sleep: ms => new Promise(r => setTimeout(r, ms)), onStage: setStage, signal }))
+  }, [land])
+
+  // Back after a reload while an import ran: follow it to its end.
+  useEffect(() => {
+    let id: string | null = null
+    try { id = window.sessionStorage.getItem(ACTIVE_IMPORT_KEY) } catch { /* storage unavailable */ }
+    if (id) void follow(id)
+  }, [follow])
+
   const run = async (copy = false) => {
     if (!file) return
-    setState('importing'); setMessage(null)
+    setState('importing'); setMessage(null); setStage(null)
     try {
-      let res = await send(`/api/nova/portable/import${copy ? '?copy=1' : ''}`, file)
-      let body = await res.json() as ImportResult
-      // Another tab is running the same import: wait for it.
-      for (let i = 0; i < 20 && body.ok && body.status === 'running'; i++) {
-        await new Promise(r => setTimeout(r, 3000))
-        res = await fetch(`/api/nova/portable/import/${body.jobId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-        body = await res.json() as ImportResult
-      }
-      setResult(body)
-      setState(body.ok && body.status === 'complete' ? 'done' : 'error')
-      if (!body.ok) setMessage(body.message)
-    } catch { setState('error'); setMessage('The connection dropped. Nothing is lost: import the same file again and it continues where it stopped.') }
+      const res = await send(`/api/nova/portable/import${copy ? '?copy=1' : ''}`, file)
+      const body = await res.json() as ImportResult
+      if (body.ok && body.status === 'complete') { land({ status: 'complete', jobId: body.jobId, rootSubjectId: body.rootSubjectId, rootSubjectIds: body.rootSubjectIds ?? [body.rootSubjectId], counts: body.counts }); if (body.already) setResult(body); return }
+      if (body.ok && body.status === 'running') { await follow(body.jobId); return }
+      setResult(body); setState('error'); setMessage(body.message)
+    } catch {
+      // The upload's answer was lost: an import it started is still found by its job.
+      const id = (() => { try { return window.sessionStorage.getItem(ACTIVE_IMPORT_KEY) } catch { return null } })()
+      if (id) { await follow(id); return }
+      setState('error'); setMessage('The connection dropped. Nothing is lost: import the same file again and it continues where it stopped.')
+    }
   }
 
   const retry = async () => {
@@ -158,8 +195,9 @@ function ImportSection() {
     try {
       const res = await fetch(`/api/nova/portable/import/${jobId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       const body = await res.json() as ImportResult
-      setResult(body); setState(body.ok && body.status === 'complete' ? 'done' : 'error')
-      if (!body.ok) setMessage(body.message)
+      if (body.ok && body.status === 'complete') { land({ status: 'complete', jobId: body.jobId, rootSubjectId: body.rootSubjectId, rootSubjectIds: body.rootSubjectIds ?? [body.rootSubjectId], counts: body.counts }); return }
+      if (body.ok && body.status === 'running') { await follow(body.jobId); return }
+      setResult(body); setState('error'); setMessage(body.message)
     } catch { setState('error'); setMessage('Could not reach Kivo. Try again.') }
   }
 
@@ -175,6 +213,7 @@ function ImportSection() {
         {file && <span className="text-xs text-foreground/55">{file.name} · {(file.size / 1024).toLocaleString(undefined, { maximumFractionDigits: 0 })} KB</span>}
       </div>
 
+      {state === 'importing' && !preview && <p role="status" className="mt-4 flex items-center gap-2 text-sm text-foreground/70" data-import-following><Loader2 className="size-4 animate-spin" /> {(stage && STAGE_WORDS[stage]) ?? 'Finishing your import…'}</p>}
       {state === 'checking' && <p role="status" className="mt-4 flex items-center gap-2 text-sm text-foreground/70"><Loader2 className="size-4 animate-spin" /> Looking inside the file…</p>}
       {message && <p role="alert" className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/8 px-3 py-2 text-sm text-foreground/85">{message}{wrongKind && <> <Link href="/notes/import" className="font-medium text-keppel-300 underline" data-open-note-import>Import it as a note</Link></>}</p>}
 
@@ -208,14 +247,14 @@ function ImportSection() {
             ? <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground/75">You’ve already added this map. <Link className="text-keppel-300 underline" href={importedMapHref(preview.job.rootSubjectId)}>Open it</Link>
                 <button type="button" onClick={() => void run(true)} disabled={state === 'importing'} className="text-foreground/60 underline hover:text-foreground" data-import-copy>Add another copy</button></p>
             : <button type="button" onClick={() => void (preview.job ? retry() : run())} disabled={state === 'importing'} className={BUTTON_PRIMARY}>
-                {state === 'importing' ? <><Loader2 className="size-4 animate-spin" /> Adding to your Kivo…</> : preview.job ? 'Finish adding it' : 'Add to my Kivo'}
+                {state === 'importing' ? <><Loader2 className="size-4 animate-spin" /> {(stage && STAGE_WORDS[stage]) ?? 'Adding to your Kivo…'}</> : preview.job ? 'Finish adding it' : 'Add to my Kivo'}
               </button>}
         </div>
       )}
 
       {state === 'done' && result?.ok && result.status === 'complete' && (
         <div role="status" className="mt-5 rounded-xl border border-keppel-400/30 bg-keppel-400/8 px-4 py-3 text-sm text-foreground/85">
-          <p className="font-medium text-foreground">{result.already ? 'This map is already in your Kivo.' : 'Added to your Kivo 🎉'}</p>
+          <p className="font-medium text-foreground">{result.already ? 'This map is already in your Kivo.' : 'Added to your Kivo. Opening it…'}</p>
           <p className="mt-1">{[plural(result.counts.subjects, 'subject'), plural(result.counts.topics, 'topic'), plural(result.counts.notes, 'note'),
             result.counts.images ? plural(result.counts.images, 'image') : null, result.counts.files ? plural(result.counts.files, 'file') : null,
             result.counts.links ? `${plural(result.counts.links, 'saved page')}` : null, result.counts.tasks ? plural(result.counts.tasks, 'task') : null].filter(Boolean).join(', ')}. It’s your copy now, so change anything you like.</p>
