@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { isValidSignupEmail, normalizeEmail, passwordProblem } from '@repo/api/auth/email-rules'
 import { LEGAL_REQUIRED_MESSAGE, PRIVACY_VERSION, TERMS_VERSION, consentToken } from '@repo/api/auth/legal'
+import { rememberAfterSignup } from '@/lib/auth/after-signup'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp'
@@ -64,6 +65,9 @@ export default function SignupPage() {
   const [resendIn, setResendIn] = useState(0)
   const [agreed, setAgreed] = useState(false)
   const [consentMissing, setConsentMissing] = useState(false)
+  // Arrived wanting a page (a .kivo to import): go there once onboarding is done.
+  useEffect(() => { rememberAfterSignup(new URLSearchParams(window.location.search).get('from')) }, [])
+
   // Back from Google without an agreement (a new account needs one).
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('error') === 'google_consent') setConsentMissing(true)

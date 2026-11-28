@@ -112,7 +112,9 @@ export default function KnowledgeMapPage() {
     const others = (view.workspaces ?? []).filter(w => w.id !== view.workspaceId)
     return (
       <Frame actions>
-        <PageNotice title={view.workspaceId ? 'This map is empty' : 'Your map is empty'} action={<PageAction href="/settings/study">Add subjects and topics</PageAction>}>
+        <PageNotice title={view.workspaceId ? 'This map is empty' : 'Your map is empty'}
+          // Nothing at all yet: the first-map choice (import one, or build with Nova).
+          action={view.workspaceId || others.length > 0 ? <PageAction href="/settings/study">Add subjects and topics</PageAction> : <PageAction href="/map/start">Start your Knowledge Map</PageAction>}>
           Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under. Got a <code>.kivo</code> file from your batch? <Link href="/map/import" className="text-keppel-300 underline" data-empty-import>Import it</Link>. Deleted something by mistake? Open Recently deleted above.
           {(view.workspaceId || others.length > 0) && (
             <span className="mt-4 flex flex-wrap gap-2" data-empty-switch>

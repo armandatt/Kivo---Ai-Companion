@@ -1,5 +1,6 @@
 'use client';
 
+import { FIRST_MAP_PATH, takeAfterSignup } from '@/lib/auth/after-signup';
 import { Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Check, Loader2, Send } from 'lucide-react';
@@ -317,7 +318,7 @@ function OnboardingFlowContent() {
           )}
 
           {done ? (
-            <Finished done={done} onEnter={() => router.push(done.alreadyComplete ? '/home' : '/build')} headingRef={headingRef} />
+            <Finished done={done} onEnter={() => router.push(done.alreadyComplete ? '/home' : (takeAfterSignup() ?? FIRST_MAP_PATH))} headingRef={headingRef} />
           ) : (
             <form onSubmit={next} className="flex flex-1 flex-col pt-10 sm:pt-14" aria-busy={!restored} data-step={step}>
               <div ref={headingRef} tabIndex={-1} key={step} className="kivo-step focus:outline-none">
