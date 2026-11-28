@@ -32,6 +32,7 @@
 // The text is written by code (calendar-rules.ts, reminderText). No model.
 
 import { prisma } from "@repo/db/client";
+import { sendBlockedBy } from "../telegram/telegram-flags";
 import { dayKey } from "../engines/learner-calendar";
 import { createTelegramClient } from "../telegram/telegram-client";
 import { markUndeliverable } from "../telegram/channel-store";
@@ -124,8 +125,9 @@ export async function runEventReminders(now = new Date(), deps: { client?: Teleg
   const count = (outcome: string) => { outcomes[outcome] = (outcomes[outcome] ?? 0) + 1; };
 
   // The same operational switch that stops Nova messaging first.
-  if (process.env.NOVA_PROACTIVE_DISABLED === "true") {
-    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_reminders", tick: "disabled", reason: "NOVA_PROACTIVE_DISABLED" }));
+  const blocked = sendBlockedBy("personal");
+  if (blocked) {
+    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_reminders", tick: "disabled", reason: blocked }));
     return { checked: 0, sent: 0, errors: 0, outcomes };
   }
   const client = deps.client ?? createTelegramClient();

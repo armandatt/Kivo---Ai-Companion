@@ -18,6 +18,7 @@
 // window as before. Every learner the tick looks at ends in exactly one
 // outcome, and the tick logs the count of each.
 
+import { sendBlockedBy } from "../telegram/telegram-flags";
 import { preparePlan, loadPreparedPlan } from "../product/prepared-plan";
 import { publicAppUrl } from "../../auth/auth-deps";
 import { prisma } from "@repo/db/client";
@@ -119,8 +120,9 @@ export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps
 
   // Operational switch: stops Nova messaging first without a deploy. Replies
   // to learners, commands and buttons are unaffected.
-  if (process.env.NOVA_PROACTIVE_DISABLED === "true") {
-    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", tick: "disabled", reason: "NOVA_PROACTIVE_DISABLED" }));
+  const blocked = sendBlockedBy("nudge");
+  if (blocked) {
+    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", tick: "disabled", reason: blocked }));
     return { ok: true, sent: 0, checked: 0, errors: 0, outcomes: {}, outlooks: [], abandoned, consolidationRetried };
   }
 
