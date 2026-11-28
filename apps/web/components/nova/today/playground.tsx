@@ -58,77 +58,80 @@ const EXAMPLE = [
   { title: 'Light revision before bed', meta: 'Something you studied last week · 15 min', hue: 293 },
 ]
 
-// The empty studio (bug batch 28 Nov, item 12): two ways in, the learner's
-// choice. Plan with Nova talks it through (Nova asks first); Propose a plan
-// has Nova build one at once from their board and map. When the record holds
-// enough, Nova's own suggestion is already shown, with why, to take as it is.
-function Empty({ onStart, onPropose, starters, thinking, draft, onTakeDraft, busy, ready }: {
+// Lines that rotate under the studio's picture: what Nova's draft rests on
+// when there is one (its own reasons), else what the two buttons do. Text
+// only; one line at a time; still under reduced motion.
+function RotatingLine({ lines }: { lines: string[] }) {
+  const [n, setN] = useState(0)
+  useLayoutEffect(() => {
+    if (lines.length < 2 || reduced()) return
+    const t = window.setInterval(() => setN(x => (x + 1) % lines.length), 3600)
+    return () => window.clearInterval(t)
+  }, [lines.length])
+  const line = lines[n % Math.max(1, lines.length)] ?? ''
+  return (
+    <p key={n} className="nova-rise min-h-[2.75rem] text-[13px] leading-relaxed text-foreground/60" aria-live="off">{line}</p>
+  )
+}
+
+const ABOUT_LINES = [
+  'Plan with Nova asks what matters today, then shapes the day with you.',
+  'Propose a plan builds one from your tasks, deadlines, reviews and map.',
+  'Every block fits the time you have. Nothing is added until you approve.',
+]
+
+// The empty studio (bug batch 28 Nov, item 12; owner 28 Nov: two buttons and
+// nothing else to press). Plan with Nova talks it through; Propose a plan
+// opens Nova's plan (at once when it is already prepared). The right side is
+// a picture, not controls: Nova's draft drawn as drifting cards when the
+// record holds one (else an example, said to be one), with the reasons
+// rotating beneath.
+function Empty({ onStart, onPropose, thinking, draft, ready }: {
   onStart: (text: string) => void; onPropose: () => void; starters: string[]; thinking: boolean
   draft: NovaDayView['draft']; onTakeDraft: () => void; busy: boolean; ready: string | null
 }) {
-  const shown = draft && draft.items.length ? draft : null
+  const shown = draft && draft.items.length ? draft.items.filter(i => i.status !== 'later').slice(0, 4) : null
+  const cards = shown
+    ? shown.map((it, i) => ({ key: it.id, title: it.title, meta: [it.subjectName, it.minutes ? `${it.minutes} min` : null].filter(Boolean).join(' · '), hue: [237, 162, 293, 30][i % 4]! }))
+    : EXAMPLE.map(e => ({ key: e.title, ...e }))
+  const lines = shown && draft!.reasons.length ? draft!.reasons.flatMap(r => r.split('. ').map(x => x.trim()).filter(Boolean).map(x => (x.endsWith('.') ? x : `${x}.`))) : ABOUT_LINES
   return (
     <div className="grid gap-10 px-6 py-12 sm:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] lg:items-center lg:py-16" data-playground-empty>
       <div className="nova-rise max-w-md">
         <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-nova-ink"><Sparkles aria-hidden className="size-3.5" /> Today’s planning studio</p>
         <h2 className="mt-4 text-[2rem] font-semibold leading-[1.1] tracking-[-0.03em] text-foreground sm:text-[2.5rem]">Let’s design your day.</h2>
-        <p className="mt-4 text-[15px] leading-relaxed text-foreground/70">Talk it through with Nova, or let Nova propose a plan from your tasks, deadlines, reviews and map. Nothing changes until you approve it.</p>
+        <p className="mt-4 text-[15px] leading-relaxed text-foreground/70">Talk it through with Nova, or let Nova propose a plan. Nothing changes until you approve it.</p>
         <div className="mt-7 grid gap-2 sm:grid-cols-2" data-plan-modes>
           <button type="button" disabled={thinking} onClick={() => onStart('Plan my day with me')}
             className="flex flex-col items-start gap-0.5 rounded-xl bg-action px-4 py-3 text-left text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-colors hover:bg-action-hover disabled:opacity-50" data-plan-with-nova>
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><MessageSquareText aria-hidden className="size-4" /> Plan with Nova</span>
-            <span className="text-xs opacity-80">A few quick questions, then a plan</span>
+            <span className="text-xs opacity-80">Talk it through</span>
           </button>
           <button type="button" disabled={thinking} onClick={onPropose}
-            className="relative flex flex-col items-start gap-0.5 rounded-xl border border-nova/40 bg-nova/[0.08] px-4 py-3 text-left text-foreground transition-colors hover:bg-nova/15 disabled:opacity-50" data-propose-plan>
+            className="flex flex-col items-start gap-0.5 rounded-xl border border-nova/40 bg-nova/[0.08] px-4 py-3 text-left text-foreground transition-colors hover:bg-nova/15 disabled:opacity-50" data-propose-plan>
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Sparkles aria-hidden className="size-4 text-nova-ink" /> Propose a plan</span>
-            <span className="text-xs text-foreground/60">{ready ? 'Already prepared, opens at once' : 'Nova drafts it now from your record'}</span>
-            {ready && <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-nova/15 px-2 py-0.5 text-[10px] font-semibold text-nova-ink" data-plan-ready><span aria-hidden className="studio-breathe size-1.5 rounded-full bg-current" /> Ready · {ready}</span>}
+            {ready
+              ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink" data-plan-ready><span aria-hidden className="studio-breathe size-1.5 rounded-full bg-current" /> Ready · {ready}</span>
+              : <span className="text-xs text-foreground/60">From your record</span>}
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {starters.slice(1).map(s => (
-            <button key={s} type="button" disabled={thinking} onClick={() => onStart(s)}
-              className="rounded-full border border-white/12 px-3 py-1 text-xs text-foreground/75 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-50" data-playground-starter>{s}</button>
-          ))}
-        </div>
       </div>
-      {shown ? (
-        <div className="relative mx-auto w-full max-w-sm" data-nova-suggests>
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-nova-ink">Nova suggests · from your record</p>
-          <div className="space-y-2">
-            {shown.items.filter(i => i.status !== 'later').slice(0, 6).map((it, i) => (
-              <div key={it.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-background/50 px-4 py-2.5">
-                <span className="grid size-6 shrink-0 place-items-center rounded-full border border-nova/40 text-[11px] font-semibold text-nova-ink">{i + 1}</span>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground/90">{it.title}</p>
-                  <p className="truncate text-[11px] text-foreground/50">{[it.subjectName, it.minutes ? `${it.minutes} min` : null, it.kind === 'task' ? 'task' : 'topic'].filter(Boolean).join(' · ')}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          {shown.reasons.length > 0 && <p className="mt-3 text-xs leading-relaxed text-foreground/55">{shown.reasons.join(' ')}</p>}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={busy || thinking} onClick={onTakeDraft} className="inline-flex h-9 items-center rounded-lg bg-action px-3 text-sm font-semibold text-action-foreground hover:bg-action-hover disabled:opacity-50" data-take-draft>Use this plan</button>
-            <button type="button" disabled={thinking} onClick={() => onStart('Change Nova’s suggested plan with me')} className="inline-flex h-9 items-center rounded-lg border border-white/12 px-3 text-sm text-foreground/80 hover:bg-white/5" data-change-draft>Change it with Nova</button>
-          </div>
-        </div>
-      ) : (
-      <div aria-hidden className="relative mx-auto w-full max-w-sm" data-playground-example>
-        <p className="mb-3 text-center text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground/40">Example · not your plan</p>
-        <div className="space-y-2.5">
-          {EXAMPLE.map((e, i) => (
-            <div key={e.title} className="studio-drift subject-tone flex items-center gap-3 rounded-2xl border border-white/8 bg-background/35 px-4 py-3 opacity-80 backdrop-blur-sm" style={{ ['--sh' as string]: e.hue, ['--i' as string]: i }}>
+      <div aria-hidden className="relative mx-auto w-full max-w-sm" data-studio-picture>
+        <div className="pointer-events-none absolute -inset-8 rounded-[2rem] bg-[radial-gradient(closest-side,rgb(var(--nova-rgb,94_200_180)/0.10),transparent)]" />
+        <p className="relative mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground/45">{shown ? 'Nova’s draft · from your record' : 'Example · not your plan'}</p>
+        <div className="relative space-y-2.5">
+          {cards.map((c, i) => (
+            <div key={c.key} className="studio-drift subject-tone flex items-center gap-3 rounded-2xl border border-white/8 bg-background/40 px-4 py-3 backdrop-blur-sm" style={{ ['--sh' as string]: c.hue, ['--i' as string]: i }}>
               <span className="grid size-7 shrink-0 place-items-center rounded-full border-2 border-[var(--sc-edge)] text-[11px] font-semibold text-[var(--sc-ink)]">{i + 1}</span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground/80">{e.title}</p>
-                <p className="truncate text-[11px] text-foreground/45">{e.meta}</p>
+                <p className="truncate text-sm font-medium text-foreground/85">{c.title}</p>
+                {c.meta && <p className="truncate text-[11px] text-foreground/45">{c.meta}</p>}
               </div>
             </div>
           ))}
         </div>
+        <div className="relative mt-4"><RotatingLine lines={lines} /></div>
       </div>
-      )}
     </div>
   )
 }
