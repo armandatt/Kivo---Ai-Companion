@@ -9,7 +9,7 @@
 import type { TelegramCommandName, TelegramEvent } from "./telegram.types";
 
 const COMMANDS: readonly TelegramCommandName[] = [
-  "start", "today", "focus", "done", "status", "settings", "help", "week", "progress",
+  "start", "today", "focus", "done", "status", "settings", "help", "week", "progress", "remind",
   "study", "explain", "quiz", "revise",
 ];
 

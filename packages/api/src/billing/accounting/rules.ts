@@ -169,6 +169,19 @@ export function creditRateVersion(micros = creditMicros()): string {
   return `credits@v1:${micros}micros:ceil:min1`;
 }
 
+// ── Flat Nova credits for a Telegram turn (launch, 28 Nov) ──
+// One learner-requested AI turn on Telegram is one Nova credit, whatever its
+// calls cost (the reading, the wording, a Hinglish rewording all settle
+// together under the update's one interaction). The provider cost is still
+// recorded on the entry. Buttons, commands, time pickers and automatic
+// messages call no learner-paid model (first-use wording is Kivo's).
+// NOVA_CREDIT_MODE=cost puts these back on measured cost.
+export const FLAT_CREDIT_FEATURES: ReadonlySet<string> = new Set(["telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding"]);
+export const FLAT_RATE_VERSION = "credits@flat:1_per_interaction";
+export function isFlatCredit(feature: string, env: Record<string, string | undefined> = process.env): boolean {
+  return env.NOVA_CREDIT_MODE !== "cost" && FLAT_CREDIT_FEATURES.has(feature);
+}
+
 export function creditsFor(costMicros: number, micros = creditMicros()): number {
   if (!Number.isFinite(costMicros) || costMicros <= 0) return 1;
   return Math.max(1, Math.ceil(costMicros / micros));
@@ -197,7 +210,8 @@ export type FeatureClass = "nova" | "browser" | "kivo" | "system";
 const FEATURE_CLASS: Record<string, FeatureClass> = {
   extension_agent: "browser",
   scheduled_nova_message: "kivo",   // proactive Telegram messages Nova decides to send
-  prepared_plan: "kivo",            // the day plan Nova prepares at check-in (PR #113 B.3)
+  prepared_plan: "kivo",
+  telegram_first_use: "kivo",       // the first message in a linked chat: Nova speaks first, the learner asked nothing            // the day plan Nova prepares at check-in (PR #113 B.3)
   capture_placement: "kivo",        // auto-filing a capture (small model)
   extension_intent: "kivo",         // routing a side-panel message to Ask or the agent
   saved_page_processing: "kivo",    // background reading of a saved page

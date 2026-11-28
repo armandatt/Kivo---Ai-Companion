@@ -716,7 +716,8 @@ test("S36 declining: \"Later\" pauses nothing; typed \"not today\" quiets nudges
   const { tg, ai, send, tap } = harness();
   await send(l, "/today");
   await tap(l, "Later");
-  assert.equal(tg.last(l.chat).text, TEXT.later);
+  // Telegram launch (M3): Later asks when to bring it back; it still pauses nothing.
+  assert.equal(tg.last(l.chat).text, "When should I remind you?");
   assert.equal((await state(l)).channel?.proactivePausedUntil, null);
   ai.read("not today", { ...BASE, request: { ...REQ, action: "not_now", deferUntil: "tomorrow" } });
   await send(l, "not today");

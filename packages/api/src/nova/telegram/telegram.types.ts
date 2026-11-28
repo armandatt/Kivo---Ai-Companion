@@ -15,7 +15,7 @@ import type { StudyTime } from "../types/understanding.types";
 // ── Inbound ───────────────────────────────────────────────────────────────────
 
 export type TelegramCommandName =
-  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help" | "week" | "progress"
+  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help" | "week" | "progress" | "remind"
   // Older Nova commands. /study is /focus with a topic; the rest are deep
   // work and are handed to the web app.
   | "study" | "explain" | "quiz" | "revise";
@@ -42,6 +42,16 @@ export type TelegramEvent =
 
 export type OptionAction =
   | { type: "start"; topicName: string; subjectName: string | null; minutes: number }
+  // A block of the plan the learner applied today (NovaDayFlow), started
+  // through day-flow's own start so the session is attached to it (M1).
+  | { type: "start_item"; itemId: string; minutes: number }
+  // The other open blocks of today's applied plan, each with its Start.
+  | { type: "other_items"; skip: string[] }
+  // A finished session with no topic, filed on one of the learner's topics
+  // (the same "file" command the web uses after End, PR #113).
+  | { type: "file_session"; sessionId: string; subjectId: string; topicName: string }
+  // Where a topic stands, said after a session on it (PR #113 item 7).
+  | { type: "topic_status"; topicId: string; status: "in_progress" | "completed" }
   | { type: "pause" }
   | { type: "resume" }
   | { type: "ask_outcome" }
@@ -49,11 +59,27 @@ export type OptionAction =
   | { type: "today"; minutes: number | null }
   | { type: "something_else"; skip: string[] }
   | { type: "status" }
-  | { type: "later" }
+  // Later on an offer: what was offered, so "Remind me later" can bring it
+  // back (M3). A plan block by its flow id; a planner topic as "offer:<n>".
+  | { type: "later"; items?: Array<{ id: string; title: string; minutes: number | null; taskId: string | null; topicId: string | null; subjectName?: string | null }> }
   | { type: "not_today" }
   | { type: "add_exam"; title: string; subjectName: string | null; date: string }   // date: YYYY-MM-DD
   | { type: "dismiss" }
   | { type: "set_proactive"; enabled: boolean }
+  // Plan notifications, the check-in time and the pauses (M2, M3, M9).
+  | { type: "set_plan_notifications"; enabled: boolean }
+  | { type: "set_checkin"; time: string | null }
+  | { type: "pick_checkin" }
+  // Personal reminders by buttons (M7): a calendar event of the learner's
+  // own (category personal, reminded when it starts). No model, no credit.
+  | { type: "reminder_new" }
+  | { type: "reminder_when"; title: string; day: string; time: string; eventId?: string }
+  | { type: "reminder_save"; title: string; day: string; time: string; repeat: "none" | "daily" | "weekdays" | "weekly" }
+  | { type: "reminder_edit"; eventId: string; title: string }
+  | { type: "reminder_cancel"; eventId: string }
+  | { type: "pause_plan_today" }
+  | { type: "pause_all_today" }
+  | { type: "resume_sends" }
   // A change to today's plan, applied through product/plan-overrides.ts when
   // tapped: leave a topic out, add one, put one first, or undo the first two.
   // The topic is named by its id; the server checks it is the learner's own.
@@ -82,7 +108,8 @@ export type PromptKind =
   | "pick_minutes"     // a range of time, asked back as a choice
   | "clarify"
   | "settings"
-  | "change_plan";     // what to change about today, or a change to confirm
+  | "change_plan"      // what to change about today, or a change to confirm
+  | "reminder_title";  // the next message is a reminder's title, taken as typed
 
 // How long a prompt can still be answered. After that a tap is told it is
 // closed and a typed "yes" is no longer read against it.
@@ -97,6 +124,7 @@ export const PROMPT_TTL_MINUTES: Record<PromptKind, number> = {
   clarify:         15,
   settings:        30,
   change_plan:     30,
+  reminder_title:  10,
 };
 
 export interface PromptSpec {
@@ -111,6 +139,9 @@ export interface TelegramReply {
   prompt?: PromptSpec;
   // A plain link button ("Open Nova"). No callback, no state.
   link?:   { label: string; path: string };
+  // Buttons that are not a prompt: a reminder's own (r:<occurrence>:<code>),
+  // each re-checked against the occurrence and the plan when tapped.
+  rows?:   InlineButton[][];
 }
 
 export interface InlineButton {

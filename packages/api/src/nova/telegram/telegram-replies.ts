@@ -8,6 +8,7 @@
 
 import type { NovaSessionView, NovaTodayReady, TodayAction, NovaSessionOutcome, PlanEmptyReason } from "../product/today.types";
 import type { NovaPlannerReady } from "../product/planner.types";
+import type { FlowItemView, NovaDayView } from "../product/day-flow.types";
 import type { NovaProgressReady } from "../product/progress.types";
 import type { NovaTaskItem } from "../product/tasks.types";
 import type { PromptOption, PromptSpec, TelegramReply, OptionAction } from "./telegram.types";
@@ -81,11 +82,16 @@ export function recommendationReply(
           action: { type: "start" as const, topicName: action.topicName, subjectName: action.subjectName, minutes },
         })),
         ...(extra.kind === "nudge"
-          ? [{ label: "Later", action: { type: "later" as const } }, { label: "Not today", action: { type: "not_today" as const } }]
-          : [{ label: "Something else", action: { type: "something_else" as const, skip } }, { label: "Later", action: { type: "later" as const } }]),
+          ? [{ label: "Later", action: laterOf(action) }, { label: "Not today", action: { type: "not_today" as const } }]
+          : [{ label: "Something else", action: { type: "something_else" as const, skip } }, { label: "Later", action: laterOf(action) }]),
       ]),
     },
   };
+}
+
+// Later on a planner offer: the topic, to bring back when they choose (M3).
+function laterOf(action: TodayAction): OptionAction {
+  return { type: "later", items: [{ id: "offer:0", title: action.topicName, minutes: action.durationMinutes, taskId: null, topicId: null, subjectName: action.subjectName }] };
 }
 
 export function sessionReply(session: NovaSessionView, lead?: string): TelegramReply {
@@ -193,28 +199,60 @@ export function endedReply(ended: { topicName: string | null; minutes: number; o
   return { text: `Logged: ${ended.minutes} min${what}.${how}${note}`, link: { label: "Open Nova", path: "/knowledge" } };
 }
 
-export function settingsReply(state: { proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null; checkinTime?: string | null }, now: Date): TelegramReply {
+export interface SettingsState {
+  proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null; checkinTime?: string | null;
+  planNotifications?: boolean; planPausedUntil?: Date | null; allPausedUntil?: Date | null;
+  // TELEGRAM_PLAN_NOTIFICATIONS is on: the setting exists to show.
+  planFeature?: boolean;
+  // TELEGRAM_PERSONAL_REMINDERS is on: Add reminder is offered.
+  remindersFeature?: boolean;
+}
+
+export function settingsReply(state: SettingsState, now: Date): TelegramReply {
   const paused = state.pausedUntil !== null && state.pausedUntil > now;
+  const allPaused = !!state.allPausedUntil && state.allPausedUntil > now;
+  const planPaused = !!state.planPausedUntil && state.planPausedUntil > now;
   const lines = [
+    ...(allPaused ? ["Paused: everything until midnight. Your plan and buttons still work when you ask."] : planPaused ? ["Paused: plan prompts and nudges until midnight. Your own reminders still come."] : []),
+    ...(state.planFeature ? [state.planNotifications
+      ? "Plan notifications: on. When you've applied a plan on Kivo, I message at each block's time, and at your check-in for blocks without one."
+      : "Plan notifications: off. Turn them on and I'll message when a block of your applied plan is due."] : []),
     `Nudges: ${state.proactiveEnabled ? (paused ? "paused for today" : "on") : "off"}. At most two a day, never between 11pm and 7am unless that is the time you chose.`,
     // What the time they picked actually does, and where it is changed.
     state.checkinTime
-      ? `Daily check-in: around ${state.checkinTime}, your time, on days you haven't studied yet. Change it in Settings on the web.`
-      : "Daily check-in: no time chosen, so I nudge around your usual study time. Pick a time in Settings on the web.",
+      ? `Daily check-in: around ${state.checkinTime}, your time, on days you haven't studied yet. Change it in Settings on the web. Or tap Check-in time below.`
+      : "Daily check-in: no time chosen, so I nudge around your usual study time. Pick a time in Settings on the web. Or tap Check-in time below.",
     state.timezone
       ? `Timezone: ${state.timezone}.`
       : "Timezone: not set, so I won't message first. Open Nova on the web once and your device tells me.",
   ];
+  const items: Array<{ label: string; action: OptionAction }> = [];
+  if (state.planFeature) items.push(state.planNotifications
+    ? { label: "Plan notifications off", action: { type: "set_plan_notifications", enabled: false } }
+    : { label: "Plan notifications on", action: { type: "set_plan_notifications", enabled: true } });
+  items.push({ label: "Check-in time", action: { type: "pick_checkin" } });
+  if (state.remindersFeature) items.push({ label: "Add reminder", action: { type: "reminder_new" } });
+  if (allPaused || planPaused || paused) items.push({ label: "Resume", action: { type: "resume_sends" } });
+  else {
+    items.push({ label: "Pause plan nudges today", action: { type: "pause_plan_today" } });
+    items.push({ label: "Pause all today", action: { type: "pause_all_today" } });
+  }
+  items.push(state.proactiveEnabled
+    ? { label: "Turn nudges off", action: { type: "set_proactive", enabled: false } }
+    : { label: "Turn nudges on", action: { type: "set_proactive", enabled: true } });
+  return { text: lines.join("\n"), prompt: { kind: "settings", options: options(items) } };
+}
+
+export const CHECKIN_CHOICES = ["07:00", "09:00", "13:00", "18:00", "20:00", "22:00"];
+
+// "What time should I check in?", as a choice.
+export function checkinChoiceReply(lead = "What time should I check in each day? Blocks of your plan without a set time are offered then."): TelegramReply {
   return {
-    text: lines.join("\n"),
-    prompt: {
-      kind: "settings",
-      options: options([
-        state.proactiveEnabled
-          ? { label: "Turn nudges off", action: { type: "set_proactive", enabled: false } }
-          : { label: "Turn nudges on", action: { type: "set_proactive", enabled: true } },
-      ]),
-    },
+    text: lead,
+    prompt: { kind: "settings", options: options([
+      ...CHECKIN_CHOICES.map(t => ({ label: clock12(t), action: { type: "set_checkin" as const, time: t } })),
+      { label: "No check-in", action: { type: "set_checkin" as const, time: null } },
+    ]) },
   };
 }
 
@@ -521,6 +559,14 @@ export function relatedTopicsReply(named: string, topics: Array<{ topicName: str
   };
 }
 
+// What Nova sends by itself, said in /help and in the first message (M9).
+// Plain, calm, and only what is true.
+const SENDS_EN = "What I send by myself: your plan's blocks at their times, once you turn plan notifications on in /settings; reminders you set; and at most two nudges a day, never 11pm to 7am unless you chose that time. Nothing else, and /settings pauses it all.";
+// The same for the first message, which names no command (first-use.test.ts).
+const FIRST_SENDS_EN = "What I send by myself: your plan's blocks at their times, if you turn plan notifications on; reminders you set; and at most two nudges a day, never 11pm to 7am unless you chose that time. Nothing else, and you can pause it any time in settings.";
+const FIRST_SENDS_HI = "Main khud se kya bhejta hoon: tumhare plan ke blocks unke time pe, agar tum plan notifications on karo; tumhare set kiye reminders; aur din mein zyada se zyada do nudges, raat 11 se subah 7 ke beech nahi, jab tak tumne woh time na chuna ho. Bas itna, aur settings mein kabhi bhi pause kar sakte ho.";
+const SENDS_HI = "Main khud se kya bhejta hoon: tumhare plan ke blocks unke time pe, jab tum /settings mein plan notifications on karo; tumhare set kiye reminders; aur din mein zyada se zyada do nudges, raat 11 se subah 7 ke beech nahi, jab tak tumne woh time na chuna ho. Bas itna, aur /settings se sab pause ho sakta hai.";
+
 export const TEXT = {
   help: [
     "/today: what to do now",
@@ -529,9 +575,12 @@ export const TEXT = {
     "/focus: start a session",
     "/done: end it and say how it went",
     "/status: where you stand",
-    "/settings: nudges and timezone",
+    "/settings: plan notifications, check-in time, pause or resume",
+    "/remind: set a reminder",
     "",
     "Or just tell me: how long you have, what came up, what isn't clicking.",
+    "",
+    SENDS_EN,
   ].join("\n"),
   finishSetup:     "Finish setting up with Nova first. It takes a couple of minutes.",
   webOnly:         "That one needs room to work. It lives in Nova on the web.",
@@ -563,7 +612,7 @@ export const TEXT = {
   unsupported:     "That's outside what I do here. I can show today's plan or the week, change today's plan, show your progress, explain a topic, run a session, or take note of what's come up.",
   // Asked for a reminder at a set time. There is no such thing to create, so
   // this says so and says what does exist. Never "I'll remind you".
-  reminderUnavailable:    "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.",
+  reminderUnavailable:    "I can't set a reminder from a sentence yet, so nothing has been scheduled. Send /remind and I'll set one with a few taps.",
   reminderUnavailableWeb: "I can't set a reminder for a set time yet, so nothing has been scheduled.",
   workspaceOffer:         "Let's shape that together. Open it below: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
   workspaceOfferWeb:      "Let's shape that together in Build with Nova: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
@@ -582,9 +631,12 @@ export const TEXT_HINGLISH: typeof TEXT = {
     "/focus: session start karo",
     "/done: session khatam karo aur batao kaisa gaya",
     "/status: tum kahan khade ho",
-    "/settings: nudges aur timezone",
+    "/settings: plan notifications, check-in time, pause ya resume",
+    "/remind: reminder set karo",
     "",
     "Ya seedha bata do: kitna time hai, kya beech mein aa gaya, kya samajh nahi aa raha.",
+    "",
+    SENDS_HI,
   ].join("\n"),
   finishSetup:     "Pehle Nova pe setup poora kar lo. Do minute lagenge.",
   webOnly:         "Iske liye thodi jagah chahiye. Ye Nova ke web app pe milega.",
@@ -610,7 +662,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
   nothingOnRecord: "Ye mere record mein nahi hai.",
   clarifyOpen:     "Ye samajh nahi aaya. Batao kya chahiye, ya upar wale buttons use karo.",
   unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: aaj ka ya hafte ka plan, aaj ke plan mein badlav, tumhara progress, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
-  reminderUnavailable:    "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua. Jo apne aap aata hai wo nudge hai jab kuch due ho, din mein zyada se zyada do. /settings mein dikhta hai wo on hain ya nahi.",
+  reminderUnavailable:    "Sentence se reminder abhi set nahi hota, to kuch schedule nahi hua. /remind bhejo, do-teen taps mein set ho jayega.",
   reminderUnavailableWeb: "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua.",
   workspaceOffer:         "Chalo ise saath mein shape karte hain. Neeche kholo: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",
   workspaceOfferWeb:      "Chalo ise Build with Nova mein saath mein shape karte hain: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",
@@ -651,4 +703,122 @@ export function closedSessionText(language: ReplyLanguage, saved: { minutes: num
   return hi
     ? `Session plan se aage chalta reh gaya tha, isliye maine uske ${saved.minutes} min save kar diye.${saved.counted ? "" : " 10 min se kam Progress mein count nahi hota."} Jab ready ho, naya start kar lo.`
     : `Your session was left running past its plan, so I saved it with the ${saved.minutes} min on its clock.${saved.counted ? "" : " Under 10 minutes isn't counted in Progress."} Start a new one when you're ready.`;
+}
+
+// At the month's Nova credits (M6, 28 Nov): when they come back, as the
+// learner's own date, and that the buttons keep working. No model.
+export function creditsUsedText(language: ReplyLanguage, resetsAt: string | null, timezone: string | null): string {
+  const base = textFor(language).creditsUsed;
+  const at = resetsAt ? new Date(resetsAt) : null;
+  if (!at || Number.isNaN(at.getTime())) return base;
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: timezone ?? "UTC" }).format(at);
+  return language === "english" ? `${base} They renew on ${day}.` : `${base} ${day} ko renew honge.`;
+}
+
+// ── The plan the learner applied today (M1, 28 Nov) ──────────────────────────
+// When the learner has a saved flow for today (they built it on Today, or
+// applied Nova's), Telegram shows that plan and starts its blocks: the same
+// list, the same times, the same session attached to the block.
+
+// "18:00" → "6:00 PM".
+export function clock12(at: string): string {
+  const [h, m] = at.split(":").map(Number) as [number, number];
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+
+// What a Start on a block offers: today's time left on it, else its time, else
+// the standard block. Inside what day-flow's start takes (5 to 240).
+export function itemStartMinutes(i: Pick<FlowItemView, "minutes"> & { remainingMinutes?: number | null }): number {
+  const m = i.remainingMinutes ?? i.minutes ?? 25;
+  return Math.max(5, Math.min(240, Math.round(m)));
+}
+
+export const openFlowItems = (flow: NovaDayView) => flow.items.filter(i => i.status === "planned");
+// A saved flow with something still to do or under way today.
+export const flowHasWork = (flow: NovaDayView) => flow.saved && flow.items.some(i => i.status === "planned" || i.status === "active");
+
+function itemLine(i: FlowItemView): string {
+  const when = i.at ? `${clock12(i.at)} · ` : "";
+  const time = i.minutes ? `, ${i.minutes} min` : "";
+  return `${i.status === "done" ? "Done: " : "- "}${when}${i.title}${time}`;
+}
+
+export function flowReply(flow: NovaDayView, skip: string[] = []): TelegramReply {
+  const shown = flow.items.filter(i => i.status !== "later");
+  const later = flow.items.filter(i => i.status === "later");
+  const lines = ["Your plan for today:", ...shown.map(itemLine)];
+  if (later.length > 0) lines.push(`If there's time: ${later.map(i => i.title).join(", ")}.`);
+  const open = openFlowItems(flow);
+  const next = open.find(i => !skip.includes(i.id)) ?? open[0];
+  if (!next) return { text: `${lines.join("\n")}\n\nEverything planned for today is done or under way.`, link: { label: "Open Today", path: "/home" } };
+  const minutes = itemStartMinutes(next);
+  const more = open.filter(i => i.id !== next.id);
+  return {
+    text: `${lines.join("\n")}\n\nNext: ${next.title}, ${minutes} min.`,
+    prompt: {
+      kind: "start",
+      options: options([
+        { label: `Start ${minutes} min`, action: { type: "start_item", itemId: next.id, minutes } },
+        ...(more.length > 0 ? [{ label: "Something else", action: { type: "other_items" as const, skip: [next.id] } }] : []),
+        { label: "Later", action: { type: "later" as const, items: [{ id: next.id, title: next.title, minutes: next.minutes, taskId: next.taskId, topicId: next.topicId }] } },
+      ]),
+    },
+  };
+}
+
+// The other open blocks, each with its own Start.
+export function otherItemsReply(flow: NovaDayView, skip: string[]): TelegramReply {
+  const rest = openFlowItems(flow).filter(i => !skip.includes(i.id)).slice(0, 5);
+  if (rest.length === 0) return flowReply(flow);
+  return {
+    text: "Which one?",
+    prompt: {
+      kind: "start",
+      options: options([
+        ...rest.map(i => ({ label: `${i.title.slice(0, 26)} · ${itemStartMinutes(i)} min`, action: { type: "start_item" as const, itemId: i.id, minutes: itemStartMinutes(i) } })),
+        { label: "Later", action: { type: "later" as const } },
+      ]),
+    },
+  };
+}
+
+// After a session ends: file one with no topic on a topic, or say where the
+// topic stands (PR #113's filing and status, on Telegram). Optional: the
+// session is already saved.
+export function afterEndReply(base: TelegramReply, follow: { file?: { sessionId: string; topics: Array<{ subjectId: string; name: string }> }; status?: { topicId: string; name: string } }): TelegramReply {
+  if (follow.file && follow.file.topics.length > 0) {
+    return {
+      ...base, text: `${base.text}\nFile it on a topic so it counts there?`,
+      prompt: { kind: "session_outcome", options: options([
+        ...follow.file.topics.slice(0, 4).map(t => ({ label: t.name.slice(0, 32), action: { type: "file_session" as const, sessionId: follow.file!.sessionId, subjectId: t.subjectId, topicName: t.name } })),
+        { label: "Leave it", action: { type: "dismiss" as const } },
+      ]) },
+    };
+  }
+  if (follow.status) {
+    return {
+      ...base, text: `${base.text}\nWhere does ${follow.status.name} stand?`,
+      prompt: { kind: "session_outcome", options: options([
+        { label: "In progress", action: { type: "topic_status", topicId: follow.status.topicId, status: "in_progress" } },
+        { label: "Completed", action: { type: "topic_status", topicId: follow.status.topicId, status: "completed" } },
+        { label: "Skip", action: { type: "dismiss" } },
+      ]) },
+    };
+  }
+  return base;
+}
+
+// The first message in a linked chat, after Nova's own words: what it will
+// and won't send, the timezone it will use, and plan notifications offered
+// (M9). Fixed lines, no model.
+export function firstUseExtras(language: ReplyLanguage, timezone: string | null, offerPlan: boolean): { text: string; option: { label: string; action: OptionAction } | null } {
+  const hi = language !== "english";
+  const zone = timezone
+    ? (hi ? `Timezone: ${timezone}. Galat hai to is device pe Kivo ek baar khol lo.` : `I'll use your timezone, ${timezone}. If that's wrong, open Kivo once on this device.`)
+    : (hi ? "Timezone abhi set nahi hai, isliye main pehle message nahi karunga. Is device pe Kivo ek baar khol lo." : "I don't have your timezone yet, so I won't message first. Open Kivo once on this device and it's set.");
+  return {
+    text: [hi ? FIRST_SENDS_HI : FIRST_SENDS_EN, zone].join("\n"),
+    option: offerPlan ? { label: "Turn on plan notifications", action: { type: "set_plan_notifications", enabled: true } } : null,
+  };
 }

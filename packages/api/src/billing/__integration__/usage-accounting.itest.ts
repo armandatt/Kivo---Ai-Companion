@@ -161,11 +161,12 @@ test("a Nova request commits its measured cost in credits", async () => {
   assert.deepEqual({ reserved: b!.reserved, committed: b!.committed, limit: b!.limit, tier: b!.tier }, { reserved: 0, committed: 6, limit: 150, tier: "free" });
 });
 
-test("Telegram: one update's reading, wording and rewording settle once, together", async () => {
+test("Telegram: one update's reading, wording and rewording settle once, as one flat credit", async () => {
   const id = await account();
   await llm.startInteraction({ feature: "rex", surface: "telegram", usageKey: key(id) }, async () => {
     await reserveForInteraction({ feature: "telegram_understanding", idempotencyKey: `telegram:chat:${STAMP}` });
-    // Each call $0.0006: alone each would round up to 1 credit; together $0.0018 → 2.
+    // Each call $0.0006, $0.0018 together: on measured cost that was 2 credits.
+    // A Telegram turn is one flat credit (launch, 28 Nov, M6); the cost stays on record.
     await llm.withUsageContext({ feature: "telegram_understanding" }, async () => llm.emitLlmCall(call(6_000, 0)));
     await llm.withUsageContext({ feature: "telegram_reply" }, async () => llm.emitLlmCall(call(6_000, 0)));
     await llm.withUsageContext({ feature: "telegram_rewording" }, async () => llm.emitLlmCall(call(6_000, 0)));
@@ -174,7 +175,8 @@ test("Telegram: one update's reading, wording and rewording settle once, togethe
   const rs = await reservationsOf(key(id));
   assert.equal(rs.length, 1);
   assert.equal(rs[0]!.state, "committed");
-  assert.equal(Number(rs[0]!.committedUnits), 2);
+  assert.equal(Number(rs[0]!.committedUnits), 1);
+  assert.equal(Number(rs[0]!.costMicros), 1_800);
   assert.equal(await prisma.usageLedger.count({ where: { accountKey: key(id), product: "nova_credits", entry: "commit" } }), 1);
 });
 

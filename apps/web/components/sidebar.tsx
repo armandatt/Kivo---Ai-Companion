@@ -22,6 +22,7 @@ import {
   UserRound,
   Sparkles,
   Target,
+  Send,
   Timer,
   TrendingUp,
   Zap,
@@ -59,7 +60,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/notes/drafts': Inbox, '/saved': Bookmark, '/assistants': Plug, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/telegram': Send, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/notes/drafts': Inbox, '/saved': Bookmark, '/assistants': Plug, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 // Docs sits with Settings at the foot of the sidebar, not among the pages.
 const NOVA_DOCS = '/guide'
 const novaNavItems = NOVA_ROUTES.filter(r => r.path !== NOVA_DOCS).map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
@@ -71,7 +72,7 @@ type NavItem = typeof navItems[number]
 // NOVA_ROUTES) is listed after the groups, so none is ever dropped.
 const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
   { label: 'Workspace', paths: ['/home', '/map', '/knowledge', '/build', '/notes', '/notes/drafts', '/saved', '/assistants'] },
-  { label: 'Study',     paths: ['/calendar', '/focus'] },
+  { label: 'Study',     paths: ['/calendar', '/telegram', '/focus'] },
   { label: 'Growth',    paths: ['/progress', '/learning-dna', '/creature'] },
 ]
 

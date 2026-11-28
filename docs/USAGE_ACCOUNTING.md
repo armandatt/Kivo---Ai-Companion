@@ -25,6 +25,7 @@ Variables are read at call time; Render needs a restart, not a deploy, after cha
 
 **Units and targets.**
 - **Nova credit:** $0.001 of measured model cost (`NOVA_CREDIT_MICROS`), rounded up, at least 1 per request that reached the model.
+- **A Telegram turn is one flat credit** (launch, 28 Nov): one message the learner typed, whose AI work succeeded, commits exactly 1 credit, whatever its reading, wording and rewording cost (`FLAT_CREDIT_FEATURES`, `isFlatCredit` in `rules.ts`; rate version `credits@flat:1_per_interaction`). The provider cost is still recorded on the entry. Failed work commits 0. Buttons, commands, time pickers, reminders and automatic messages reserve nothing; the first message in a linked chat (`telegram_first_use`) is Kivo's. `NOVA_CREDIT_MODE=cost` puts Telegram back on measured cost. At the limit Telegram says the date the credits renew.
 - **Browser task cost target:** $0.03 (`BROWSER_TASK_COST_TARGET_MICROS`). It is measured, logged (`browser_task_over_cost_target`) and reported; it never stops a task.
 
 **Changing limits without code:** `USAGE_ALLOWANCES` (JSON per tier), `USAGE_FAIR_USE` (JSON). Every ledger entry carries the version of the table that priced it.

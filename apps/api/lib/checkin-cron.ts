@@ -3,6 +3,8 @@ import { runNovaProactiveCron } from "@repo/api/nova/proactive/nova-proactive-cr
 //@ts-ignore
 import { runEventReminders } from "@repo/api/nova/proactive/event-reminders";
 //@ts-ignore
+import { runPlanReminders } from "@repo/api/nova/proactive/plan-reminders";
+//@ts-ignore
 import { purgeProcessedTelegramUpdates } from "@repo/api/services/telegramTransport.service";
 //@ts-ignore
 import { processWaitingResources } from "@repo/api/nova/product/resource-processing";
@@ -103,6 +105,19 @@ async function runTick(now: Date): Promise<CheckinCronResult> {
     }
   } catch (err) {
     console.error("[CHECKIN] calendar reminders failed:", err);
+  }
+
+  // ── Plan notifications and snoozes (Telegram launch, 28 Nov) ─────────────
+  // Also run at the due moment by the scheduler's precise timer
+  // (internal-checkin-scheduler.ts); every claim is unique, so both send once.
+  try {
+    const plan = await runPlanReminders(now, { housekeeping });
+    sent += plan.sent;
+    add("plan_reminder", plan.checked);
+    add("plan_reminder_scheduled", plan.scheduled);
+    if (plan.checked > 0 || plan.errors > 0) console.log(`[CHECKIN] Plan reminders: ${plan.sent}/${plan.checked} sent, ${plan.errors} errors`);
+  } catch (err) {
+    console.error("[CHECKIN] plan reminders failed:", err);
   }
 
   // ── Saved pages still waiting to be looked at ─────────────────────────────

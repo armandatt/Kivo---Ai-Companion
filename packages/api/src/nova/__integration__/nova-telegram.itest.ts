@@ -359,7 +359,8 @@ test("a session started on the web is the session Telegram sees, pauses and ends
   assert.equal((row!.executionReport as { outcome: string; evidenceBasis: string }).outcome, "good");
   assert.equal((row!.executionReport as { evidenceBasis: string }).evidenceBasis, "learner_outcome");
   assert.equal(await loadNovaSession(l.chat, clock), null);
-  assert.equal(tg.last().text, "Logged: 22 min on Deadlocks. Good.");
+  // Then where the topic stands (Telegram launch, M1): offered, nothing set.
+  assert.equal(tg.last().text, "Logged: 22 min on Deadlocks. Good.\nWhere does Deadlocks stand?");
 });
 
 test("Struggled on Telegram reaches mastery, its history, Learning DNA, consolidation, Knowledge and tomorrow's plan", async () => {
@@ -377,7 +378,7 @@ test("Struggled on Telegram reaches mastery, its history, Learning DNA, consolid
   const report = row!.executionReport as { outcome: string; masteryUpdates: unknown[]; actualDurationMinutes: number };
   assert.deepEqual([row!.status, report.outcome, report.actualDurationMinutes, report.masteryUpdates.length], ["completed", "struggled", 27, 1]);
   assert.deepEqual([trace.operation.name, trace.operation.ok], ["session_end", true]);
-  assert.equal(tg.last().text, "Logged: 27 min on Deadlocks. Struggled. It comes back for review tomorrow.");
+  assert.equal(tg.last().text, "Logged: 27 min on Deadlocks. Struggled. It comes back for review tomorrow.\nWhere does Deadlocks stand?");
 
   // Mastery moved through the canonical writer: a full review, interval reset.
   const after = await deadlocks(l);
@@ -881,7 +882,8 @@ test("typed \"not today\" quiets Nova until the learner's midnight, with or with
   await third.send(n, "/today");
   third.ai.read("later", { ...BASE, request: { ...REQ, action: "not_now", confidence: 1, deferUntil: "later", promptAnswer: "e" } });
   await third.send(n, "later");
-  assert.equal(third.tg.last().text, "OK. It'll keep.");
+  // Telegram launch (M3): Later asks when to bring it back; it pauses nothing.
+  assert.equal(third.tg.last().text, "When should I remind you?");
   assert.equal((await channel(n)).proactivePausedUntil, null);
 });
 
@@ -1728,7 +1730,8 @@ test("F/7: a reminder and an unsupported request say so, change nothing, and sen
 
   ai.read("remind me to study at 8 pm", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "set_reminder", promptAnswer: "e" } });
   await send(l, "remind me to study at 8 pm");
-  assert.equal(tg.last().text, "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.");
+  // Telegram launch (M7): a sentence still sets nothing; /remind does, by buttons.
+  assert.equal(tg.last().text, "I can't set a reminder from a sentence yet, so nothing has been scheduled. Send /remind and I'll set one with a few taps.");
   assert.deepEqual(callbacks(tg), []);
 
   ai.read("write my essay on the french revolution", { ...BASE, request: { ...REQ, clarity: "unsupported", action: "none" } });
@@ -1786,7 +1789,7 @@ test("an existing chat gets /week and /progress in its menu when it sends /start
   assert.equal(tg.menus.length, 0, "an ordinary command does not touch the menu");
 
   await send(l, "/help");
-  assert.deepEqual(tg.menus, [{ chatId: l.chat, commands: ["today", "week", "progress", "focus", "done", "status", "settings"] }]);
+  assert.deepEqual(tg.menus, [{ chatId: l.chat, commands: ["today", "week", "progress", "focus", "done", "status", "settings", "remind"] }]);
   assert.ok(tg.last().text.includes("/week: the next seven days"));
   await send(l, "/start");
   assert.equal(tg.menus.length, 2);

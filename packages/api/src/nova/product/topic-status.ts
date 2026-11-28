@@ -77,3 +77,23 @@ export async function topicsNamed(profileId: string, words: string): Promise<Arr
   });
   return all.filter(t => t.name.trim().replace(/\s+/g, " ").toLowerCase() === key).map(t => ({ id: t.id, name: t.name, subjectName: t.subject.name }));
 }
+
+// Where a finished session with no topic could be filed, for Telegram's
+// offer after End (28 Nov, M1): a live topic of exactly the session's words
+// first, else the learner's most recently studied topics. Offered only; the
+// learner's tap files it through the session "file" command.
+export async function filingCandidates(profileId: string, words: string | null, take = 3): Promise<Array<{ subjectId: string; name: string }>> {
+  const key = (words ?? "").trim();
+  if (key) {
+    const same = await prisma.novaTopicMastery.findMany({
+      where: { subject: { profileId }, archivedAt: null, kind: null, name: { equals: likeLiteral(key), mode: "insensitive" } },
+      select: { name: true, subjectId: true }, take,
+    });
+    if (same.length > 0) return same;
+  }
+  return prisma.novaTopicMastery.findMany({
+    where: { subject: { profileId }, archivedAt: null, kind: null },
+    orderBy: [{ lastStudiedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+    select: { name: true, subjectId: true }, take,
+  });
+}

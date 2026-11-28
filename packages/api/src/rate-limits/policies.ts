@@ -206,6 +206,9 @@ const LIST: Policy[] = [
     why: "An import writes through the map's writers in stages. One per account at once; a stopped one resumes under the same job." },
 
   // ── Ordinary writes with their own former limits ──
+  // Marked legacy so it is enforced in every mode: each one is a real
+  // Telegram message to the learner's own chat (the Telegram page's test).
+  { id: "telegram.test",     category: "write", failure: "closed", legacy: true, user: [per(3, MINUTE), per(10, HOUR)], why: "A test message sent to the learner's Telegram chat." },
   { id: "day.flow",          category: "write", failure: "open", legacy: true, user: [per(60, MINUTE)], why: "Changes to Today's flow: drags, ticks, times." },
   { id: "workspaces.create", category: "write", failure: "open", legacy: true, user: [per(10, MINUTE)], why: "A workspace made from a template writes many rows." },
   { id: "builder.jobs", category: "ai", failure: "closed", planScaled: true,

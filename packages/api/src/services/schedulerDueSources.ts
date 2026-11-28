@@ -12,23 +12,28 @@ import { upcomingEventReminderWindows } from "../nova/proactive/event-reminders"
 import { consolidationRetryTimes } from "../nova/consolidation/stores/consolidation-job-store";
 import { processingDueTimes } from "../nova/product/learning-events";
 import { openSessionsForSweep } from "../nova/persistence/nova-persistence";
+import { occurrenceWindows } from "../nova/product/reminder-occurrences";
 import type { DueSources, DueWindow } from "./schedulerIdle";
 
 // Due from `at` until a full tick deals with it.
 const open = (source: string) => (at: Date): DueWindow => ({ source, from: at.getTime(), until: null });
 
 export async function loadDueSources(now: Date): Promise<DueSources> {
-  const [calendar, consolidation, pages, sessions] = await Promise.all([
+  const [calendar, consolidation, pages, sessions, plan] = await Promise.all([
     upcomingEventReminderWindows(now),
     consolidationRetryTimes(),
     processingDueTimes(),
     openSessionsForSweep(),
+    // Plan notifications and snoozes (Telegram launch, 28 Nov): each waiting
+    // occurrence from its due moment to the end of its grace.
+    occurrenceWindows(now),
   ]);
   return {
     windows: [
       // From the reminder moment to the end of its grace (exclusive), as the
       // "come due" query selects it; retries likewise inside their window.
       ...calendar.map(w => ({ source: "calendar_reminder", from: w.from.getTime(), until: w.until.getTime() })),
+      ...plan.map(w => ({ source: "plan_reminder", from: w.from.getTime(), until: w.until.getTime() })),
       ...consolidation.map(open("consolidation_retry")),
       ...pages.map(open("saved_page")),
     ],

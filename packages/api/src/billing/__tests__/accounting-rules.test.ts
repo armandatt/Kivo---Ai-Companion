@@ -3,7 +3,7 @@
 // read-only fallback.
 
 import {
-  ALLOWANCES, allowances, browserTaskCostTargetMicros, creditRateVersion, creditsFor, DEFAULT_FAIR_USE, fairUse, featureClass,
+  ALLOWANCES, allowances, browserTaskCostTargetMicros, isFlatCredit, creditRateVersion, creditsFor, DEFAULT_FAIR_USE, fairUse, featureClass,
   limitFor, mcpDecision, monthlyPeriod, periodFor, reserveEstimate, tierFor,
 } from "../accounting/rules";
 import { accountingMode, enforcing } from "../accounting/targets";
@@ -134,14 +134,26 @@ describe("feature classes", () => {
   it("class every usage feature, and only the named ones are not the learner's", () => {
     const notNova = USAGE_FEATURES.filter(f => featureClass(f) !== "nova");
     // prepared_plan (PR #113 B.3): the day plan Nova prepares at check-in is Kivo's, never the learner's allowance.
-    expect(notNova.sort()).toEqual(["capture_placement", "extension_agent", "extension_intent", "other", "prepared_plan", "rex", "saved_page_processing", "saved_page_retry", "scheduled_nova_message"].sort());
+    expect(notNova.sort()).toEqual(["capture_placement", "extension_agent", "extension_intent", "other", "prepared_plan", "rex", "telegram_first_use", "saved_page_processing", "saved_page_retry", "scheduled_nova_message"].sort());
     expect(featureClass("prepared_plan")).toBe("kivo");
     expect(featureClass("extension_agent")).toBe("browser");
     expect(featureClass("scheduled_nova_message")).toBe("kivo");
     expect(featureClass("rex")).toBe("system");
   });
   it("count Telegram's reading, wording and rewording as the learner's", () => {
-    for (const f of ["telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding", "telegram_first_use"]) expect(featureClass(f)).toBe("nova");
+    for (const f of ["telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding"]) expect(featureClass(f)).toBe("nova");
+  });
+  // Telegram launch (28 Nov, M6): the first message in a linked chat is Nova
+  // speaking first, not the learner asking, so it is Kivo's.
+  it("count the first message in a linked chat as Kivo's", () => {
+    expect(featureClass("telegram_first_use")).toBe("kivo");
+  });
+  it("charge a Telegram turn one flat credit, unless NOVA_CREDIT_MODE=cost", () => {
+    for (const f of ["telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding"]) {
+      expect(isFlatCredit(f, {})).toBe(true);
+      expect(isFlatCredit(f, { NOVA_CREDIT_MODE: "cost" })).toBe(false);
+    }
+    for (const f of ["notes_tutor", "build_with_nova", "telegram_first_use", "day_copilot"]) expect(isFlatCredit(f, {})).toBe(false);
   });
   it("count an unknown feature as the learner's, never as free", () => {
     expect(featureClass("a_feature_added_later")).toBe("nova");

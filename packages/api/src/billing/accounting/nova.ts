@@ -31,7 +31,7 @@ import { costOf } from "../pricing";
 import { usageKeysFor } from "../usage-events";
 import { entitlementForLearner } from "../entitlements";
 import { addCost, commit, record, refund, reservationByRef, reserve } from "./ledger";
-import { browserTaskCostTargetMicros, creditRateVersion, creditsFor, featureClass, reserveEstimate, type FeatureClass, type Tier } from "./rules";
+import { browserTaskCostTargetMicros, creditRateVersion, creditsFor, featureClass, FLAT_RATE_VERSION, isFlatCredit, reserveEstimate, type FeatureClass, type Tier } from "./rules";
 import { accountingFault, accountingMode, enforcing, targetFor } from "./targets";
 
 // How long an entry point waits for its reservation in shadow mode before
@@ -150,8 +150,10 @@ export async function settleInteraction(end: InteractionEnd): Promise<void> {
 async function settleNova(end: InteractionEnd, calls: Priced[], reservationId: string | null, accounts: Map<string, string>, now: Date): Promise<void> {
   const ok = calls.filter(c => c.event.outcome === "success");
   const cost = sum(calls), billable = sum(ok);
-  const rate = creditRateVersion();
+  const flat = ok.length > 0 && ok.every(c => isFlatCredit(c.event.context.feature));
+  const rate = flat ? FLAT_RATE_VERSION : creditRateVersion();
   const credits = (reserved: number) => {
+    if (flat) return 1;
     const c = creditsFor(billable);
     return ok.some(x => x.unknown) ? Math.max(c, reserved) : c;
   };

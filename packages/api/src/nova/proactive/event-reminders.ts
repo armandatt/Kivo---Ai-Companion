@@ -32,6 +32,7 @@
 // The text is written by code (calendar-rules.ts, reminderText). No model.
 
 import { prisma } from "@repo/db/client";
+import { sendBlockedBy } from "../telegram/telegram-flags";
 import { dayKey } from "../engines/learner-calendar";
 import { createTelegramClient } from "../telegram/telegram-client";
 import { markUndeliverable } from "../telegram/channel-store";
@@ -61,7 +62,7 @@ const EVENT_SELECT = {
   profile: {
     select: {
       user:            { select: { platform: true, platformChatId: true, persona: true } },
-      telegramChannel: { select: { undeliverableSince: true } },
+      telegramChannel: { select: { undeliverableSince: true, allPausedUntil: true } },
     },
   },
 } as const;
@@ -72,7 +73,7 @@ type DueEvent = {
   reminderMinutes: number | null; repeat: string | null; repeatDays: number[]; repeatUntil: string | null; skipDays: string[];
   profile: {
     user: { platform: string; platformChatId: string; persona: string | null };
-    telegramChannel: { undeliverableSince: Date | null } | null;
+    telegramChannel: { undeliverableSince: Date | null; allPausedUntil?: Date | null } | null;
   };
 };
 
@@ -124,8 +125,9 @@ export async function runEventReminders(now = new Date(), deps: { client?: Teleg
   const count = (outcome: string) => { outcomes[outcome] = (outcomes[outcome] ?? 0) + 1; };
 
   // The same operational switch that stops Nova messaging first.
-  if (process.env.NOVA_PROACTIVE_DISABLED === "true") {
-    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_reminders", tick: "disabled", reason: "NOVA_PROACTIVE_DISABLED" }));
+  const blocked = sendBlockedBy("personal");
+  if (blocked) {
+    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_reminders", tick: "disabled", reason: blocked }));
     return { checked: 0, sent: 0, errors: 0, outcomes };
   }
   const client = deps.client ?? createTelegramClient();
@@ -191,6 +193,10 @@ async function deliverDue(event: DueEvent, now: Date, client: TelegramClient): P
   try {
     const block = reminderBlock(event.profile.user, event.profile.telegramChannel);
     if (block) return block;
+    // "Pause all" (Telegram launch, M3) holds the learner's own reminders too,
+    // until local midnight; one due meanwhile is missed, never sent late.
+    const paused = event.profile.telegramChannel?.allPausedUntil;
+    if (paused && paused > now) return "paused_all";
     const occurrence = occurrenceOfReminder(seriesOf(event), at);
     if (!occurrence) return "stale";
     const row = await claimOccurrence(event.profileId, { type: EVENT_REMINDER, occurrenceKey: reminderKey(event.id, at) }, dayKey(now, event.timezone), PRIORITY, now);

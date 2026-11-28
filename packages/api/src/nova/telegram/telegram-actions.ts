@@ -8,10 +8,10 @@
 // database. "Started" is never said on the strength of having asked.
 // No LLM call.
 
-import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
+import { loadAccountPreferences, saveCheckinTime } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
 import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
-import { setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
+import { filingCandidates, setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -23,7 +23,10 @@ import { loadNovaProgress } from "../product/progress";
 import { listTasks } from "../product/tasks";
 import { changeTodayPlan } from "../product/plan-overrides";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
-import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
+import { loadChannel, pauseAllUntil, pausePlanUntil, pauseProactiveUntil, resumeSends, setPlanNotifications, setProactiveEnabled } from "./channel-store";
+import { personalRemindersOn, planNotificationsOn } from "./telegram-flags";
+import { askReminderTitle, runPersonalReminder } from "./personal-reminders";
+import { holdPending } from "../product/reminder-occurrences";
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
   progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
@@ -34,6 +37,10 @@ import { adviseOnTopic, planBlockFor } from "../interaction/advice";
 import { decideFirstUse, type FirstUse } from "../interaction/first-use";
 import { nextSetupQuestion } from "../interaction/initialization";
 import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
+import { loadDayFlow, startFocus } from "../product/day-flow";
+import type { NovaDayView } from "../product/day-flow.types";
+import { afterEndReply, checkinChoiceReply, clock12, flowHasWork, flowReply, otherItemsReply } from "./telegram-replies";
+import { offerLater } from "./reminder-actions";
 import type { ReplyLanguage, SetupStatement } from "../types/understanding.types";
 
 export interface ActionContext {
@@ -75,6 +82,37 @@ export function nextLocalMidnight(now: Date, timezone: string | null): Date {
   return at;
 }
 
+// Today's applied plan, when there is one with something left to do.
+async function appliedFlow(ctx: ActionContext): Promise<NovaDayView | null> {
+  const flow = await loadDayFlow(ctx.profileId, ctx.chatId, ctx.now).catch(() => null);
+  return flow && flowHasWork(flow) ? flow : null;
+}
+
+// Starts a block of today's applied plan through day-flow's own start, so
+// the session is attached to the block (M1). Already studying: that session
+// is shown, nothing started. A block removed, done or started meanwhile is
+// said plainly. One retry when the flow changed between read and write.
+export async function startItem(ctx: ActionContext, start: { itemId: string; minutes: number }): Promise<ActionResult> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const running = await loadNovaSession(ctx.chatId, ctx.now);
+    if (running) return done("session_start", sessionReply(running, "You already have one going."), false);
+    const flow = await loadDayFlow(ctx.profileId, ctx.chatId, ctx.now);
+    const item = flow.items.find(i => i.id === start.itemId);
+    if (!item || item.status === "done") return done("session_start", { text: "That block isn't in today's plan any more.", link: { label: "Open Today", path: "/home" } }, false);
+    const r = await startFocus({ profileId: ctx.profileId, platformChatId: ctx.chatId, version: flow.version, itemId: item.id, minutes: Math.max(5, Math.min(240, Math.round(start.minutes))), now: ctx.now, surface: "telegram" });
+    if (r.ok) {
+      const session = await loadNovaSession(ctx.chatId, ctx.now);
+      return session ? done("session_start", sessionReply(session, "Started.")) : done("session_start", { text: textFor(ctx.language).failed }, false);
+    }
+    if (r.error !== "stale") {
+      const session = await loadNovaSession(ctx.chatId, ctx.now);
+      if (session) return done("session_start", sessionReply(session, "You already have one going."), false);
+      return done("session_start", { text: r.message }, false);
+    }
+  }
+  return done("session_start", { text: textFor(ctx.language).failed }, false);
+}
+
 async function todayView(ctx: ActionContext, minutes: number | null): Promise<NovaTodayReady | null> {
   const view = await loadNovaToday(ctx.chatId, { availableMinutes: minutes, learnerName: ctx.name, now: ctx.now });
   return view.status === "ready" ? view : null;
@@ -100,8 +138,11 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
   // What the learner says they have today is recorded, so the Planner and
   // Home fit the same day to it until the day ends.
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
-  const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
+  const [view, session, flow] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now), appliedFlow(ctx)]);
   if (!view) return done("show_today", { text: textFor(ctx.language).finishSetup }, false);
+  // The plan the learner applied today is the plan (M1): its blocks, its
+  // times, started on the block itself.
+  if (flow && !session) return done("show_today", flowReply(flow));
   // Nothing to plan from: ask for the one thing that is missing, not for
   // anything already on record.
   const facts = !session && view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
@@ -164,6 +205,11 @@ export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
 // enough to start a timer by itself.
 export async function offerStart(ctx: ActionContext, named: string | null, statedMinutes: number | null = null): Promise<ActionResult> {
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
+  if (!named) {
+    const [flow, session] = await Promise.all([appliedFlow(ctx), loadNovaSession(ctx.chatId, ctx.now)]);
+    if (session) return done("offer_start", sessionReply(session, "You already have one going."));
+    if (flow) return done("offer_start", flowReply(flow));
+  }
   const [view, session, snapshot] = await Promise.all([
     todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now), named ? loadStudySnapshot(ctx.chatId) : null,
   ]);
@@ -319,7 +365,25 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   }
   if (!result.ended && result.autoSaved) return done("session_end", { text: closedSessionText(ctx.language, result.autoSaved) }, false);
   if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
-  return done("session_end", endedReply(result.ended));
+  return done("session_end", await withFiling(ctx, result.ended, endedReply(result.ended)));
+}
+
+// After End: a session with no topic can be filed on one, and a topic
+// session can say where the topic stands (PR #113). Offered, never applied.
+async function withFiling(ctx: ActionContext, ended: { sessionId: string; topicName: string | null; topicRecorded: boolean; counted: boolean }, base: TelegramReply): Promise<TelegramReply> {
+  try {
+    if (!ended.counted) return base;
+    if (!ended.topicRecorded) {
+      return afterEndReply(base, { file: { sessionId: ended.sessionId, topics: await filingCandidates(ctx.profileId, ended.topicName) } });
+    }
+    if (ended.topicName) {
+      const same = await topicsNamed(ctx.profileId, ended.topicName);
+      if (same.length === 1) return afterEndReply(base, { status: { topicId: same[0]!.id, name: same[0]!.name } });
+    }
+  } catch (err) {
+    console.error("[nova:telegram] filing offer skipped:", (err as Error).message);
+  }
+  return base;
 }
 
 // ── The week, progress, and changing today ────────────────────────────────────
@@ -437,12 +501,29 @@ export async function alternativeFor(ctx: ActionContext, topic: string): Promise
   return done("show_alternative:related", relatedTopicsReply(topic, named));
 }
 
-export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
+export async function showSettings(ctx: ActionContext, lead?: string): Promise<ActionResult> {
   const [state, account] = await Promise.all([loadChannel(ctx.profileId), loadAccountPreferences(ctx.chatId)]);
-  return done("show_settings", settingsReply({
+  const reply = settingsReply({
     proactiveEnabled: state.proactiveEnabled, pausedUntil: state.proactivePausedUntil, timezone: ctx.timezone,
-    checkinTime: account.checkinTime,
-  }, ctx.now));
+    checkinTime: account.checkinTime, planNotifications: state.planNotifications ?? false,
+    planPausedUntil: state.planPausedUntil ?? null, allPausedUntil: state.allPausedUntil ?? null, planFeature: planNotificationsOn(),
+    remindersFeature: personalRemindersOn(),
+  }, ctx.now);
+  return done("show_settings", lead ? { ...reply, text: `${lead}\n\n${reply.text}` } : reply);
+}
+
+// Plan notifications on (M2): only an applied plan is ever sent, and blocks
+// without a time need a check-in time, so one is asked for when missing.
+async function setPlanNotificationsFrom(ctx: ActionContext, enabled: boolean): Promise<ActionResult> {
+  await setPlanNotifications(ctx.profileId, enabled);
+  if (!enabled) {
+    await holdPending(ctx.profileId, "notifications_off");
+    return done("set_plan_notifications", { text: "Plan notifications are off. Your plan is still on /today whenever you ask." });
+  }
+  const account = await loadAccountPreferences(ctx.chatId);
+  const on = "Plan notifications are on. Once you apply a plan on Kivo's Today page, I'll message when each timed block is due. A draft you haven't applied sends nothing.";
+  if (!account.checkinTime) return done("set_plan_notifications", checkinChoiceReply(`${on}\n\nFor blocks without a set time, what time should I check in?`));
+  return done("set_plan_notifications", { text: `${on} Blocks without a time are offered at your check-in, ${clock12(account.checkinTime)}.` });
 }
 
 // ── A button, by its stored action ────────────────────────────────────────────
@@ -450,6 +531,19 @@ export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
 export async function runOptionAction(action: OptionAction, ctx: ActionContext): Promise<ActionResult> {
   switch (action.type) {
     case "start":       return startSession(ctx, action);
+    case "start_item":  return startItem(ctx, action);
+    case "other_items": {
+      const flow = await appliedFlow(ctx);
+      return flow ? done("show_alternative", otherItemsReply(flow, action.skip)) : showToday(ctx, null);
+    }
+    case "file_session": {
+      const r = await runNovaSessionCommand(ctx.chatId, { action: "file", sessionId: action.sessionId, subjectId: action.subjectId, topicName: action.topicName }, ctx.now, "telegram");
+      return r.ok && r.filed ? done("file_session", { text: `Filed on ${r.filed.topicName}.` }) : done("file_session", { text: r.ok ? "That session is already filed." : r.message }, false);
+    }
+    case "topic_status": {
+      const r = await setTopicStatus(ctx.profileId, { topicId: action.topicId }, action.status, ctx.now);
+      return r.ok ? done("set_topic_status", { text: `${r.topicName}: ${TOPIC_STATUS_LABEL[action.status].toLowerCase()}.` }) : done("set_topic_status", { text: "That didn't save. Try it on the Knowledge Map." }, false);
+    }
     case "pause":       return pauseOrResume(ctx, "pause");
     case "resume":      return pauseOrResume(ctx, "resume");
     case "ask_outcome": return askOutcome(ctx, null);
@@ -461,13 +555,36 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
       return view ? done("show_alternative", alternativeReply(view, action.skip))
                   : done("show_alternative", { text: textFor(ctx.language).finishSetup }, false);
     }
-    case "later":   return done("later", { text: textFor(ctx.language).later });
+    case "later":   return offerLater(ctx, action.items ?? []);
     case "dismiss": return done("dismiss", { text: textFor(ctx.language).dismissed });
     case "not_today":
       await pauseProactiveUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
       return done("pause_nudges", { text: textFor(ctx.language).notToday });
     case "plan_change": return applyPlanChange(ctx, action);
     case "pick_time":   return done("pick_time", timeChoiceReply());
+    case "set_plan_notifications": return setPlanNotificationsFrom(ctx, action.enabled);
+    case "pick_checkin": return done("pick_checkin", checkinChoiceReply());
+    case "reminder_new":
+      return personalRemindersOn() ? askReminderTitle() : done("reminder_new", { text: "Reminders on Telegram are switched off right now. You can still add one on the Calendar.", link: { label: "Open Calendar", path: "/calendar" } }, false);
+    case "reminder_when": case "reminder_save": case "reminder_edit": case "reminder_cancel":
+      return runPersonalReminder(ctx, action);
+    case "set_checkin": {
+      const ok = await saveCheckinTime(ctx.chatId, action.time);
+      if (!ok) return done("set_checkin", { text: "I couldn't save that. Set your check-in time in Settings on Kivo." }, false);
+      return done("set_checkin", { text: action.time ? `Check-in set for ${clock12(action.time)}, your time.` : "No daily check-in. Blocks without a time won't be offered by themselves." });
+    }
+    case "pause_plan_today":
+      await pausePlanUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
+      return done("pause_plan", { text: "Plan prompts and nudges are paused until midnight. Reminders you set still come. /settings to resume." });
+    case "pause_all_today":
+      await pauseAllUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
+      return done("pause_all", { text: "Everything is paused until midnight: no plan prompts, nudges or reminders. Chat and buttons still work. /settings to resume." });
+    case "resume_sends": {
+      await resumeSends(ctx.profileId);
+      // What's next, never a backlog: anything due while paused has passed.
+      const today = await showToday(ctx, null);
+      return done("resume_sends", { ...today.reply, text: `Resumed. Here's what's next.\n\n${today.reply.text}` });
+    }
     case "set_proactive":
       await setProactiveEnabled(ctx.profileId, action.enabled);
       return done("set_proactive", { text: action.enabled ? textFor(ctx.language).nudgesOn : textFor(ctx.language).nudgesOff });

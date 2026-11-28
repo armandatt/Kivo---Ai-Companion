@@ -19,6 +19,10 @@ process.env.TELEGRAM_BOT_TOKEN = "";
 process.env.GEMINI_API_KEY = "";
 process.env.OPENAI_API_KEY = "";
 
+// The first message ends with what Nova sends by itself and the timezone
+// (Telegram launch, M9); Nova's own words are what comes before.
+const words = (t: string) => t.split("\n\nWhat I send by myself")[0]!.split("\n\nMain khud se")[0]!;
+
 const { prisma }                     = await import("@repo/db/client");
 const { handleNovaTelegramEvent }    = await import("../telegram/telegram-turn.js");
 const { normalizeTelegramUpdate }    = await import("../telegram/telegram-event.js");
@@ -139,7 +143,7 @@ test("a learner set up on the web links Telegram and gets one mentor message fro
   assert.equal(trace.decision, "command:start:first_use");
   assert.equal(trace.operation.name, "first_use:recommend");
   assert.equal(to(chat).length, 1, "one message");
-  assert.equal(lastTo(chat).text, modelSays);
+  assert.equal(words(lastTo(chat).text), modelSays);
   assert.ok(labels(chat).includes("Start 25 min"), "the plan's own Start button");
   assert.doesNotMatch(lastTo(chat).text, /\/[a-z]+/, "no command is taught");
 
@@ -167,7 +171,7 @@ test("an exam and the time they have are mentioned when they are on record, and 
   assert.match(asked[0]!.systemInstruction, /Next exam: OS exam, in 8 days\./);
   assert.match(asked[0]!.systemInstruction, /Time they said they have today: 30 min\./);
   assert.match(lastTo(chat).text, /^You're set\.\n\nOS exam is in 8 days, and \w+ is first on your plan: \d+ min\./);
-  assert.match(lastTo(chat).text, /Or just tell me what's going on\.$/);
+  assert.match(words(lastTo(chat).text), /Or just tell me what's going on\.$/);
   assert.doesNotMatch(lastTo(chat).text, /in [^8] days|in 8 days.*in 8 days.*in [^8] days/, "one count for the exam, the learner's calendar days");
   assert.match(lastTo(chat).text, /Why: exam in 8 days/);
   assert.deepEqual(labels(chat).filter(t => t.startsWith("Start")), ["Start 15 min", "Start 25 min", "Start 30 min"], "fitted to the 30 minutes they said");
@@ -241,7 +245,7 @@ test("with illness on record there is no push to study and no Start button", asy
 
   const trace = await telegram(chat).linked();
   assert.equal(trace.operation.name, "first_use:hold");
-  assert.equal(lastTo(chat).text, "You're connected. You told me: Student has the flu. Nothing from me to push today. I'm here when you want to talk.");
+  assert.equal(words(lastTo(chat).text), "You're connected. You told me: Student has the flu. Nothing from me to push today. I'm here when you want to talk.");
   assert.deepEqual(labels(chat), []);
   assert.match(asked[0]!.prompt, /Register: serious/);
   assert.match(asked[0]!.prompt, /Do not suggest studying or a session\./);
@@ -260,7 +264,7 @@ test("after the first message the chat is an ordinary one: commands still work a
   await tg.say("/status");
   assert.match(lastTo(chat).text, /No session running\./);
   await tg.say("/settings");
-  assert.match(lastTo(chat).text, /^Nudges: on/);
+  assert.match(lastTo(chat).text, /^Nudges: on/m);
 
   const plan = await tg.say("what should I study?", { ...BASE, intent: "plan_request", request: { ...REQ, asks: "about_me", action: "what_now" } });
   assert.equal(plan.decision, "show_today:asked_what_now");

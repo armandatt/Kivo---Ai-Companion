@@ -81,7 +81,8 @@ export const NOVA_CHAT_COMMANDS = [
   { command: "focus",    description: "Start a study session" },
   { command: "done",     description: "End the session and say how it went" },
   { command: "status",   description: "Where you stand" },
-  { command: "settings", description: "Nudges and timezone" },
+  { command: "settings", description: "Plan notifications, check-in, pause" },
+  { command: "remind",   description: "Set a reminder" },
 ];
 
 export type { InlineButton };

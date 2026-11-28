@@ -357,7 +357,8 @@ test("a real session is ended once: Start, Pause, Resume and the outcome each pr
   const question   = lastTo(l.chat);
   await tg.doubleTap("Good");
   assert.equal(to(l.chat).length, sentBefore + 1);
-  assert.match(lastTo(l.chat).text, /^Logged: 14 min on Processes\. Good\.$/);
+  // Then where the topic stands (Telegram launch, M1): offered, nothing set.
+  assert.match(lastTo(l.chat).text, /^Logged: 14 min on Processes\. Good\.\nWhere does Processes stand\?$/);
 
   // One session, one mastery change, one record of it.
   assert.equal(await prisma.novaStudySession.count({ where: { profileId: l.profileId, status: "completed" } }), 1);

@@ -175,8 +175,9 @@ test("commands and buttons call no model: their fixed lines are in the learner's
   assert.equal(asked.length, 0, "and not reworded by one");
 
   // Its fixed lines are written in Hinglish already.
+  // Later asks when (Telegram launch, M3), in their language.
   await tg.tap("Later");
-  assert.equal(lastTo(l.chat).text, TEXT_HINGLISH.later);
+  assert.equal(lastTo(l.chat).text, "Kab yaad dilaun?");
   assert.equal(asked.length, 0);
 
   await tg.say("/help");
@@ -202,7 +203,7 @@ test("writing in English again switches back at once", async () => {
   assert.equal(await loadReplyLanguage(l.messengerId), "english");
 
   await tg.tap("Later");
-  assert.equal(lastTo(l.chat).text, TEXT.later);
+  assert.equal(lastTo(l.chat).text, "When should I remind you?");
 });
 
 test("a rendering that changes a figure, or a model that is down, sends the reply as code wrote it", async () => {
