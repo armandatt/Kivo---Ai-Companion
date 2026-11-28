@@ -7,7 +7,11 @@
 // and removed on the Calendar page.
 
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
-import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
+import { loadAccountPreferences, saveCheckinTime } from "../adapters/account-preferences-adapter";
+import { savedItemsOn } from "./day-flow";
+import { createTelegramClient } from "../telegram/telegram-client";
+import { markUndeliverable, noteInbound } from "../telegram/channel-store";
+import type { TelegramClient } from "../telegram/telegram.types";
 import { dayEnd } from "../proactive/plan-reminder-rules";
 import {
   loadChannel, pauseAllUntil, pausePlanUntil, resumeSends, setPlanNotifications, setProactiveEnabled,
@@ -38,12 +42,26 @@ function recentOf(o: Occurrence): TelegramRecent {
 }
 
 export async function loadTelegramPage(input: { profileId: string; platformChatId: string; timezone: string | null; credits: NovaTelegramPage["credits"] }, now = new Date()): Promise<NovaTelegramPage> {
-  const [channel, account, occ, personal] = await Promise.all([
+  const zone = resolveTimezone(input.timezone);
+  const [channel, account, occ, personal, flow] = await Promise.all([
     loadChannel(input.profileId),
     loadAccountPreferences(input.platformChatId),
     occurrencesFor(input.profileId, now),
     upcomingEventReminders(input.profileId, now, 8),
+    savedItemsOn(input.profileId, dayKey(now, zone)),
   ]);
+  // Which of today's blocks will ping, by the same rules the job uses: a
+  // timed block at its time, the first untimed one at check-in.
+  const firstUntimed = flow.items.find(i => i.status === "planned" && !i.at)?.id;
+  const today: NovaTelegramPage["today"] = {
+    applied: flow.saved && flow.items.length > 0,
+    blocks: flow.items.map(i => ({
+      title: i.title, at: i.at, minutes: i.minutes, status: i.status,
+      notify: i.status === "done" || i.status === "active" ? "done" as const
+        : i.status === "planned" && i.at ? "at_time" as const
+        : i.status === "planned" && i.id === firstUntimed && account.checkinTime ? "at_checkin" as const : "never" as const,
+    })),
+  };
   const upcoming: TelegramUpcoming[] = [
     ...occ.upcoming.map(o => ({
       id: o.id, source: "day_plan" as const, title: titleOf(o), at: o.dueAt.toISOString(),
@@ -72,14 +90,14 @@ export async function loadTelegramPage(input: { profileId: string; platformChatI
     planNotifications: channel.planNotifications ?? false, nudgesOn: channel.proactiveEnabled,
     pause,
     nextDelivery: next ? { title: next.title, at: next.at, source: next.source } : null,
-    upcoming, recent: occ.recent.map(recentOf), credits: input.credits,
+    upcoming, recent: occ.recent.map(recentOf), today, credits: input.credits,
   };
 }
 
 export type TelegramPageResult = { ok: true } | { ok: false; error: "invalid" | "not_found" | "not_connected"; message: string };
 
 // One change from the page, through the chat's own functions.
-export async function changeTelegramPage(input: { profileId: string; platformChatId: string; timezone: string | null }, raw: unknown, now = new Date()): Promise<TelegramPageResult> {
+export async function changeTelegramPage(input: { profileId: string; platformChatId: string; timezone: string | null }, raw: unknown, now = new Date(), deps: { client?: TelegramClient } = {}): Promise<TelegramPageResult> {
   const body = (raw ?? {}) as Record<string, unknown>;
   const zone = resolveTimezone(input.timezone);
   const midnight = dayEnd(dayKey(now, zone), zone);
@@ -119,6 +137,22 @@ export async function changeTelegramPage(input: { profileId: string; platformCha
     case "resume":
       await resumeSends(input.profileId);
       return { ok: true };
+    case "checkin": {
+      if (body.time !== null && typeof body.time !== "string") return invalid;
+      return await saveCheckinTime(input.platformChatId, body.time as string | null) ? { ok: true } : invalid;
+    }
+    case "test_message": {
+      if (input.platformChatId.startsWith("web:")) return { ok: false, error: "not_connected", message: "Connect Telegram first." };
+      // A plain message, no buttons and no model. A refusal is the real
+      // answer to "does it reach me?", so it is recorded and said.
+      const sent = await (deps.client ?? createTelegramClient()).sendMessage(input.platformChatId, "Test from Kivo: messages from Nova reach you here. Nothing to do.");
+      if (sent.ok) { await noteInbound(input.profileId); return { ok: true }; }
+      if (sent.kind === "blocked") {
+        await markUndeliverable(input.profileId, now);
+        return { ok: false, error: "not_connected", message: "Telegram refused it: the bot may be blocked. Open the chat, press Start, and try again." };
+      }
+      return { ok: false, error: "invalid", message: sent.kind === "rate_limited" ? "Telegram asked us to wait. Try again in a minute." : "It didn't go through. Try again in a minute." };
+    }
     default:
       return invalid;
   }

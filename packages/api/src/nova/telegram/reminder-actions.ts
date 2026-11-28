@@ -27,9 +27,12 @@ const NOT_CURRENT: Record<string, string> = {
 
 const hhmm = (at: Date, zone: string) => `${String(localHour(at, zone)).padStart(2, "0")}:${String(localMinute(at, zone)).padStart(2, "0")}`;
 
-function laterMenu(id: string): TelegramReply {
+// The fixed lines here, in the learner's language (a button calls no model).
+const hi = (ctx: { language: string }) => ctx.language !== "english";
+
+function laterMenu(id: string, hinglish = false): TelegramReply {
   return {
-    text: "When should I remind you?",
+    text: hinglish ? "Kab yaad dilaun?" : "When should I remind you?",
     rows: [[
       { text: "In 15 min", callback_data: reminderCallback(id, "l15") },
       { text: "In 1 hour", callback_data: reminderCallback(id, "l60") },
@@ -43,7 +46,7 @@ function pickMenu(id: string, now: Date, zone: string): TelegramReply {
   const rows: InlineButton[][] = [];
   if (times.length > 0) rows.push(times.map(t => ({ text: clock12(t), callback_data: reminderCallback(id, `a${t.replace(":", "")}`) })));
   rows.push([{ text: "Tomorrow, same time", callback_data: reminderCallback(id, "t") }]);
-  return { text: "Pick a time:", rows };
+  return { text: "Pick a time:", rows };   // a heading over times: same in both
 }
 
 // Later on any offer (a plan block, or a topic from the planner's plan):
@@ -53,7 +56,7 @@ export async function offerLater(ctx: ActionContext, items: OccurrenceItem[]): P
   const zone = resolveTimezone(ctx.timezone);
   const day = dayKey(ctx.now, zone);
   const o = await createLater(ctx.profileId, { day, timezone: zone, items, expiresAt: dayEnd(day, zone) }, ctx.now);
-  return done("later", laterMenu(o.id));
+  return done("later", laterMenu(o.id, hi(ctx)));
 }
 
 export async function runReminderTap(ctx: ActionContext, occurrenceId: string, code: ReminderCode): Promise<ActionResult & { clear: boolean }> {
@@ -66,7 +69,7 @@ export async function runReminderTap(ctx: ActionContext, occurrenceId: string, c
 
   switch (code.kind) {
     case "start": return { ...(await start(ctx, o, code.index, today)), clear: true };
-    case "later_menu": return { ...done("reminder_later", laterMenu(o.id)), clear: false };
+    case "later_menu": return { ...done("reminder_later", laterMenu(o.id, hi(ctx))), clear: false };
     case "pick": return { ...done("reminder_pick", pickMenu(o.id, ctx.now, zone)), clear: false };
     case "snooze": return { ...(await snooze(ctx, o, new Date(ctx.now.getTime() + code.minutes * 60_000), zone, false)), clear: true };
     case "at": {
@@ -84,7 +87,7 @@ export async function runReminderTap(ctx: ActionContext, occurrenceId: string, c
     }
     case "skip": {
       const moved = await moveOccurrence(o.id, ACTIONABLE, "dismissed", { lastError: null });
-      return { ...done("reminder_skip", { text: moved ? "Skipped for today. The block stays on your plan." : "That reminder is no longer current." }, moved), clear: true };
+      return { ...done("reminder_skip", { text: moved ? (hi(ctx) ? "Aaj ke liye skip. Block plan mein rahega." : "Skipped for today. The block stays on your plan.") : "That reminder is no longer current." }, moved), clear: true };
     }
   }
 }
@@ -95,7 +98,9 @@ async function snooze(ctx: ActionContext, o: Occurrence, at: Date, zone: string,
   if (!s) return done("reminder_snooze", { text: "That reminder is no longer current." }, false);
   const when = clock12(hhmm(at, zone));
   const sameDay = day === dayKey(ctx.now, zone);
-  return done("reminder_snooze", { text: sameDay ? `OK, I'll remind you at ${when}.` : `OK, I'll remind you tomorrow at ${when}, and check it's still on that day's plan first.` });
+  return done("reminder_snooze", { text: hi(ctx)
+    ? (sameDay ? `Theek hai, ${when} pe yaad dilaunga.` : `Theek hai, kal ${when} pe yaad dilaunga, pehle check karke ki wo kal ke plan mein hai.`)
+    : (sameDay ? `OK, I'll remind you at ${when}.` : `OK, I'll remind you tomorrow at ${when}, and check it's still on that day's plan first.`) });
 }
 
 async function start(ctx: ActionContext, o: Occurrence, index: number, today: string): Promise<ActionResult> {

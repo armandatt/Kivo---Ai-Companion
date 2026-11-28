@@ -52,6 +52,10 @@ export async function POST(req: Request) {
     if (limited) return limited
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return fail(400, "invalid", "That isn't a change this page can make.")
+    if ((read.body as { action?: unknown })?.action === "test_message") {
+      const slow = await rateGate("telegram.test", { learner: a.platformChatId })
+      if (slow) return slow
+    }
     const r = await changeTelegramPage(a, read.body)
     if (!r.ok) return fail(r.error === "not_found" ? 404 : r.error === "not_connected" ? 409 : 400, r.error, r.message)
     return NextResponse.json({ ok: true })

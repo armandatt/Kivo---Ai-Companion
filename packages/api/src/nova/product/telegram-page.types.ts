@@ -43,6 +43,12 @@ export interface NovaTelegramPage {
   nextDelivery: { title: string; at: string; source: TelegramReminderSource } | null;
   upcoming: TelegramUpcoming[];
   recent:   TelegramRecent[];
+  // Today's applied plan as Telegram will treat it: each block and whether
+  // (and when) it will be sent. applied false: no plan applied today.
+  today: {
+    applied: boolean;
+    blocks:  Array<{ title: string; at: string | null; minutes: number | null; status: "planned" | "active" | "done" | "later"; notify: "at_time" | "at_checkin" | "never" | "done" }>;
+  };
   // Nova credits this period (the same figures as Plan and billing).
   credits:  { used: number; limit: number | null; resetsAt: string | null; enforced: boolean } | null;
 }
@@ -53,4 +59,7 @@ export type TelegramPageAction =
   | { action: "plan_notifications"; enabled: boolean }
   | { action: "nudges"; enabled: boolean }
   | { action: "pause"; scope: "plan" | "all" }
-  | { action: "resume" };
+  | { action: "resume" }
+  | { action: "checkin"; time: string | null }
+  // A real message to the learner's chat now, to see that it arrives.
+  | { action: "test_message" };

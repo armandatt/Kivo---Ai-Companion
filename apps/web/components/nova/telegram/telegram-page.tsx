@@ -5,7 +5,7 @@
 // read: on focus, and every 30 seconds while the tab is visible.
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle, ArrowRight, BellRing, CalendarClock, Check, Clock, Loader2, MessageCircle, Pause, Play, Send, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BellOff, BellRing, CalendarClock, Check, Clock, Loader2, MessageCircle, Pause, Play, Send, Sparkles } from 'lucide-react'
 import type { NovaTelegramPage, TelegramPageAction, TelegramUpcoming } from '@repo/api/nova/product/telegram-page.types'
 import { cn } from '@/lib/utils'
 import { ConnectAction } from '@/components/nova/telegram-connect'
@@ -30,6 +30,59 @@ function day(iso: string, zone: string | null): string {
   return d === fmt(new Date().toISOString(), zone, { weekday: 'short', month: 'short', day: 'numeric' }) ? 'Today' : d
 }
 
+const clock12 = (at: string) => { const [h, m] = at.split(':').map(Number) as [number, number]; return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}` }
+const CHECKINS = ['07:00', '08:00', '09:00', '12:00', '15:00', '18:00', '20:00', '21:00', '22:00']
+
+// Today's applied plan, block by block, as Telegram will treat it: the one
+// thing a learner needs to know before trusting it with their day.
+function TodayCard({ page, busy, act }: { page: NovaTelegramPage; busy: string | null; act: (k: string, a: TelegramPageAction, said: string) => void }) {
+  const t = page.today
+  const willPing = page.planNotifications && page.connected && page.sendsOn
+  return (
+    <section className={cn(card, 'p-6')} aria-labelledby="tg-today">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="tg-today" className="text-lg font-semibold tracking-tight">Today on Telegram</h2>
+          <p className="mt-1 text-sm text-foreground/60">Your applied plan, and when each block will reach you.</p>
+        </div>
+        {!t.applied && <a href="/home" className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 hover:bg-keppel-300">Plan today <ArrowRight className="size-4" /></a>}
+      </div>
+      {!t.applied ? (
+        <p className="mt-4 rounded-2xl border border-dashed border-border px-4 py-5 text-sm text-foreground/60">No plan applied today, so nothing will ping. Plan your day on Today, add times to the blocks you want a nudge for, and apply it.</p>
+      ) : (
+        <>
+          {!willPing && page.connected && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+              <span>{page.planNotifications ? 'Automatic messages are paused for everyone right now.' : 'Plan notifications are off, so none of these will reach you.'}</span>
+              {!page.planNotifications && page.planFeature && (
+                <button type="button" disabled={busy !== null} className="rounded-lg bg-keppel-400 px-3 py-1.5 text-xs font-semibold text-keppel-950" onClick={() => act('plan', { action: 'plan_notifications', enabled: true }, 'Plan notifications on.')}>Turn on</button>
+              )}
+            </div>
+          )}
+          <ul className="mt-4 divide-y divide-border/60">
+            {t.blocks.map((b, i) => (
+              <li key={i} className="flex items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <p className={cn('truncate font-medium', (b.status === 'done') && 'text-foreground/45 line-through')}>{b.title}</p>
+                  <p className="text-xs text-foreground/50">{b.at ? clock12(b.at) : 'No time'}{b.minutes ? ` · ${b.minutes} min` : ''}{b.status === 'later' ? " · If there's time" : ''}</p>
+                </div>
+                <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium',
+                  b.notify === 'at_time' || b.notify === 'at_checkin' ? (willPing ? 'bg-keppel-400/15 text-keppel-700 dark:text-keppel-200' : 'bg-foreground/8 text-foreground/55')
+                    : b.notify === 'done' ? 'bg-foreground/8 text-foreground/55' : 'bg-foreground/5 text-foreground/45')}>
+                  {b.notify === 'at_time' ? <><BellRing className="size-3" /> Pings at {clock12(b.at!)}</>
+                    : b.notify === 'at_checkin' ? <><BellRing className="size-3" /> At check-in, {clock12(page.checkinTime!)}</>
+                    : b.notify === 'done' ? <><Check className="size-3" /> {b.status === 'active' ? 'Running' : 'Done'}</>
+                    : <><BellOff className="size-3" /> {b.status === 'later' ? "Won't ping (If there's time)" : page.checkinTime ? 'Add a time on Today to get a ping' : 'Add a time, or set a check-in below'}</>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 function Switch({ on, disabled, onChange, label }: { on: boolean; disabled?: boolean; onChange: () => void; label: string }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={onChange}
@@ -43,9 +96,11 @@ function Switch({ on, disabled, onChange, label }: { on: boolean; disabled?: boo
 // said to be one): the reason the page exists.
 function PhonePreview({ page }: { page: NovaTelegramPage }) {
   const next = page.upcoming.find(u => u.source === 'day_plan' && u.at)
-  const example = !next
-  const at = next ? time(next.at, page.timezone) : '6:00 PM'
-  const title = next?.title ?? 'Operating Systems'
+  // Else today's own first timed block, as it will arrive once notifications are on.
+  const block = next ? null : page.today.blocks.find(b => b.notify === 'at_time' && b.at)
+  const example = !next && !block
+  const at = next ? time(next.at, page.timezone) : block ? clock12(block.at!) : '6:00 PM'
+  const title = next?.title ?? block?.title ?? 'Operating Systems'
   return (
     <div className="relative mx-auto w-full max-w-[300px]">
       <div aria-hidden className="absolute -inset-6 rounded-[2.5rem] bg-gradient-to-br from-keppel-400/25 via-transparent to-violet-400/20 blur-2xl" />
@@ -72,7 +127,9 @@ function PhonePreview({ page }: { page: NovaTelegramPage }) {
           </div>
         </div>
       </div>
-      {example && <p className="relative mt-3 text-center text-xs text-foreground/45">Example · apply a plan with times on Today to see yours</p>}
+      <p className="relative mt-3 text-center text-xs text-foreground/45">
+        {example ? 'Example · apply a plan with times on Today to see yours' : next ? 'Your next message' : `How your ${at} block will arrive`}
+      </p>
     </div>
   )
 }
@@ -121,6 +178,7 @@ export function TelegramPage() {
     setBusy(null)
     setNote(r.ok ? said : r.message)
     await refresh()
+    window.setTimeout(() => setNote(n => (n === (r.ok ? said : r.message) ? null : n)), 5000)
   }
 
   if (error && !page) return <p role="alert" className="text-sm text-red-500">{error}</p>
@@ -131,6 +189,12 @@ export function TelegramPage() {
 
   return (
     <div className="space-y-6">
+      {note && (
+        <div role="status" className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-2xl border border-border/80 bg-card px-4 py-3 text-sm shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2">
+          {note}
+          <button type="button" className="ml-3 text-foreground/50 hover:text-foreground" onClick={() => setNote(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className={cn(card, 'relative overflow-hidden p-6 sm:p-10')}>
         <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-keppel-400/10 blur-3xl" />
@@ -150,13 +214,20 @@ export function TelegramPage() {
               {page.nextDelivery && <span className={chip}><BellRing className="size-3.5" /> Next: {day(page.nextDelivery.at, zone)}, {time(page.nextDelivery.at, zone)}</span>}
             </div>
             <div className="mt-7">
-              {page.connected
-                ? link.connection?.botUrl && (
-                  <a href={link.connection.botUrl} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex h-11 items-center gap-2 rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
-                    Open Telegram <ArrowRight className="size-4" />
-                  </a>)
-                : <ConnectAction link={link} />}
+              {page.connected ? (
+                <div className="flex flex-wrap gap-3">
+                  {link.connection?.botUrl && (
+                    <a href={link.connection.botUrl} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex h-11 items-center gap-2 rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
+                      Open Telegram <ArrowRight className="size-4" />
+                    </a>)}
+                  <button type="button" disabled={busy !== null} onClick={() => void act('test', { action: 'test_message' }, 'Sent. Check Telegram: it should be there now.')}
+                    className="inline-flex h-11 items-center gap-2 rounded-xl border border-border/80 px-5 text-sm font-medium text-foreground/85 transition-colors hover:bg-foreground/5 disabled:opacity-50">
+                    {busy === 'test' ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Send a test message
+                  </button>
+                </div>
+              ) : <ConnectAction link={link} />}
+
             </div>
             {page.undeliverableSince && (
               <p className="mt-5 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-200">
@@ -168,6 +239,8 @@ export function TelegramPage() {
           <PhonePreview page={page} />
         </div>
       </section>
+
+      <TodayCard page={page} busy={busy} act={(k, a, said) => void act(k, a, said)} />
 
       {/* ── What Nova sends ──────────────────────────────────────────────── */}
       <section aria-labelledby="tg-sends" className="space-y-3">
@@ -198,8 +271,8 @@ export function TelegramPage() {
                 onChange={() => void act('plan', { action: 'plan_notifications', enabled: !page.planNotifications }, page.planNotifications ? 'Plan notifications off.' : 'Plan notifications on.')} />
             </Tile>
           )}
-          <Tile icon={<MessageCircle className="size-5" />} title="Nudges"
-            body="At most two a day, when something is due. Never 11pm to 7am unless you chose that time.">
+          <Tile icon={<MessageCircle className="size-5" />} title="Nudges and check-in"
+            body="At most two nudges a day, when something is due, never 11pm to 7am unless you chose that time. Untimed plan blocks come at your check-in.">
             <Switch on={page.nudgesOn} disabled={busy !== null} label="Nudges"
               onChange={() => void act('nudges', { action: 'nudges', enabled: !page.nudgesOn }, page.nudgesOn ? 'Nudges off.' : 'Nudges on.')} />
           </Tile>
@@ -208,7 +281,15 @@ export function TelegramPage() {
             <a href="/calendar" className={ghost}>Calendar</a>
           </Tile>
         </div>
-        {note && <p role="status" className="text-sm text-keppel-600 dark:text-keppel-300">{note}</p>}
+        <label className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
+          Daily check-in
+          <select value={page.checkinTime ?? ''} disabled={busy !== null}
+            onChange={e => void act('checkin', { action: 'checkin', time: e.target.value || null }, e.target.value ? `Check-in set for ${clock12(e.target.value)}.` : 'No daily check-in.')}
+            className="h-9 rounded-xl border border-border/80 bg-background px-3 text-sm text-foreground">
+            <option value="">None</option>
+            {[...new Set([...(page.checkinTime ? [page.checkinTime] : []), ...CHECKINS])].sort().map(t => <option key={t} value={t}>{clock12(t)}</option>)}
+          </select>
+        </label>
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
