@@ -185,7 +185,7 @@ function SigninForm() {
       <p className="text-center text-ink-300 mt-6">
         Don&apos;t have an account?{' '}
         <Link
-          href="/signup"
+          href={searchParams.get('from') ? `/signup?from=${encodeURIComponent(searchParams.get('from')!)}` : '/signup'}
           className="text-keppel-300 hover:text-keppel-200 font-semibold"
         >
           Sign up

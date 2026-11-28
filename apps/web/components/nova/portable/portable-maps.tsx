@@ -110,7 +110,7 @@ export function PortableMaps({ mode }: { mode: 'share' | 'import' }) {
 }
 
 // ── Import ──
-function ImportSection() {
+export function ImportSection() {
   const input = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [state, setState] = useState<'idle' | 'checking' | 'ready' | 'importing' | 'done' | 'error'>('idle')
