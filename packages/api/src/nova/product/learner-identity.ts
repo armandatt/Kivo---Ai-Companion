@@ -26,7 +26,12 @@ export type AccountLearner =
 
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === "P2002";
 
-export async function resolveLearnerForAccount(userId: string, name: string | null = null): Promise<AccountLearner> {
+// `undecided: "nova"` (Kivo Connect only, 28 Nov): an account that has not
+// chosen a companion yet (it skipped the signup quiz, so it has no profile or
+// no persona) is a Nova learner, as companionOf already says. Every Kivo
+// account is Nova; a Rex account (persona chosen as something else, or a Rex
+// chat) is still refused. The web keeps its rule: the quiz comes first there.
+export async function resolveLearnerForAccount(userId: string, name: string | null = null, options: { undecided?: "nova" } = {}): Promise<AccountLearner> {
   const profile = await prisma.userProfile.findUnique({
     where:  { userId },
     select: { primaryPersona: true, telegramChatId: true },
@@ -54,7 +59,8 @@ export async function resolveLearnerForAccount(userId: string, name: string | nu
   }
 
   // No chat. Only an account that chose Nova gets a learner of its own.
-  if (profile?.primaryPersona !== "nova") return { kind: "not_connected" };
+  const undecided = !profile?.primaryPersona;
+  if (profile?.primaryPersona !== "nova" && !(undecided && options.undecided === "nova")) return { kind: "not_connected" };
 
   const id   = webLearnerId(userId);
   const read = () => prisma.messengerUser.findUnique({
