@@ -394,7 +394,7 @@ test("M5: 429 is retried on the next run; 403 marks the chat undeliverable; unkn
   await planTick(tg);
   setClock(at("18:00"));
   // The three are sent in due order; arm one failure each.
-  const due = (await prisma.novaReminderOccurrence.findMany({ where: { profileId: { in: [a, b, c].map(l => l.profileId) } }, orderBy: { dueAt: "asc" }, select: { profileId: true } })).map(r => r.profileId);
+  const due = (await prisma.novaReminderOccurrence.findMany({ where: { profileId: { in: [a, b, c].map(l => l.profileId) } }, orderBy: [{ dueAt: "asc" }, { id: "asc" }], select: { profileId: true } })).map(r => r.profileId);
   const kinds = new Map([[a.profileId, { ok: false as const, kind: "rate_limited" as const, retryAfterSeconds: 3, detail: "429" }], [b.profileId, { ok: false as const, kind: "blocked" as const, detail: "403" }], [c.profileId, { ok: false as const, kind: "unknown" as const, detail: "timeout" }]]);
   for (const p of due) tg.fail(kinds.get(p)!);
   await planTick(tg);
@@ -462,4 +462,24 @@ test("kill switch: TELEGRAM_PLAN_NOTIFICATIONS=off sends nothing; chat and butto
     await send(l, "/today");
     assert.ok(tg.lastTo(l.chat)!.text.startsWith("Your plan for today:"));
   } finally { delete process.env.TELEGRAM_PLAN_NOTIFICATIONS; }
+});
+
+// ═══ M9: first message, settings and help ════════════════════════════════════
+
+test("M9: /settings turns plan notifications on and asks for a check-in time when there is none; /help says what Nova sends", async () => {
+  await morning();
+  const l = await seedLearner("Bea");
+  const { tg, send, tap, models } = harness();
+  await send(l, "/settings");
+  assert.ok(tg.lastTo(l.chat)!.text.startsWith("Plan notifications: off."));
+  await tap(l, "Plan notifications on");
+  assert.ok(tg.lastTo(l.chat)!.text.includes("A draft you haven't applied sends nothing."));
+  assert.ok(tg.lastTo(l.chat)!.text.endsWith("For blocks without a set time, what time should I check in?"));
+  assert.deepEqual(tg.labels(l.chat), ["7:00 AM", "9:00 AM", "1:00 PM", "6:00 PM", "8:00 PM", "10:00 PM", "No check-in"]);
+  assert.equal((await prisma.novaTelegramChannel.findUniqueOrThrow({ where: { profileId: l.profileId } })).planNotifications, true);
+  await send(l, "/help");
+  assert.ok(tg.lastTo(l.chat)!.text.includes("/settings: plan notifications, check-in time, pause or resume"));
+  assert.ok(tg.lastTo(l.chat)!.text.includes("What I send by myself:"));
+  assert.ok(!tg.lastTo(l.chat)!.text.toLowerCase().includes("unlimited"));
+  assert.equal(models(), 0);
 });

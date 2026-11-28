@@ -146,7 +146,7 @@ export async function getOccurrence(profileId: string, id: string): Promise<Occu
 export async function dueOccurrences(now: Date, take = 200): Promise<Occurrence[]> {
   const rows = await prisma.novaReminderOccurrence.findMany({
     where: { state: { in: PENDING }, dueAt: { lte: now, gt: new Date(now.getTime() - DUE_GRACE_MS) } },
-    orderBy: { dueAt: "asc" }, take, select: SELECT,
+    orderBy: [{ dueAt: "asc" }, { id: "asc" }], take, select: SELECT,
   });
   return rows.map(toOccurrence);
 }

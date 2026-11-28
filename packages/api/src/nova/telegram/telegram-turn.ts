@@ -50,7 +50,8 @@ import { decodeCallback, encodeCallback } from "./telegram-event";
 import { NOVA_CHAT_COMMANDS } from "./telegram-client";
 import { decodeReminderCallback } from "../proactive/plan-reminder-rules";
 import { runReminderTap } from "./reminder-actions";
-import { alternativeReply, clarifyReply, creditsUsedText, isFixedText, textFor, withExamOffer } from "./telegram-replies";
+import { planNotificationsOn } from "./telegram-flags";
+import { alternativeReply, clarifyReply, creditsUsedText, firstUseExtras, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
 import { interpret } from "../interaction/semantics";
 import type {
@@ -418,8 +419,17 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
             trace.response = { generated: true, ok: worded.generated, ms: Date.now() - wording, fallback: !worded.generated };
             return worded.text;
           }));
+          // What Nova will and won't send, the timezone, and plan
+          // notifications offered (M9): fixed lines after Nova's words.
+          // Offered beside a plain recommendation only: never over a running
+          // session, and never when the record says not to push.
+          const extras = firstUseExtras(ctx.language, profile.timezone, planNotificationsOn() && reply.prompt?.kind === "start");
+          const withExtras: TelegramReply = {
+            ...reply, text: `${reply.text}\n\n${extras.text}`,
+            ...(reply.prompt && extras.option ? { prompt: { ...reply.prompt, options: [...reply.prompt.options, { id: "j", ...extras.option }] } } : {}),
+          };
           // One wording call for this message: a fallback goes out as it is.
-          await deliver(reply, trace.response.generated);
+          await deliver(withExtras, trace.response.generated);
           // Nobody saw it: the chat has still not had its first message.
           if (trace.send.status !== "sent") await releaseFirstUse(profile.id, now);
           break;

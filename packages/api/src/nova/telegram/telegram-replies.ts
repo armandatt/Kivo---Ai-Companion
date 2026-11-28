@@ -556,6 +556,14 @@ export function relatedTopicsReply(named: string, topics: Array<{ topicName: str
   };
 }
 
+// What Nova sends by itself, said in /help and in the first message (M9).
+// Plain, calm, and only what is true.
+const SENDS_EN = "What I send by myself: your plan's blocks at their times, once you turn plan notifications on in /settings; reminders you set; and at most two nudges a day, never 11pm to 7am unless you chose that time. Nothing else, and /settings pauses it all.";
+// The same for the first message, which names no command (first-use.test.ts).
+const FIRST_SENDS_EN = "What I send by myself: your plan's blocks at their times, if you turn plan notifications on; reminders you set; and at most two nudges a day, never 11pm to 7am unless you chose that time. Nothing else, and you can pause it any time in settings.";
+const FIRST_SENDS_HI = "Main khud se kya bhejta hoon: tumhare plan ke blocks unke time pe, agar tum plan notifications on karo; tumhare set kiye reminders; aur din mein zyada se zyada do nudges, raat 11 se subah 7 ke beech nahi, jab tak tumne woh time na chuna ho. Bas itna, aur settings mein kabhi bhi pause kar sakte ho.";
+const SENDS_HI = "Main khud se kya bhejta hoon: tumhare plan ke blocks unke time pe, jab tum /settings mein plan notifications on karo; tumhare set kiye reminders; aur din mein zyada se zyada do nudges, raat 11 se subah 7 ke beech nahi, jab tak tumne woh time na chuna ho. Bas itna, aur /settings se sab pause ho sakta hai.";
+
 export const TEXT = {
   help: [
     "/today: what to do now",
@@ -564,9 +572,11 @@ export const TEXT = {
     "/focus: start a session",
     "/done: end it and say how it went",
     "/status: where you stand",
-    "/settings: nudges and timezone",
+    "/settings: plan notifications, check-in time, pause or resume",
     "",
     "Or just tell me: how long you have, what came up, what isn't clicking.",
+    "",
+    SENDS_EN,
   ].join("\n"),
   finishSetup:     "Finish setting up with Nova first. It takes a couple of minutes.",
   webOnly:         "That one needs room to work. It lives in Nova on the web.",
@@ -617,9 +627,11 @@ export const TEXT_HINGLISH: typeof TEXT = {
     "/focus: session start karo",
     "/done: session khatam karo aur batao kaisa gaya",
     "/status: tum kahan khade ho",
-    "/settings: nudges aur timezone",
+    "/settings: plan notifications, check-in time, pause ya resume",
     "",
     "Ya seedha bata do: kitna time hai, kya beech mein aa gaya, kya samajh nahi aa raha.",
+    "",
+    SENDS_HI,
   ].join("\n"),
   finishSetup:     "Pehle Nova pe setup poora kar lo. Do minute lagenge.",
   webOnly:         "Iske liye thodi jagah chahiye. Ye Nova ke web app pe milega.",
@@ -790,4 +802,18 @@ export function afterEndReply(base: TelegramReply, follow: { file?: { sessionId:
     };
   }
   return base;
+}
+
+// The first message in a linked chat, after Nova's own words: what it will
+// and won't send, the timezone it will use, and plan notifications offered
+// (M9). Fixed lines, no model.
+export function firstUseExtras(language: ReplyLanguage, timezone: string | null, offerPlan: boolean): { text: string; option: { label: string; action: OptionAction } | null } {
+  const hi = language !== "english";
+  const zone = timezone
+    ? (hi ? `Timezone: ${timezone}. Galat hai to is device pe Kivo ek baar khol lo.` : `I'll use your timezone, ${timezone}. If that's wrong, open Kivo once on this device.`)
+    : (hi ? "Timezone abhi set nahi hai, isliye main pehle message nahi karunga. Is device pe Kivo ek baar khol lo." : "I don't have your timezone yet, so I won't message first. Open Kivo once on this device and it's set.");
+  return {
+    text: [hi ? FIRST_SENDS_HI : FIRST_SENDS_EN, zone].join("\n"),
+    option: offerPlan ? { label: "Turn on plan notifications", action: { type: "set_plan_notifications", enabled: true } } : null,
+  };
 }
