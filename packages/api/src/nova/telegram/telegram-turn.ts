@@ -48,7 +48,7 @@ import {
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
 import { NOVA_CHAT_COMMANDS } from "./telegram-client";
-import { alternativeReply, clarifyReply, isFixedText, textFor, withExamOffer } from "./telegram-replies";
+import { alternativeReply, clarifyReply, creditsUsedText, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
 import { interpret } from "../interaction/semantics";
 import type {
@@ -206,10 +206,11 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     // month's credits decide.
     if (!allowed) return false;
     const admitted = await reserveForInteraction({ feature: "telegram_understanding", idempotencyKey: event.updateId != null ? `telegram:${event.chatId}:${event.updateId}` : undefined });
-    if (admitted.refused) { creditsRefused = true; return false; }
+    if (admitted.refused) { creditsRefused = true; creditsResetAt = admitted.refused.resetsAt; return false; }
     return true;
   };
   let creditsRefused = false;
+  let creditsResetAt: string | null = null;
   const inLanguage = async (text: string): Promise<string> => {
     if (event.kind !== "text") return text;
     if (!ctx || ctx.language === "english" || !text.trim() || isFixedText(text, ctx.language)) return text;
@@ -442,7 +443,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // Reading the message is the request the account's daily allowance
       // counts; the chat's own cap is inside it.
       if (!await spendModelCall(profile.id, "understanding", day, await factor()) || !await accountAllows()) {
-        await deliver({ text: creditsRefused ? say().creditsUsed : say().budget });
+        await deliver({ text: creditsRefused ? creditsUsedText(ctx!.language, creditsResetAt, profile.timezone) : say().budget });
         return finish(creditsRefused ? "nova_allowance_exhausted" : "budget_exhausted");
       }
       spent("learnerMs", limited);

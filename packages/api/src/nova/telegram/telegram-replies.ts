@@ -652,3 +652,13 @@ export function closedSessionText(language: ReplyLanguage, saved: { minutes: num
     ? `Session plan se aage chalta reh gaya tha, isliye maine uske ${saved.minutes} min save kar diye.${saved.counted ? "" : " 10 min se kam Progress mein count nahi hota."} Jab ready ho, naya start kar lo.`
     : `Your session was left running past its plan, so I saved it with the ${saved.minutes} min on its clock.${saved.counted ? "" : " Under 10 minutes isn't counted in Progress."} Start a new one when you're ready.`;
 }
+
+// At the month's Nova credits (M6, 28 Nov): when they come back, as the
+// learner's own date, and that the buttons keep working. No model.
+export function creditsUsedText(language: ReplyLanguage, resetsAt: string | null, timezone: string | null): string {
+  const base = textFor(language).creditsUsed;
+  const at = resetsAt ? new Date(resetsAt) : null;
+  if (!at || Number.isNaN(at.getTime())) return base;
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: timezone ?? "UTC" }).format(at);
+  return language === "english" ? `${base} They renew on ${day}.` : `${base} ${day} ko renew honge.`;
+}
