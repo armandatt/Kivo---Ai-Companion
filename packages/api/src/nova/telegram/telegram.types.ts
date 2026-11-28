@@ -15,7 +15,7 @@ import type { StudyTime } from "../types/understanding.types";
 // ── Inbound ───────────────────────────────────────────────────────────────────
 
 export type TelegramCommandName =
-  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help" | "week" | "progress"
+  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help" | "week" | "progress" | "remind"
   // Older Nova commands. /study is /focus with a topic; the rest are deep
   // work and are handed to the web app.
   | "study" | "explain" | "quiz" | "revise";
@@ -70,6 +70,13 @@ export type OptionAction =
   | { type: "set_plan_notifications"; enabled: boolean }
   | { type: "set_checkin"; time: string | null }
   | { type: "pick_checkin" }
+  // Personal reminders by buttons (M7): a calendar event of the learner's
+  // own (category personal, reminded when it starts). No model, no credit.
+  | { type: "reminder_new" }
+  | { type: "reminder_when"; title: string; day: string; time: string; eventId?: string }
+  | { type: "reminder_save"; title: string; day: string; time: string; repeat: "none" | "daily" | "weekdays" | "weekly" }
+  | { type: "reminder_edit"; eventId: string; title: string }
+  | { type: "reminder_cancel"; eventId: string }
   | { type: "pause_plan_today" }
   | { type: "pause_all_today" }
   | { type: "resume_sends" }
@@ -101,7 +108,8 @@ export type PromptKind =
   | "pick_minutes"     // a range of time, asked back as a choice
   | "clarify"
   | "settings"
-  | "change_plan";     // what to change about today, or a change to confirm
+  | "change_plan"      // what to change about today, or a change to confirm
+  | "reminder_title";  // the next message is a reminder's title, taken as typed
 
 // How long a prompt can still be answered. After that a tap is told it is
 // closed and a typed "yes" is no longer read against it.
@@ -116,6 +124,7 @@ export const PROMPT_TTL_MINUTES: Record<PromptKind, number> = {
   clarify:         15,
   settings:        30,
   change_plan:     30,
+  reminder_title:  10,
 };
 
 export interface PromptSpec {

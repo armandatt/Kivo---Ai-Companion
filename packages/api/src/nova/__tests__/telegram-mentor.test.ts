@@ -841,7 +841,7 @@ describe("Telegram is a surface, not a second Nova", () => {
 
   it("finds the Telegram modules", () => {
     expect(telegram.map(f => f.path).sort()).toEqual([
-      "telegram/channel-store.ts", "telegram/prompt-store.ts", "telegram/reminder-actions.ts", "telegram/telegram-actions.ts", "telegram/telegram-client.ts",
+      "telegram/channel-store.ts", "telegram/personal-reminders.ts", "telegram/prompt-store.ts", "telegram/reminder-actions.ts", "telegram/telegram-actions.ts", "telegram/telegram-client.ts",
       "telegram/telegram-event.ts", "telegram/telegram-flags.ts", "telegram/telegram-link.ts", "telegram/telegram-replies.ts", "telegram/telegram-turn.ts",
       "telegram/telegram.types.ts",
     ]);

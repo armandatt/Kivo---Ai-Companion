@@ -882,7 +882,8 @@ test("typed \"not today\" quiets Nova until the learner's midnight, with or with
   await third.send(n, "/today");
   third.ai.read("later", { ...BASE, request: { ...REQ, action: "not_now", confidence: 1, deferUntil: "later", promptAnswer: "e" } });
   await third.send(n, "later");
-  assert.equal(third.tg.last().text, "OK. It'll keep.");
+  // Telegram launch (M3): Later asks when to bring it back; it pauses nothing.
+  assert.equal(third.tg.last().text, "When should I remind you?");
   assert.equal((await channel(n)).proactivePausedUntil, null);
 });
 
@@ -1729,7 +1730,8 @@ test("F/7: a reminder and an unsupported request say so, change nothing, and sen
 
   ai.read("remind me to study at 8 pm", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "set_reminder", promptAnswer: "e" } });
   await send(l, "remind me to study at 8 pm");
-  assert.equal(tg.last().text, "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.");
+  // Telegram launch (M7): a sentence still sets nothing; /remind does, by buttons.
+  assert.equal(tg.last().text, "I can't set a reminder from a sentence yet, so nothing has been scheduled. Send /remind and I'll set one with a few taps.");
   assert.deepEqual(callbacks(tg), []);
 
   ai.read("write my essay on the french revolution", { ...BASE, request: { ...REQ, clarity: "unsupported", action: "none" } });
@@ -1787,7 +1789,7 @@ test("an existing chat gets /week and /progress in its menu when it sends /start
   assert.equal(tg.menus.length, 0, "an ordinary command does not touch the menu");
 
   await send(l, "/help");
-  assert.deepEqual(tg.menus, [{ chatId: l.chat, commands: ["today", "week", "progress", "focus", "done", "status", "settings"] }]);
+  assert.deepEqual(tg.menus, [{ chatId: l.chat, commands: ["today", "week", "progress", "focus", "done", "status", "settings", "remind"] }]);
   assert.ok(tg.last().text.includes("/week: the next seven days"));
   await send(l, "/start");
   assert.equal(tg.menus.length, 2);

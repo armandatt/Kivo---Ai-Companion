@@ -50,6 +50,7 @@ import { decodeCallback, encodeCallback } from "./telegram-event";
 import { NOVA_CHAT_COMMANDS } from "./telegram-client";
 import { decodeReminderCallback } from "../proactive/plan-reminder-rules";
 import { runReminderTap } from "./reminder-actions";
+import { askReminderTitle, reminderTitle, whenReply } from "./personal-reminders";
 import { planNotificationsOn } from "./telegram-flags";
 import { alternativeReply, clarifyReply, creditsUsedText, firstUseExtras, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
@@ -97,6 +98,7 @@ const PROMPT_QUESTION: Record<PromptKind, string> = {
   confirm_setup:   "Save what you told me about your term?",
   pick_minutes:    "How many minutes do you have?",
   clarify:         "What do you need?",
+  reminder_title:  "What should the reminder say?",
   settings:        "Change a setting?",
   change_plan:     "What to change about today's plan?",
 };
@@ -443,6 +445,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         case "week":     await deliver(report(await showWeek(ctx))); break;
         case "progress": await deliver(report(await showProgress(ctx))); break;
         case "settings": await deliver(report(await showSettings(ctx))); break;
+        case "remind":   await deliver(report(await runOptionAction({ type: "reminder_new" }, ctx))); break;
         default:         await deliver({ text: say().webOnly, link: { label: "Open Nova", path: "/home" } });
       }
       await refreshMenu();
@@ -452,6 +455,20 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     if (event.kind === "unsupported") {
       await deliver({ text: event.reason === "unknown_command" ? say().unknownCommand : say().notText });
       return finish();
+    }
+
+    // ── A reminder's title (M7): the message is the title, taken as typed. ──
+    // Protocol, like a button: no model, no credit, no reading.
+    if (event.kind === "text" && !settingUp) {
+      const open = await loadOpenPrompt(profile.id, now);
+      if (open?.kind === "reminder_title") {
+        trace.decision = "reminder_title";
+        await closeOpenPrompt(profile.id, "command", now, open.id);
+        const title = reminderTitle(event.text);
+        await deliver(title ? whenReply(ctx, title) : askReminderTitle().reply, true);
+        trace.operation = { name: "reminder_title", ok: title !== null };
+        return finish();
+      }
     }
 
     // ── Words ────────────────────────────────────────────────────────────────

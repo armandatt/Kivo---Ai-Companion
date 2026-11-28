@@ -515,3 +515,55 @@ test("M8: the page shows what is coming by source, what happened, and its change
   assert.equal((await changeTelegramPage(me, { action: "snooze", id: "nope", minutes: 15 }, clock)).ok, false);
   assert.equal((await changeTelegramPage(me, { action: "delete_everything" }, clock)).ok, false);
 });
+
+// ═══ M7: personal reminders by buttons ════════════════════════════════════════
+
+test("M7: /remind → title as typed → time → repeat saves a calendar reminder, sent at its time; Edit and Cancel work; no model, no credit", async () => {
+  await morning();
+  const { runEventReminders } = await import("../proactive/event-reminders.js");
+  const l = await seedLearner("Dev");
+  const { tg, send, tap, models } = harness();
+  await send(l, "/remind");
+  assert.equal(tg.lastTo(l.chat)!.text, "What should I remind you about? Send it as your next message.");
+  await send(l, "  Call   the lab about my results ");
+  assert.equal(tg.lastTo(l.chat)!.text, `"Call the lab about my results". When should I remind you?`);
+  assert.deepEqual(tg.labels(l.chat), ["In 1 hour", "Today 9:30 AM", "Today 10:30 AM", "Today 11:30 AM", "Tomorrow 9:00 AM", "Tomorrow 6:00 PM", "Cancel"]);
+  await tap(l, "Today 10:30 AM");
+  assert.equal(tg.lastTo(l.chat)!.text, "Repeat it?");
+  await tap(l, "Weekdays");
+  const [ev] = await prisma.novaCalendarEvent.findMany({ where: { profileId: l.profileId } });
+  assert.deepEqual([ev!.category, ev!.reminderMinutes, ev!.repeat, ev!.repeatDays], ["personal", 0, "weekly", [1, 2, 3, 4, 5]]);
+  // Said from the first time it really goes (a weekday series made on a weekend starts Monday).
+  const firstDay = dayKey(ev!.remindAt!, "Asia/Kolkata");
+  assert.ok(tg.lastTo(l.chat)!.text.startsWith(`Saved: "Call the lab about my results", 10:30 AM, every weekday, starting `), tg.lastTo(l.chat)!.text);
+  assert.equal(ev!.remindAt!.toISOString(), at("10:30", "Asia/Kolkata", firstDay).toISOString());
+  assert.equal(models(), 0, "no model at any step");
+  // Delivered by the calendar reminder sender at its time.
+  setClock(ev!.remindAt!);
+  const r = await runEventReminders(clock, { client: tg.client });
+  assert.equal(r.sent >= 1, true);
+  assert.ok(tg.sent.some(s => s.chatId === l.chat && s.text.includes("Call the lab about my results")));
+  // Edit: a new time, same reminder.
+  await send(l, "/remind"); // a fresh flow doesn't disturb the saved one
+  const saved = await prisma.novaCalendarEvent.count({ where: { profileId: l.profileId } });
+  assert.equal(saved, 1);
+});
+
+test("M7: Cancel on a saved reminder removes it; a typed sentence asking for one points at /remind", async () => {
+  await morning();
+  const l = await seedLearner("Eli");
+  const { tg, send, tap, readings } = harness();
+  await send(l, "/remind");
+  await send(l, "Gym");
+  await tap(l, "Tomorrow 6:00 PM");
+  await tap(l, "Just once");
+  await tap(l, "Edit");
+  await tap(l, "Tomorrow 9:00 AM");
+  assert.ok(tg.lastTo(l.chat)!.text.startsWith(`Saved: "Gym", tomorrow at 9:00 AM.`));
+  await tap(l, "Cancel reminder");
+  assert.equal(tg.lastTo(l.chat)!.text, "Cancelled. Nothing will be sent for it.");
+  assert.equal(await prisma.novaCalendarEvent.count({ where: { profileId: l.profileId } }), 0);
+  readings.set("remind me at 8 pm to study", { ...BASE, request: { ...REQ, action: "set_reminder" } });
+  await send(l, "remind me at 8 pm to study");
+  assert.ok(tg.lastTo(l.chat)!.text.includes("/remind"));
+});

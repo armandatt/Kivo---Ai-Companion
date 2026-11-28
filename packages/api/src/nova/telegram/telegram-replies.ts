@@ -204,6 +204,8 @@ export interface SettingsState {
   planNotifications?: boolean; planPausedUntil?: Date | null; allPausedUntil?: Date | null;
   // TELEGRAM_PLAN_NOTIFICATIONS is on: the setting exists to show.
   planFeature?: boolean;
+  // TELEGRAM_PERSONAL_REMINDERS is on: Add reminder is offered.
+  remindersFeature?: boolean;
 }
 
 export function settingsReply(state: SettingsState, now: Date): TelegramReply {
@@ -229,6 +231,7 @@ export function settingsReply(state: SettingsState, now: Date): TelegramReply {
     ? { label: "Plan notifications off", action: { type: "set_plan_notifications", enabled: false } }
     : { label: "Plan notifications on", action: { type: "set_plan_notifications", enabled: true } });
   items.push({ label: "Check-in time", action: { type: "pick_checkin" } });
+  if (state.remindersFeature) items.push({ label: "Add reminder", action: { type: "reminder_new" } });
   if (allPaused || planPaused || paused) items.push({ label: "Resume", action: { type: "resume_sends" } });
   else {
     items.push({ label: "Pause plan nudges today", action: { type: "pause_plan_today" } });
@@ -573,6 +576,7 @@ export const TEXT = {
     "/done: end it and say how it went",
     "/status: where you stand",
     "/settings: plan notifications, check-in time, pause or resume",
+    "/remind: set a reminder",
     "",
     "Or just tell me: how long you have, what came up, what isn't clicking.",
     "",
@@ -608,7 +612,7 @@ export const TEXT = {
   unsupported:     "That's outside what I do here. I can show today's plan or the week, change today's plan, show your progress, explain a topic, run a session, or take note of what's come up.",
   // Asked for a reminder at a set time. There is no such thing to create, so
   // this says so and says what does exist. Never "I'll remind you".
-  reminderUnavailable:    "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.",
+  reminderUnavailable:    "I can't set a reminder from a sentence yet, so nothing has been scheduled. Send /remind and I'll set one with a few taps.",
   reminderUnavailableWeb: "I can't set a reminder for a set time yet, so nothing has been scheduled.",
   workspaceOffer:         "Let's shape that together. Open it below: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
   workspaceOfferWeb:      "Let's shape that together in Build with Nova: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
@@ -628,6 +632,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
     "/done: session khatam karo aur batao kaisa gaya",
     "/status: tum kahan khade ho",
     "/settings: plan notifications, check-in time, pause ya resume",
+    "/remind: reminder set karo",
     "",
     "Ya seedha bata do: kitna time hai, kya beech mein aa gaya, kya samajh nahi aa raha.",
     "",
@@ -657,7 +662,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
   nothingOnRecord: "Ye mere record mein nahi hai.",
   clarifyOpen:     "Ye samajh nahi aaya. Batao kya chahiye, ya upar wale buttons use karo.",
   unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: aaj ka ya hafte ka plan, aaj ke plan mein badlav, tumhara progress, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
-  reminderUnavailable:    "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua. Jo apne aap aata hai wo nudge hai jab kuch due ho, din mein zyada se zyada do. /settings mein dikhta hai wo on hain ya nahi.",
+  reminderUnavailable:    "Sentence se reminder abhi set nahi hota, to kuch schedule nahi hua. /remind bhejo, do-teen taps mein set ho jayega.",
   reminderUnavailableWeb: "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua.",
   workspaceOffer:         "Chalo ise saath mein shape karte hain. Neeche kholo: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",
   workspaceOfferWeb:      "Chalo ise Build with Nova mein saath mein shape karte hain: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",

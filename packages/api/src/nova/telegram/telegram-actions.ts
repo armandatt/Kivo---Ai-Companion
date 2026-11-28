@@ -24,7 +24,8 @@ import { listTasks } from "../product/tasks";
 import { changeTodayPlan } from "../product/plan-overrides";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
 import { loadChannel, pauseAllUntil, pausePlanUntil, pauseProactiveUntil, resumeSends, setPlanNotifications, setProactiveEnabled } from "./channel-store";
-import { planNotificationsOn } from "./telegram-flags";
+import { personalRemindersOn, planNotificationsOn } from "./telegram-flags";
+import { askReminderTitle, runPersonalReminder } from "./personal-reminders";
 import { holdPending } from "../product/reminder-occurrences";
 import {
   alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
@@ -506,6 +507,7 @@ export async function showSettings(ctx: ActionContext, lead?: string): Promise<A
     proactiveEnabled: state.proactiveEnabled, pausedUntil: state.proactivePausedUntil, timezone: ctx.timezone,
     checkinTime: account.checkinTime, planNotifications: state.planNotifications ?? false,
     planPausedUntil: state.planPausedUntil ?? null, allPausedUntil: state.allPausedUntil ?? null, planFeature: planNotificationsOn(),
+    remindersFeature: personalRemindersOn(),
   }, ctx.now);
   return done("show_settings", lead ? { ...reply, text: `${lead}\n\n${reply.text}` } : reply);
 }
@@ -562,6 +564,10 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
     case "pick_time":   return done("pick_time", timeChoiceReply());
     case "set_plan_notifications": return setPlanNotificationsFrom(ctx, action.enabled);
     case "pick_checkin": return done("pick_checkin", checkinChoiceReply());
+    case "reminder_new":
+      return personalRemindersOn() ? askReminderTitle() : done("reminder_new", { text: "Reminders on Telegram are switched off right now. You can still add one on the Calendar.", link: { label: "Open Calendar", path: "/calendar" } }, false);
+    case "reminder_when": case "reminder_save": case "reminder_edit": case "reminder_cancel":
+      return runPersonalReminder(ctx, action);
     case "set_checkin": {
       const ok = await saveCheckinTime(ctx.chatId, action.time);
       if (!ok) return done("set_checkin", { text: "I couldn't save that. Set your check-in time in Settings on Kivo." }, false);
