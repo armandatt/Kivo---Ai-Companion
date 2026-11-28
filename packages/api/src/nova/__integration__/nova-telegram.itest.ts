@@ -359,7 +359,8 @@ test("a session started on the web is the session Telegram sees, pauses and ends
   assert.equal((row!.executionReport as { outcome: string; evidenceBasis: string }).outcome, "good");
   assert.equal((row!.executionReport as { evidenceBasis: string }).evidenceBasis, "learner_outcome");
   assert.equal(await loadNovaSession(l.chat, clock), null);
-  assert.equal(tg.last().text, "Logged: 22 min on Deadlocks. Good.");
+  // Then where the topic stands (Telegram launch, M1): offered, nothing set.
+  assert.equal(tg.last().text, "Logged: 22 min on Deadlocks. Good.\nWhere does Deadlocks stand?");
 });
 
 test("Struggled on Telegram reaches mastery, its history, Learning DNA, consolidation, Knowledge and tomorrow's plan", async () => {
@@ -377,7 +378,7 @@ test("Struggled on Telegram reaches mastery, its history, Learning DNA, consolid
   const report = row!.executionReport as { outcome: string; masteryUpdates: unknown[]; actualDurationMinutes: number };
   assert.deepEqual([row!.status, report.outcome, report.actualDurationMinutes, report.masteryUpdates.length], ["completed", "struggled", 27, 1]);
   assert.deepEqual([trace.operation.name, trace.operation.ok], ["session_end", true]);
-  assert.equal(tg.last().text, "Logged: 27 min on Deadlocks. Struggled. It comes back for review tomorrow.");
+  assert.equal(tg.last().text, "Logged: 27 min on Deadlocks. Struggled. It comes back for review tomorrow.\nWhere does Deadlocks stand?");
 
   // Mastery moved through the canonical writer: a full review, interval reset.
   const after = await deadlocks(l);

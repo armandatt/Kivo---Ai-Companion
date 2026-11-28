@@ -390,7 +390,7 @@ export function withSession(i: FlowItem, sessionId: string): FlowItem {
 
 // minutes: a length for this session only (the item's time for today and the
 // task's estimate are left as they are); 0: no time limit.
-export async function startFocus(input: Changing & { itemId: unknown; minutes: unknown }): Promise<DayFlowResponse & { started?: boolean }> {
+export async function startFocus(input: Changing & { itemId: unknown; minutes: unknown; surface?: "web" | "telegram" }): Promise<DayFlowResponse & { started?: boolean }> {
   const b = await begin(input);
   if (b.stale) return stale(input.profileId, b.ctx, b.clock, b.now);
   const items = readItems(b.row?.items);
@@ -406,7 +406,7 @@ export async function startFocus(input: Changing & { itemId: unknown; minutes: u
   const topicName = item.topicName ?? null;
   const res = await runNovaSessionCommand(input.platformChatId, topicName
     ? { action: "start", topicName, subjectName: item.subjectName, plannedMinutes: minutes, label: item.kind === "topic" ? null : item.title }
-    : { action: "start", topicName: null, subjectName: null, plannedMinutes: minutes, label: item.title }, b.now);
+    : { action: "start", topicName: null, subjectName: null, plannedMinutes: minutes, label: item.title }, b.now, input.surface ?? "web");
   if (!res.ok || !res.session) return refuse(res.ok ? "failed" : res.error === "session_abandoned" ? "failed" : "invalid", res.ok ? "The session did not start. Try again." : res.message, await viewOf(input.profileId, b.row, b.ctx, b.clock, b.now));
   const mark = (list: FlowItem[]) => list.map(i => (i.id === item.id ? withSession(i, res.session!.id) : i.status === "active" ? { ...i, status: "planned" as const } : i));
   // The session is running whatever happens to this write. A flow that

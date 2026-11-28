@@ -11,7 +11,7 @@
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
 import { lastClosure, loadNovaSession, runNovaSessionCommand } from "../product/session";
-import { setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
+import { filingCandidates, setTopicStatus, topicsNamed, TOPIC_STATUS_LABEL, type TopicStatus } from "../product/topic-status";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -34,6 +34,9 @@ import { adviseOnTopic, planBlockFor } from "../interaction/advice";
 import { decideFirstUse, type FirstUse } from "../interaction/first-use";
 import { nextSetupQuestion } from "../interaction/initialization";
 import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
+import { loadDayFlow, startFocus } from "../product/day-flow";
+import type { NovaDayView } from "../product/day-flow.types";
+import { afterEndReply, flowHasWork, flowReply, otherItemsReply } from "./telegram-replies";
 import type { ReplyLanguage, SetupStatement } from "../types/understanding.types";
 
 export interface ActionContext {
@@ -75,6 +78,37 @@ export function nextLocalMidnight(now: Date, timezone: string | null): Date {
   return at;
 }
 
+// Today's applied plan, when there is one with something left to do.
+async function appliedFlow(ctx: ActionContext): Promise<NovaDayView | null> {
+  const flow = await loadDayFlow(ctx.profileId, ctx.chatId, ctx.now).catch(() => null);
+  return flow && flowHasWork(flow) ? flow : null;
+}
+
+// Starts a block of today's applied plan through day-flow's own start, so
+// the session is attached to the block (M1). Already studying: that session
+// is shown, nothing started. A block removed, done or started meanwhile is
+// said plainly. One retry when the flow changed between read and write.
+export async function startItem(ctx: ActionContext, start: { itemId: string; minutes: number }): Promise<ActionResult> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const running = await loadNovaSession(ctx.chatId, ctx.now);
+    if (running) return done("session_start", sessionReply(running, "You already have one going."), false);
+    const flow = await loadDayFlow(ctx.profileId, ctx.chatId, ctx.now);
+    const item = flow.items.find(i => i.id === start.itemId);
+    if (!item || item.status === "done") return done("session_start", { text: "That block isn't in today's plan any more.", link: { label: "Open Today", path: "/home" } }, false);
+    const r = await startFocus({ profileId: ctx.profileId, platformChatId: ctx.chatId, version: flow.version, itemId: item.id, minutes: Math.max(5, Math.min(240, Math.round(start.minutes))), now: ctx.now, surface: "telegram" });
+    if (r.ok) {
+      const session = await loadNovaSession(ctx.chatId, ctx.now);
+      return session ? done("session_start", sessionReply(session, "Started.")) : done("session_start", { text: textFor(ctx.language).failed }, false);
+    }
+    if (r.error !== "stale") {
+      const session = await loadNovaSession(ctx.chatId, ctx.now);
+      if (session) return done("session_start", sessionReply(session, "You already have one going."), false);
+      return done("session_start", { text: r.message }, false);
+    }
+  }
+  return done("session_start", { text: textFor(ctx.language).failed }, false);
+}
+
 async function todayView(ctx: ActionContext, minutes: number | null): Promise<NovaTodayReady | null> {
   const view = await loadNovaToday(ctx.chatId, { availableMinutes: minutes, learnerName: ctx.name, now: ctx.now });
   return view.status === "ready" ? view : null;
@@ -100,8 +134,11 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
   // What the learner says they have today is recorded, so the Planner and
   // Home fit the same day to it until the day ends.
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
-  const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
+  const [view, session, flow] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now), appliedFlow(ctx)]);
   if (!view) return done("show_today", { text: textFor(ctx.language).finishSetup }, false);
+  // The plan the learner applied today is the plan (M1): its blocks, its
+  // times, started on the block itself.
+  if (flow && !session) return done("show_today", flowReply(flow));
   // Nothing to plan from: ask for the one thing that is missing, not for
   // anything already on record.
   const facts = !session && view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
@@ -164,6 +201,11 @@ export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
 // enough to start a timer by itself.
 export async function offerStart(ctx: ActionContext, named: string | null, statedMinutes: number | null = null): Promise<ActionResult> {
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
+  if (!named) {
+    const [flow, session] = await Promise.all([appliedFlow(ctx), loadNovaSession(ctx.chatId, ctx.now)]);
+    if (session) return done("offer_start", sessionReply(session, "You already have one going."));
+    if (flow) return done("offer_start", flowReply(flow));
+  }
   const [view, session, snapshot] = await Promise.all([
     todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now), named ? loadStudySnapshot(ctx.chatId) : null,
   ]);
@@ -319,7 +361,25 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   }
   if (!result.ended && result.autoSaved) return done("session_end", { text: closedSessionText(ctx.language, result.autoSaved) }, false);
   if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
-  return done("session_end", endedReply(result.ended));
+  return done("session_end", await withFiling(ctx, result.ended, endedReply(result.ended)));
+}
+
+// After End: a session with no topic can be filed on one, and a topic
+// session can say where the topic stands (PR #113). Offered, never applied.
+async function withFiling(ctx: ActionContext, ended: { sessionId: string; topicName: string | null; topicRecorded: boolean; counted: boolean }, base: TelegramReply): Promise<TelegramReply> {
+  try {
+    if (!ended.counted) return base;
+    if (!ended.topicRecorded) {
+      return afterEndReply(base, { file: { sessionId: ended.sessionId, topics: await filingCandidates(ctx.profileId, ended.topicName) } });
+    }
+    if (ended.topicName) {
+      const same = await topicsNamed(ctx.profileId, ended.topicName);
+      if (same.length === 1) return afterEndReply(base, { status: { topicId: same[0]!.id, name: same[0]!.name } });
+    }
+  } catch (err) {
+    console.error("[nova:telegram] filing offer skipped:", (err as Error).message);
+  }
+  return base;
 }
 
 // ── The week, progress, and changing today ────────────────────────────────────
@@ -450,6 +510,19 @@ export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
 export async function runOptionAction(action: OptionAction, ctx: ActionContext): Promise<ActionResult> {
   switch (action.type) {
     case "start":       return startSession(ctx, action);
+    case "start_item":  return startItem(ctx, action);
+    case "other_items": {
+      const flow = await appliedFlow(ctx);
+      return flow ? done("show_alternative", otherItemsReply(flow, action.skip)) : showToday(ctx, null);
+    }
+    case "file_session": {
+      const r = await runNovaSessionCommand(ctx.chatId, { action: "file", sessionId: action.sessionId, subjectId: action.subjectId, topicName: action.topicName }, ctx.now, "telegram");
+      return r.ok && r.filed ? done("file_session", { text: `Filed on ${r.filed.topicName}.` }) : done("file_session", { text: r.ok ? "That session is already filed." : r.message }, false);
+    }
+    case "topic_status": {
+      const r = await setTopicStatus(ctx.profileId, { topicId: action.topicId }, action.status, ctx.now);
+      return r.ok ? done("set_topic_status", { text: `${r.topicName}: ${TOPIC_STATUS_LABEL[action.status].toLowerCase()}.` }) : done("set_topic_status", { text: "That didn't save. Try it on the Knowledge Map." }, false);
+    }
     case "pause":       return pauseOrResume(ctx, "pause");
     case "resume":      return pauseOrResume(ctx, "resume");
     case "ask_outcome": return askOutcome(ctx, null);

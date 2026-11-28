@@ -8,6 +8,7 @@
 
 import type { NovaSessionView, NovaTodayReady, TodayAction, NovaSessionOutcome, PlanEmptyReason } from "../product/today.types";
 import type { NovaPlannerReady } from "../product/planner.types";
+import type { FlowItemView, NovaDayView } from "../product/day-flow.types";
 import type { NovaProgressReady } from "../product/progress.types";
 import type { NovaTaskItem } from "../product/tasks.types";
 import type { PromptOption, PromptSpec, TelegramReply, OptionAction } from "./telegram.types";
@@ -661,4 +662,98 @@ export function creditsUsedText(language: ReplyLanguage, resetsAt: string | null
   if (!at || Number.isNaN(at.getTime())) return base;
   const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: timezone ?? "UTC" }).format(at);
   return language === "english" ? `${base} They renew on ${day}.` : `${base} ${day} ko renew honge.`;
+}
+
+// ── The plan the learner applied today (M1, 28 Nov) ──────────────────────────
+// When the learner has a saved flow for today (they built it on Today, or
+// applied Nova's), Telegram shows that plan and starts its blocks: the same
+// list, the same times, the same session attached to the block.
+
+// "18:00" → "6:00 PM".
+export function clock12(at: string): string {
+  const [h, m] = at.split(":").map(Number) as [number, number];
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+
+// What a Start on a block offers: today's time left on it, else its time, else
+// the standard block. Inside what day-flow's start takes (5 to 240).
+export function itemStartMinutes(i: Pick<FlowItemView, "minutes"> & { remainingMinutes?: number | null }): number {
+  const m = i.remainingMinutes ?? i.minutes ?? 25;
+  return Math.max(5, Math.min(240, Math.round(m)));
+}
+
+export const openFlowItems = (flow: NovaDayView) => flow.items.filter(i => i.status === "planned");
+// A saved flow with something still to do or under way today.
+export const flowHasWork = (flow: NovaDayView) => flow.saved && flow.items.some(i => i.status === "planned" || i.status === "active");
+
+function itemLine(i: FlowItemView): string {
+  const when = i.at ? `${clock12(i.at)} · ` : "";
+  const time = i.minutes ? `, ${i.minutes} min` : "";
+  return `${i.status === "done" ? "Done: " : "- "}${when}${i.title}${time}`;
+}
+
+export function flowReply(flow: NovaDayView, skip: string[] = []): TelegramReply {
+  const shown = flow.items.filter(i => i.status !== "later");
+  const later = flow.items.filter(i => i.status === "later");
+  const lines = ["Your plan for today:", ...shown.map(itemLine)];
+  if (later.length > 0) lines.push(`If there's time: ${later.map(i => i.title).join(", ")}.`);
+  const open = openFlowItems(flow);
+  const next = open.find(i => !skip.includes(i.id)) ?? open[0];
+  if (!next) return { text: `${lines.join("\n")}\n\nEverything planned for today is done or under way.`, link: { label: "Open Today", path: "/home" } };
+  const minutes = itemStartMinutes(next);
+  const more = open.filter(i => i.id !== next.id);
+  return {
+    text: `${lines.join("\n")}\n\nNext: ${next.title}, ${minutes} min.`,
+    prompt: {
+      kind: "start",
+      options: options([
+        { label: `Start ${minutes} min`, action: { type: "start_item", itemId: next.id, minutes } },
+        ...(more.length > 0 ? [{ label: "Something else", action: { type: "other_items" as const, skip: [next.id] } }] : []),
+        { label: "Later", action: { type: "later" as const } },
+      ]),
+    },
+  };
+}
+
+// The other open blocks, each with its own Start.
+export function otherItemsReply(flow: NovaDayView, skip: string[]): TelegramReply {
+  const rest = openFlowItems(flow).filter(i => !skip.includes(i.id)).slice(0, 5);
+  if (rest.length === 0) return flowReply(flow);
+  return {
+    text: "Which one?",
+    prompt: {
+      kind: "start",
+      options: options([
+        ...rest.map(i => ({ label: `${i.title.slice(0, 26)} · ${itemStartMinutes(i)} min`, action: { type: "start_item" as const, itemId: i.id, minutes: itemStartMinutes(i) } })),
+        { label: "Later", action: { type: "later" as const } },
+      ]),
+    },
+  };
+}
+
+// After a session ends: file one with no topic on a topic, or say where the
+// topic stands (PR #113's filing and status, on Telegram). Optional: the
+// session is already saved.
+export function afterEndReply(base: TelegramReply, follow: { file?: { sessionId: string; topics: Array<{ subjectId: string; name: string }> }; status?: { topicId: string; name: string } }): TelegramReply {
+  if (follow.file && follow.file.topics.length > 0) {
+    return {
+      ...base, text: `${base.text}\nFile it on a topic so it counts there?`,
+      prompt: { kind: "session_outcome", options: options([
+        ...follow.file.topics.slice(0, 4).map(t => ({ label: t.name.slice(0, 32), action: { type: "file_session" as const, sessionId: follow.file!.sessionId, subjectId: t.subjectId, topicName: t.name } })),
+        { label: "Leave it", action: { type: "dismiss" as const } },
+      ]) },
+    };
+  }
+  if (follow.status) {
+    return {
+      ...base, text: `${base.text}\nWhere does ${follow.status.name} stand?`,
+      prompt: { kind: "session_outcome", options: options([
+        { label: "In progress", action: { type: "topic_status", topicId: follow.status.topicId, status: "in_progress" } },
+        { label: "Completed", action: { type: "topic_status", topicId: follow.status.topicId, status: "completed" } },
+        { label: "Skip", action: { type: "dismiss" } },
+      ]) },
+    };
+  }
+  return base;
 }

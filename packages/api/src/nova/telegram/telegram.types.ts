@@ -42,6 +42,16 @@ export type TelegramEvent =
 
 export type OptionAction =
   | { type: "start"; topicName: string; subjectName: string | null; minutes: number }
+  // A block of the plan the learner applied today (NovaDayFlow), started
+  // through day-flow's own start so the session is attached to it (M1).
+  | { type: "start_item"; itemId: string; minutes: number }
+  // The other open blocks of today's applied plan, each with its Start.
+  | { type: "other_items"; skip: string[] }
+  // A finished session with no topic, filed on one of the learner's topics
+  // (the same "file" command the web uses after End, PR #113).
+  | { type: "file_session"; sessionId: string; subjectId: string; topicName: string }
+  // Where a topic stands, said after a session on it (PR #113 item 7).
+  | { type: "topic_status"; topicId: string; status: "in_progress" | "completed" }
   | { type: "pause" }
   | { type: "resume" }
   | { type: "ask_outcome" }
